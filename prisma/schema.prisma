@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model User {
+  id                   String       @id @default(cuid())
+  whopUserId           String?      @unique
+  email                String?
+  affiliateCode        String?
+  coreTokens           Int          @default(0)
+  subscriptionActive   Boolean      @default(false)
+  subscriptionCycleStart DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  generations          Generation[]
+}
+
+model Story {
+  id               String   @id @default(cuid())
+  title            String
+  language         String
+  category         String
+  geoScope         String
+  geoRegion        String?
+  geoCountry       String?
+  geoState         String?
+  geoLocal         String?
+  markdownContent  String   @db.Text
+  audioUrl         String?
+  thumbnailUrl     String?
+  durationSeconds  Int?
+  reliabilityIndex Float?
+  sourcesVerified  Json?
+  isCached         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([language, category, geoScope])
+  @@index([language, category, geoScope, geoCountry])
+}
+
+model Generation {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyId       String?
+  taxonomyKey   String
+  tokenConsumed Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+model AffiliateReferral {
+  id             String   @id @default(cuid())
+  affiliateCode  String
+  referredUserId String?
+  whopPaymentId  String?  @unique
+  payoutAmount   Decimal? @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+
+  @@index([affiliateCode])
+}

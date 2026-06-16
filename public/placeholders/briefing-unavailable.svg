@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="Briefing not yet generated">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#141820"/>
+      <stop offset="100%" stop-color="#1a2030"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="128" y1="160" x2="384" y2="352" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5b6abf" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#3d4a8f" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="220" r="120" fill="url(#accent)"/>
+  <rect x="176" y="168" width="160" height="112" rx="12" stroke="#5b6abf" stroke-width="3" stroke-opacity="0.55" fill="rgba(26,32,48,0.6)"/>
+  <path d="M208 208h96M208 232h72M208 256h88" stroke="#8b9ad4" stroke-width="6" stroke-linecap="round" stroke-opacity="0.7"/>
+  <circle cx="336" cy="184" r="28" fill="#1a2030" stroke="#5b6abf" stroke-width="3" stroke-opacity="0.6"/>
+  <path d="M328 184h16M336 176v16" stroke="#c7cff0" stroke-width="4" stroke-linecap="round"/>
+  <path d="M196 320c24-28 96-28 120 0" stroke="#5b6abf" stroke-width="4" stroke-linecap="round" stroke-opacity="0.45"/>
+  <text x="256" y="392" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="22" font-weight="600" letter-spacing="0.08em">BRIEFING</text>
+  <text x="256" y="422" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="16" letter-spacing="0.04em">Not yet generated</text>
+</svg>

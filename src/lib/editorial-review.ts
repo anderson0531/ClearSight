@@ -1,0 +1,268 @@
+import {
+  vertexGenerateGrounded,
+  vertexGenerateText,
+  VERTEX_FAST_MODEL,
+  type GroundedSource,
+} from '@/lib/vertex'
+import { formatPodcastReviewAnalysisBlock } from '@/lib/analysis-frameworks'
+import { HOST_ANDERSON, HOST_SARAH } from '@/lib/hosts'
+
+export interface BriefingReviewInput {
+  title: string
+  language: string
+  category: string
+  geoScope: string
+  markdown: string
+  sources: GroundedSource[]
+  reliabilityIndex: number
+}
+
+export interface BriefingReviewResult {
+  markdown: string
+  sources: GroundedSource[]
+  reliabilityIndex: number
+  revised: boolean
+}
+
+export interface PodcastTurn {
+  speaker: string
+  text: string
+}
+
+export interface PodcastScriptDraft {
+  directorNotes: string
+  turns: PodcastTurn[]
+  wordCount: number
+}
+
+export interface PodcastReviewInput {
+  title: string
+  language: string
+  category?: string
+  markdown: string
+  script: PodcastScriptDraft
+  hostA?: string
+  hostB?: string
+}
+
+export interface PodcastReviewResult {
+  script: PodcastScriptDraft
+  revised: boolean
+}
+
+function uniqueDomains(sources: GroundedSource[]): number {
+  return new Set(sources.map((s) => s.domain)).size
+}
+
+function parseReliabilityIndex(markdown: string): number | null {
+  const match = markdown.match(/Reliability Index:\*\*\s*([\d.]+)/i)
+  if (!match) return null
+  const value = parseFloat(match[1])
+  return Number.isFinite(value) ? value : null
+}
+
+function clampReliability(parsed: number | null, sourceCount: number, domainCount: number): number {
+  let value = parsed ?? 5.0
+
+  if (domainCount >= 3 && value < 6) value = 6
+  else if (domainCount >= 2 && value < 5) value = 5
+  else if (sourceCount >= 1 && value < 3) value = 3
+
+  return Math.min(10, Math.max(1, Math.round(value * 10) / 10))
+}
+
+function formatSourcesMarkdown(sources: GroundedSource[]): string {
+  if (sources.length === 0) {
+    return '- No grounded web sources captured for this briefing.'
+  }
+
+  return sources
+    .slice(0, 12)
+    .map((source) => `- [${source.title}](${source.uri}) (${source.domain})`)
+    .join('\n')
+}
+
+function injectSourcesIntoMarkdown(markdown: string, sources: GroundedSource[]): string {
+  const sourcesBlock = formatSourcesMarkdown(sources)
+  const replaced = markdown.replace(
+    /\*\*Sources Verified:\*\*[\s\S]*?(?=\*\*Reliability Index:\*\*)/i,
+    `**Sources Verified:**\n${sourcesBlock}\n\n`
+  )
+
+  if (replaced !== markdown) return replaced
+
+  if (markdown.includes('### THE TRUTH LEDGER')) {
+    return markdown.replace(
+      '### THE TRUTH LEDGER',
+      `### THE TRUTH LEDGER\n\n**Sources Verified:**\n${sourcesBlock}\n`
+    )
+  }
+
+  return `${markdown}\n\n**Sources Verified:**\n${sourcesBlock}`
+}
+
+function applyReliabilityToMarkdown(markdown: string, reliabilityIndex: number): string {
+  if (/Reliability Index:\*\*/i.test(markdown)) {
+    return markdown.replace(
+      /Reliability Index:\*\*\s*[\d.]+/i,
+      `Reliability Index:** ${reliabilityIndex.toFixed(1)}`
+    )
+  }
+
+  return `${markdown}\n\n**Reliability Index:** ${reliabilityIndex.toFixed(1)}`
+}
+
+function mergeSources(existing: GroundedSource[], incoming: GroundedSource[]): GroundedSource[] {
+  const seen = new Set<string>()
+  const merged: GroundedSource[] = []
+
+  for (const source of [...existing, ...incoming]) {
+    const key = source.uri || source.domain
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    merged.push(source)
+  }
+
+  return merged
+}
+
+/**
+ * Senior-editor pass on a draft Truth Ledger: cross-checks claims, tightens
+ * attribution, corrects stale denials, and recalibrates reliability.
+ */
+export async function reviewBriefing(input: BriefingReviewInput): Promise<BriefingReviewResult> {
+  const today = new Date().toISOString().slice(0, 10)
+
+  const prompt = `You are a senior news editor performing an editorial review. Today is ${today}.
+
+Topic: "${input.title}"
+Language: ${input.language}
+Category: ${input.category}
+Geographic scope: ${input.geoScope}
+
+DRAFT BRIEFING TO REVIEW:
+${input.markdown}
+
+EDITORIAL REVIEW CHECKLIST:
+1. Cross-check claims against current reporting; remove or soften anything unsupported
+2. Label confirmed vs. developing/unconfirmed accurately throughout
+3. Fix stale dates, wrong tense, or outdated denials of events that have since occurred
+4. Ensure reported deal terms, policy points, and stakeholders are specific and attributed
+5. Remove partisan framing, hype, and speculative language not supported by sources
+6. Improve clarity and flow while preserving clinical, neutral tone
+7. Recalibrate Reliability Index (1.0–10.0) if corroboration level changed
+8. Keep the exact Markdown section structure below
+
+Return ONLY the revised briefing in ${input.language} with EXACTLY this structure:
+## [ SYSTEMIC TOPIC TITLE ]
+**The Objective Brief:**
+### THE TRUTH LEDGER
+**Sources Verified:** (keep or improve source references)
+**Reliability Index:** (number 1.0-10.0)
+### ANALYTICAL INSIGHT`
+
+  const { text, sources: reviewSources } = await vertexGenerateGrounded(prompt, {
+    useSearchGrounding: false,
+    temperature: 0.2,
+    maxOutputTokens: 4096,
+  })
+
+  if (!text?.includes('##')) {
+    return {
+      markdown: input.markdown,
+      sources: input.sources,
+      reliabilityIndex: input.reliabilityIndex,
+      revised: false,
+    }
+  }
+
+  const sources = mergeSources(input.sources, reviewSources)
+  const parsedReliability = parseReliabilityIndex(text)
+  const reliabilityIndex = clampReliability(
+    parsedReliability ?? input.reliabilityIndex,
+    sources.length,
+    uniqueDomains(sources)
+  )
+
+  let markdown = injectSourcesIntoMarkdown(text, sources)
+  markdown = applyReliabilityToMarkdown(markdown, reliabilityIndex)
+
+  return {
+    markdown,
+    sources,
+    reliabilityIndex,
+    revised: markdown.trim() !== input.markdown.trim(),
+  }
+}
+
+/**
+ * Podcast editor pass: ensures dialogue stays faithful to the approved briefing,
+ * adds missing attribution, and improves broadcast pacing before TTS.
+ */
+export async function reviewPodcastScript(
+  input: PodcastReviewInput,
+  parseScript: (raw: string) => PodcastScriptDraft | null,
+  trimScript: (script: PodcastScriptDraft) => PodcastScriptDraft
+): Promise<PodcastReviewResult> {
+  const hostA = input.hostA ?? HOST_SARAH.name
+  const hostB = input.hostB ?? HOST_ANDERSON.name
+  const category = input.category ?? 'Top'
+  const analysisBlock = formatPodcastReviewAnalysisBlock(category)
+
+  const scriptText = [
+    `DIRECTOR_NOTES: ${input.script.directorNotes}`,
+    ...input.script.turns.map((turn) => `${turn.speaker}: ${turn.text}`),
+  ].join('\n')
+
+  const prompt = `You are an executive intelligence podcast editor. Review and improve this script for analytical depth, accuracy, and broadcast quality.
+ClearSight podcasts deliver intelligence NOT available in standard news — causal breakdowns, comparative analysis, and forecasts. Eliminate all fluff.
+The entire script must remain in ${input.language}.
+Category: ${category}
+
+APPROVED BRIEFING (sole source of truth for facts — do not add factual claims beyond this):
+${input.markdown.slice(0, 3800)}
+
+CURRENT SCRIPT:
+${scriptText}
+
+EDITORIAL CHECKLIST:
+1. Remove any factual claim not supported by the approved briefing
+2. Add attribution where missing ("according to", "reported by", "developing")
+3. Distinguish confirmed facts from analytical inference in dialogue
+4. Cut ALL fluff: filler reactions, recaps, hype, and turns that add no analytical substance
+5. Replace generic commentary with specific causal factors, comparisons, or projections from the briefing
+6. Preserve two hosts only: ${hostA} (probing questioner) and ${hostB} (analytical expert)
+7. Keep 12–18 alternating turns; end with ${hostB} delivering the forecast and key takeaway
+8. Preserve audio tags sparingly: [curious], [thoughtful], [short pause], [concerned]
+
+${analysisBlock}
+
+Output format (strict — no markdown, no commentary):
+DIRECTOR_NOTES: <one line scene + tone: analytical, dense; max 300 chars>
+${hostA}: [tag] line...
+${hostB}: [tag] line...
+(alternate ${hostA} and ${hostB})`
+
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.35,
+    maxOutputTokens: 1500,
+    model: VERTEX_FAST_MODEL,
+    useSearchGrounding: false,
+  })
+  if (!raw) {
+    return { script: input.script, revised: false }
+  }
+
+  const parsed = parseScript(raw)
+  if (!parsed) {
+    return { script: input.script, revised: false }
+  }
+
+  const trimmed = trimScript(parsed)
+  const revised =
+    trimmed.directorNotes !== input.script.directorNotes ||
+    trimmed.turns.length !== input.script.turns.length ||
+    trimmed.turns.some((turn, index) => turn.text !== input.script.turns[index]?.text)
+
+  return { script: trimmed, revised }
+}
