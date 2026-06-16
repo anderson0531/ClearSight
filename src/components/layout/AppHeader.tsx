@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Search, X, Menu, MapPin, RotateCcw } from 'lucide-react'
+import { Search, X, Menu, MapPin, RotateCcw, SlidersHorizontal, ChevronDown } from 'lucide-react'
 import {
   CATEGORIES,
   GEO_SCOPES,
@@ -58,6 +58,9 @@ export function AppHeader({
   const { t } = useI18n()
   const [query, setQuery] = useState(value.query ?? '')
   const [menuOpen, setMenuOpen] = useState(false)
+  // Mobile-only collapse for the Search / Geo Focus / Category panel. Default
+  // hidden to save vertical space; always visible on large screens.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   useEffect(() => {
     setQuery(value.query ?? '')
@@ -106,6 +109,8 @@ export function AppHeader({
     const key = GEO_MESSAGE_KEYS[scope]
     return key ? t(key) : scope
   }
+
+  const filterSummary = `${categoryLabel(selectedCategory)} · ${currentArea ?? geoLabel(value.geoScope)}`
 
   return (
     <header className="glass-header sticky top-0 z-40">
@@ -188,9 +193,9 @@ export function AppHeader({
         ) : null}
 
         {showFilters ? (
-          <div className="space-y-4 border-t border-white/10 py-4">
+          <div className="border-t border-white/10">
             {errorMessage ? (
-              <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 <p>{errorMessage}</p>
                 <button
                   type="button"
@@ -203,6 +208,27 @@ export function AppHeader({
               </div>
             ) : null}
 
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((open) => !open)}
+              className="flex w-full items-center justify-between gap-3 py-3 lg:hidden"
+              aria-expanded={filtersOpen}
+            >
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                <SlidersHorizontal className="h-4 w-4 text-[var(--accent)]" />
+                {t('filters')}
+              </span>
+              <span className="flex min-w-0 items-center gap-2 text-xs text-slate-400">
+                <span className="truncate">{filterSummary}</span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
+                />
+              </span>
+            </button>
+
+            <div
+              className={`${filtersOpen ? 'block' : 'hidden'} space-y-4 pb-4 lg:block lg:pt-4`}
+            >
             <div className="relative">
               <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
               <input
@@ -285,6 +311,7 @@ export function AppHeader({
                   </button>
                 ))}
               </div>
+            </div>
             </div>
           </div>
         ) : null}

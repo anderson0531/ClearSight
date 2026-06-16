@@ -121,7 +121,44 @@ function buildSuggestionCard(filter: TaxonomyFilter, suggestion: TopicSuggestion
   }
 }
 
-function getCuratedSuggestions(filter: TaxonomyFilter, count: number): TopicSuggestion[] {
+/**
+ * Best-effort batch translation of evergreen fallback headlines into the target
+ * language. The curated pool is authored in English, so without this the
+ * fallback topics show up untranslated when a non-English language is selected.
+ */
+async function translateTitles(titles: string[], language: Language): Promise<string[]> {
+  if (titles.length === 0 || language === 'English') return titles
+
+  const numbered = titles.map((title, index) => `${index + 1}. ${title}`).join('\n')
+  const prompt = `Translate each of the following ${titles.length} news topic headlines into ${language}.
+Return ONLY the translations, one per line, numbered exactly as the input (1., 2., ...). Keep them concise and natural for a news audience. No commentary, no quotes, no source names.
+
+${numbered}`
+
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.2,
+    maxOutputTokens: 1024,
+    useSearchGrounding: false,
+  })
+  if (!raw) return titles
+
+  const result = [...titles]
+  for (const line of raw.split('\n')) {
+    const match = line.match(/^\s*(\d+)[.)]\s*(.+)$/)
+    if (!match) continue
+    const index = Number(match[1]) - 1
+    const text = stripGroundingArtifacts(match[2].trim())
+    if (index >= 0 && index < result.length && text) {
+      result[index] = text
+    }
+  }
+  return result
+}
+
+async function getCuratedSuggestions(
+  filter: TaxonomyFilter,
+  count: number
+): Promise<TopicSuggestion[]> {
   const suggestions: TopicSuggestion[] = []
   const primary = pickPrimaryCategory(filter)
   const categoriesToUse: ContentCategory[] = isTopCategory(primary)
@@ -135,11 +172,23 @@ function getCuratedSuggestions(filter: TaxonomyFilter, count: number): TopicSugg
         continue
       }
       suggestions.push({ title, category })
-      if (suggestions.length >= count) return suggestions
+      if (suggestions.length >= count) break
     }
+    if (suggestions.length >= count) break
   }
 
-  return suggestions.slice(0, count)
+  const limited = suggestions.slice(0, count)
+  const language = pickPrimaryLanguage(filter)
+  if (language === 'English' || limited.length === 0) return limited
+
+  const translated = await translateTitles(
+    limited.map((suggestion) => suggestion.title),
+    language
+  )
+  return limited.map((suggestion, index) => ({
+    ...suggestion,
+    title: translated[index] ?? suggestion.title,
+  }))
 }
 
 const TOP_CATEGORY_ROTATION: ContentCategory[] = [...CONTENT_CATEGORIES]
@@ -328,10 +377,12 @@ async function fetchVertexSuggestions(filter: TaxonomyFilter, count: number): Pr
     ? `Return the ${count} most popular real news stories right now across ALL categories (politics, business, finance, technology, science, health, sports, entertainment, crime).
 Rank them #1 (most popular) through #${count} (least popular among this list).
 Ensure category diversity — no more than one technology/AI headline.
-Format each line EXACTLY as: CATEGORY|Headline
-Where CATEGORY is one of: ${CONTENT_CATEGORIES.join(', ')}`
+Format EVERY line EXACTLY as: CATEGORY|Headline
+The CATEGORY label MUST be one of these exact English values: ${CONTENT_CATEGORIES.join(', ')}.
+Always write the CATEGORY in English even though the Headline is written in ${language}, and make sure the CATEGORY truly matches the headline's subject.`
     : `Return the ${count} most popular real news stories right now in category: ${category}.
 Rank them #1 (most popular) through #${count}.
+Every headline must genuinely belong to the ${category} category.
 Format each line as a headline only (no category prefix).`
 
   const prompt = `Use current web search results. List exactly ${count} real, currently trending news headlines in ${language}.
@@ -375,7 +426,7 @@ async function resolveSuggestions(filter: TaxonomyFilter, count: number): Promis
 
   let suggestions = dedupeSuggestions(await fetchVertexSuggestions(filter, count))
   if (suggestions.length < count) {
-    const curated = getCuratedSuggestions(filter, count - suggestions.length)
+    const curated = await getCuratedSuggestions(filter, count - suggestions.length)
     const seen = new Set(suggestions.map((s) => normalizeTitle(s.title)))
     for (const suggestion of curated) {
       const normalized = normalizeTitle(suggestion.title)
