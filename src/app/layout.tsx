@@ -5,6 +5,7 @@ import { AudioPlayer } from '@/components/audio/AudioPlayer'
 import { AffiliateTrackerProvider } from '@/components/providers/AffiliateTrackerProvider'
 import { I18nProvider } from '@/i18n/I18nProvider'
 import { DEFAULT_LOCALE_CODE, getLocaleByCode } from '@/i18n/locales'
+import { CLEARSIGHT_LOGO_URL } from '@/lib/brand-assets'
 import './globals.css'
 
 const geistSans = Geist({
@@ -21,6 +22,10 @@ export const metadata: Metadata = {
   title: 'ClearSight — Verified News Briefings',
   description: 'Discover verified news briefings with sources you can trust. Listen on demand.',
   applicationName: 'ClearSight',
+  icons: {
+    icon: CLEARSIGHT_LOGO_URL,
+    apple: CLEARSIGHT_LOGO_URL,
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',

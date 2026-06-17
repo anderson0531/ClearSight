@@ -117,12 +117,8 @@ export function AppHeader({
       <div className="mx-auto max-w-7xl px-4">
         <div className="flex items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 items-center gap-3">
-            <Link href="/" className="group flex shrink-0 items-center gap-3">
-              <ClearSightLogo className="h-10 w-10 transition-transform duration-300 group-hover:scale-105" />
-              <div className="hidden min-w-0 sm:block">
-                <p className="brand-text">{t('appName')}</p>
-                <p className="truncate text-[11px] text-[var(--muted-strong)]">{t('tagline')}</p>
-              </div>
+            <Link href="/" className="group flex shrink-0 items-center">
+              <ClearSightLogo className="h-20 w-auto min-w-[260px] transition-transform duration-300 group-hover:scale-[1.02] sm:h-24 sm:min-w-[320px] md:h-28 md:min-w-[380px]" />
             </Link>
           </div>
 

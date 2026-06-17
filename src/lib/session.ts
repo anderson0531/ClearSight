@@ -23,7 +23,7 @@ export async function ensureDemoUser(userId: string = DEMO_USER_ID) {
       id: userId,
       email: 'demo@clearsight.local',
       subscriptionActive: true,
-      coreTokens: 50,
+      coreTokens: 5000,
     },
     select: {
       id: true,

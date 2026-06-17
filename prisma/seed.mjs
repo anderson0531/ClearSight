@@ -100,14 +100,14 @@ async function main() {
     where: { id: DEMO_USER_ID },
     update: {
       subscriptionActive: true,
-      coreTokens: 50,
+      coreTokens: 5000,
       email: 'demo@clearsight.local',
     },
     create: {
       id: DEMO_USER_ID,
       email: 'demo@clearsight.local',
       subscriptionActive: true,
-      coreTokens: 50,
+      coreTokens: 5000,
     },
   })
 
