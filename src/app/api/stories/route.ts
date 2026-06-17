@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { listStories, type StoriesFetchProgress } from '@/lib/stories'
-import { DEFAULT_TAXONOMY, type TaxonomyFilter } from '@/lib/taxonomy'
+import { DEFAULT_TAXONOMY, isContentType, type TaxonomyFilter } from '@/lib/taxonomy'
 
 function parseFilter(searchParams: URLSearchParams): TaxonomyFilter {
   const languageParam = searchParams.get('language') ?? searchParams.get('languages')?.split(',')[0]
   const categoryParam = searchParams.get('category') ?? searchParams.get('categories')?.split(',')[0]
+  const contentTypeParam = searchParams.get('contentType')
 
   return {
+    contentType: isContentType(contentTypeParam) ? contentTypeParam : DEFAULT_TAXONOMY.contentType,
     languages: (languageParam
       ? [languageParam]
       : DEFAULT_TAXONOMY.languages) as TaxonomyFilter['languages'],
@@ -26,15 +28,38 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const filter = parseFilter(searchParams)
   const playableOnly = searchParams.get('playable') === '1'
+  const sort = searchParams.get('sort') === 'top' ? 'top' : 'recent'
   const stream = searchParams.get('stream') === '1'
 
   if (stream && !playableOnly) {
     const encoder = new TextEncoder()
     const body = new ReadableStream({
       async start(controller) {
-        const send = (payload: unknown) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+        // The client may abort the stream (e.g. changing the geo/category
+        // filter mid-fetch). Guard every enqueue/close so we never write to a
+        // closed controller, which otherwise throws ERR_INVALID_STATE noise.
+        let closed = false
+
+        const close = () => {
+          if (closed) return
+          closed = true
+          try {
+            controller.close()
+          } catch {
+            /* already closed */
+          }
         }
+
+        const send = (payload: unknown) => {
+          if (closed) return
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+          } catch {
+            closed = true
+          }
+        }
+
+        request.signal.addEventListener('abort', close)
 
         try {
           const stories = await listStories(filter, {
@@ -42,10 +67,12 @@ export async function GET(request: Request) {
           })
           send({ type: 'done', stories })
         } catch (error) {
-          console.error('[stories] stream', error)
-          send({ type: 'error', error: 'Failed to load stories' })
+          if (!request.signal.aborted) {
+            console.error('[stories] stream', error)
+            send({ type: 'error', error: 'Failed to load stories' })
+          }
         } finally {
-          controller.close()
+          close()
         }
       },
     })
@@ -60,6 +87,6 @@ export async function GET(request: Request) {
     })
   }
 
-  const stories = await listStories(filter, { playableOnly })
+  const stories = await listStories(filter, { playableOnly, sort })
   return NextResponse.json({ stories })
 }

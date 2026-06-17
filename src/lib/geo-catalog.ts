@@ -295,6 +295,28 @@ export function getCountriesForRegion(region: string | undefined): string[] {
   return []
 }
 
+/** All catalog countries across every world region (for global suggestions). */
+export function getAllCountries(): string[] {
+  const all = new Set<string>()
+  for (const region of GEO_REGIONS) {
+    for (const country of COUNTRIES_BY_REGION[region]) all.add(country)
+  }
+  return [...all].sort((a, b) => a.localeCompare(b))
+}
+
+/** Catalog cities for a country, aggregated across its subdivisions. */
+export function getCitiesForCountry(country: string | undefined): string[] {
+  if (!country) return []
+  const prefix = `${country}|`
+  const cities = new Set<string>()
+  for (const [key, list] of Object.entries(CITIES_BY_STATE)) {
+    if (key.startsWith(prefix)) {
+      for (const city of list) cities.add(city)
+    }
+  }
+  return [...cities].sort((a, b) => a.localeCompare(b))
+}
+
 export function getStatesForCountry(country: string | undefined): string[] {
   if (!country) return []
   const states = STATES_BY_COUNTRY[country]

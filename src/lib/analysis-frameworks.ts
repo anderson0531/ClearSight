@@ -1,4 +1,9 @@
-import { CONTENT_CATEGORIES, type ContentCategory } from '@/lib/taxonomy'
+import {
+  CONTENT_CATEGORIES,
+  typeForCategory,
+  type ContentCategory,
+  type ContentType,
+} from '@/lib/taxonomy'
 import { HOST_ANDERSON } from '@/lib/hosts'
 
 export interface AnalysisFramework {
@@ -42,7 +47,68 @@ const DEFAULT_FRAMEWORK: AnalysisFramework = {
   ],
 }
 
-const FRAMEWORKS: Record<ContentCategory, AnalysisFramework> = {
+// Type-level frameworks for Education and Entertainment. Specific categories can
+// still override via FRAMEWORKS; otherwise generation falls back to the Type
+// default (News uses DEFAULT_FRAMEWORK).
+const EDUCATION_FRAMEWORK: AnalysisFramework = {
+  label: 'Educational explainer',
+  briefingDirectives: [
+    'Teach the core concept from first principles — assume curiosity, not prior expertise',
+    'Define every key term plainly the first time it appears',
+    'Ground the idea with concrete examples and intuitive analogies',
+    'Surface and correct the most common misconceptions',
+  ],
+  podcastDirectives: [
+    'Build understanding step by step — each turn adds one teachable idea',
+    'Translate jargon into plain language with a quick analogy',
+    'Use worked examples the listener can picture',
+    'Pause to connect the new idea back to what was just established',
+  ],
+  analyticalArc:
+    'Structure: (1) hook / why it matters → (2) core concept from first principles → (3) examples & analogies → (4) recap of key takeaways',
+  forecastMandate:
+    'MANDATORY: Close with a concrete recap of the key takeaways the listener should remember.',
+  antiFluffRules: [
+    'Ban unexplained jargon and acronyms',
+    'Ban skipping foundational steps the explanation depends on',
+    'Every turn must teach a discrete idea, example, or correction',
+    'No filler reactions or hype — clarity over excitement',
+  ],
+}
+
+const ENTERTAINMENT_FRAMEWORK: AnalysisFramework = {
+  label: 'Narrative storytelling',
+  briefingDirectives: [
+    'Establish the central narrative and what is at stake',
+    'Lay out a clear timeline of the key events',
+    'Introduce the key figures and their motivations',
+    'Surface the most compelling unanswered questions',
+  ],
+  podcastDirectives: [
+    'Tell it as a story with genuine narrative tension and pacing',
+    'Foreground vivid, specific detail over generalities',
+    'Build toward the central mystery, twist, or turning point',
+    'Clearly separate established fact from speculation as you go',
+  ],
+  analyticalArc:
+    'Structure: (1) cold-open hook → (2) background & key players → (3) the central twist or mystery → (4) where things stand & open questions',
+  forecastMandate:
+    'MANDATORY: Close by clearly separating what is established fact from open speculation.',
+  antiFluffRules: [
+    'Ban presenting unverified claims or rumor as established fact',
+    'Ban filler reactions that stall the narrative',
+    'Keep momentum with concrete, sensory detail',
+    'Avoid moralizing or gratuitous sensationalism',
+  ],
+}
+
+const TYPE_FRAMEWORKS: Record<ContentType, AnalysisFramework> = {
+  News: DEFAULT_FRAMEWORK,
+  Education: EDUCATION_FRAMEWORK,
+  Entertainment: ENTERTAINMENT_FRAMEWORK,
+}
+
+const FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
   Sports: {
     label: 'Sports performance analysis',
     briefingDirectives: [
@@ -212,30 +278,6 @@ const FRAMEWORKS: Record<ContentCategory, AnalysisFramework> = {
       'Every turn must add a mechanism, comparison, or population impact',
     ],
   },
-  Entertainment: {
-    label: 'Entertainment industry analysis',
-    briefingDirectives: [
-      'Identify industry drivers: box office, streaming metrics, labor dynamics, franchise economics',
-      'Compare performance to benchmarks, competitors, and historical trends',
-      'Assess cultural and business signaling beyond the headline',
-      'Forecast industry trajectory and what this signals for the sector',
-    ],
-    podcastDirectives: [
-      'Analyze the business and cultural drivers — not fan reactions',
-      'Compare performance to industry benchmarks and competitors',
-      'Discuss what this signals for the broader entertainment landscape',
-      'Forecast industry trajectory and competitive implications',
-    ],
-    analyticalArc:
-      'Structure: (1) facts → (2) industry drivers → (3) competitive/cultural comparison → (4) sector forecast',
-    forecastMandate:
-      'MANDATORY: Include an entertainment industry forecast before closing.',
-    antiFluffRules: [
-      'Ban fan hype and celebrity gossip without industry analysis',
-      'Ban box office numbers without interpreting drivers',
-      'Every turn must add a business driver, comparison, or sector signal',
-    ],
-  },
   Crime: {
     label: 'Criminal justice & enforcement analysis',
     briefingDirectives: [
@@ -270,16 +312,17 @@ function isContentCategory(value: string): value is ContentCategory {
  * Returns category-aware analytical framework for briefings and podcasts.
  * Falls back to generic intelligence analysis for Top/unknown categories.
  */
-export function getAnalysisFramework(category: string): AnalysisFramework {
-  if (isContentCategory(category)) {
-    return FRAMEWORKS[category]
+export function getAnalysisFramework(category: string, type?: ContentType): AnalysisFramework {
+  if (isContentCategory(category) && FRAMEWORKS[category]) {
+    return FRAMEWORKS[category] as AnalysisFramework
   }
-  return DEFAULT_FRAMEWORK
+  const resolvedType = type ?? typeForCategory(category)
+  return TYPE_FRAMEWORKS[resolvedType] ?? DEFAULT_FRAMEWORK
 }
 
 /** Format briefing directives as a prompt block */
-export function formatBriefingAnalysisBlock(category: string): string {
-  const fw = getAnalysisFramework(category)
+export function formatBriefingAnalysisBlock(category: string, type?: ContentType): string {
+  const fw = getAnalysisFramework(category, type)
   const bullets = fw.briefingDirectives.map((d) => `- ${d}`).join('\n')
   return `### ANALYTICAL INSIGHT
 (${fw.label} — go beyond standard news headlines. Ground all analysis in verified facts above.)
@@ -288,8 +331,8 @@ ${fw.forecastMandate}`
 }
 
 /** Format podcast directives as a prompt block */
-export function formatPodcastAnalysisBlock(category: string, hostB: string): string {
-  const fw = getAnalysisFramework(category)
+export function formatPodcastAnalysisBlock(category: string, hostB: string, type?: ContentType): string {
+  const fw = getAnalysisFramework(category, type)
   const directives = fw.podcastDirectives.map((d) => `- ${d}`).join('\n')
   const antiFluff = fw.antiFluffRules.map((r) => `- ${r}`).join('\n')
   const forecast = fw.forecastMandate.replace('${hostB}', hostB)
@@ -306,8 +349,8 @@ ${antiFluff}
 }
 
 /** Format editorial review checklist additions for podcast scripts */
-export function formatPodcastReviewAnalysisBlock(category: string): string {
-  const fw = getAnalysisFramework(category)
+export function formatPodcastReviewAnalysisBlock(category: string, type?: ContentType): string {
+  const fw = getAnalysisFramework(category, type)
   const directives = fw.podcastDirectives.map((d, i) => `${i + 9}. Ensure the script covers: ${d}`).join('\n')
   const antiFluff = fw.antiFluffRules
     .map((r, i) => `${i + 9 + fw.podcastDirectives.length}. Enforce anti-fluff: ${r}`)

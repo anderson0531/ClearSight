@@ -42,7 +42,7 @@ export function inferCategoryFromTitle(title: string): ContentCategory {
     return 'Sports'
   }
   if (/movie|film|music|celebrity|streaming|box office|award|entertainment|tv series|concert/.test(text)) {
-    return 'Entertainment'
+    return 'Pop Culture'
   }
   if (/crime|arrest|indict|verdict|sentenc|police|fraud|murder|trial|prosecut/.test(text)) {
     return 'Crime'

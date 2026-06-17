@@ -1,7 +1,10 @@
+import type { ContentType } from '@/lib/taxonomy'
+
 export interface PendingGeneration {
   title: string
   language: string
   category: string
+  contentType?: ContentType
   geoScope: string
   geoRegion?: string
   geoCountry?: string

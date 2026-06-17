@@ -143,16 +143,24 @@ export function MediaGrid({
                   {story.title}
                 </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => onGenerate?.(story)}
-                className="cta-briefing w-full justify-center"
-              >
-                {t('generateBriefing')}
-              </button>
-              <span className="text-center text-[10px] font-medium text-[var(--accent-credit)]">
-                {t('oneCredit')}
-              </span>
+              {onGenerate ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onGenerate(story)}
+                    className="cta-briefing w-full justify-center"
+                  >
+                    {t('generateBriefing')}
+                  </button>
+                  <span className="text-center text-[10px] font-medium text-[var(--accent-credit)]">
+                    {t('oneCredit')}
+                  </span>
+                </>
+              ) : (
+                <Link href="/premium" className="cta-briefing w-full justify-center">
+                  {t('upgradeCta')}
+                </Link>
+              )}
             </article>
           )
         }

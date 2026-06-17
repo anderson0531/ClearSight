@@ -15,7 +15,7 @@ import type { StoryCard } from '@/types/story'
 const CACHE_TTL_MS = 60 * 60 * 1000
 
 /** Last-resort evergreen prompts when grounded search returns too few headlines. */
-const CATEGORY_TOPICS: Record<ContentCategory, string[]> = {
+const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
   Politics: [
     'Major election results and coalition negotiations',
     'International summit outcomes and diplomatic agreements',
@@ -51,15 +51,42 @@ const CATEGORY_TOPICS: Record<ContentCategory, string[]> = {
     'Major transfer deals and league governance',
     'International sporting events and record performances',
   ],
-  Entertainment: [
-    'Box office and streaming release performance',
-    'Award show results and industry labor negotiations',
-    'Major franchise announcements and cultural events',
-  ],
   Crime: [
     'High-profile court verdicts and sentencing',
     'Cross-border law enforcement operations',
     'Financial fraud investigations and regulatory actions',
+  ],
+  // Education
+  'Science & Nature': [
+    'How ecosystems recover after major disturbances',
+    'The physics behind everyday phenomena',
+    'Recent discoveries reshaping our understanding of the universe',
+  ],
+  History: [
+    'Turning points that changed the modern world',
+    'Everyday life in ancient civilizations',
+    'The hidden history behind a famous landmark',
+  ],
+  'Technology & Coding': [
+    'How large language models actually work',
+    'The fundamentals of how the internet routes data',
+    'A beginner-friendly tour of modern programming languages',
+  ],
+  // Entertainment
+  'True Crime': [
+    'A landmark case that changed forensic science',
+    'How investigators cracked a decades-old cold case',
+    'The psychology behind a notorious con artist',
+  ],
+  'Unexplained & Mystery': [
+    'Famous disappearances that remain unsolved',
+    'Natural phenomena once thought to be supernatural',
+    'Ancient structures whose purpose is still debated',
+  ],
+  'Pop Culture': [
+    'The making of a generation-defining film or album',
+    'How a viral moment reshaped an industry',
+    'The business behind a blockbuster franchise',
   ],
 }
 
@@ -228,7 +255,7 @@ function inferCategoryFromTitle(title: string): ContentCategory {
     return 'Sports'
   }
   if (/movie|film|music|celebrity|streaming|box office|award|entertainment|tv series|concert/.test(text)) {
-    return 'Entertainment'
+    return 'Pop Culture'
   }
   if (/crime|arrest|indict|verdict|sentenc|police|fraud|murder|trial|prosecut/.test(text)) {
     return 'Crime'

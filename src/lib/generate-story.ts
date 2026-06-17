@@ -1,6 +1,6 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
-import { buildTaxonomyKey } from '@/lib/taxonomy'
+import { buildTaxonomyKey, CONTENT_CATEGORIES, typeForCategory, type ContentType } from '@/lib/taxonomy'
 import { normalizeTitle } from '@/lib/normalize-title'
 import { getLocaleByEnglishName } from '@/i18n/locales'
 import {
@@ -12,9 +12,9 @@ import {
   type GroundedSource,
 } from '@/lib/vertex'
 import { TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
-import { reviewBriefing, reviewPodcastScript } from '@/lib/editorial-review'
+import { reviewPodcastScript } from '@/lib/editorial-review'
 import { formatBriefingAnalysisBlock, formatPodcastAnalysisBlock } from '@/lib/analysis-frameworks'
-import { generateLineImagePrompts } from '@/lib/animatic'
+import { generateLineImagePrompts, illustrationStyleForType } from '@/lib/animatic'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE } from '@/lib/hosts'
@@ -36,6 +36,7 @@ export interface GenerateStoryInput {
   title: string
   language: string
   category: string
+  contentType?: ContentType
   geoScope: string
   geoRegion?: string
   geoCountry?: string
@@ -51,7 +52,11 @@ interface TruthLedgerResult {
   reliabilityIndex: number
 }
 
-const TTS_MODEL = process.env.VERTEX_TTS_MODEL ?? 'gemini-3.1-flash-tts-preview'
+// Cloud TTS Gemini model. NOTE: must be a real, supported model id — an invalid
+// name makes every multi-voice call fail and silently collapses to the
+// single-voice fallback (one host reading everything). Verified-working ids:
+// gemini-2.5-flash-tts (GA), gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts.
+const TTS_MODEL = process.env.VERTEX_TTS_MODEL ?? 'gemini-2.5-flash-tts'
 // HOST_A = investigative interviewer (drives questions); HOST_B = lead analyst (delivers breakdowns + forecast).
 const HOST_A = HOST_SARAH.name
 const HOST_B = HOST_ANDERSON.name
@@ -102,7 +107,7 @@ interface PreparedLine {
   imagePrompt: string | null
 }
 
-const TTS_CONCURRENCY = 4
+const TTS_CONCURRENCY = 3
 
 function geoFocusLabel(input: Omit<GenerateStoryInput, 'userId' | 'generationId'>): string {
   return (
@@ -263,8 +268,40 @@ function formatSourcesMarkdown(sources: GroundedSource[]): string {
     .join('\n')
 }
 
+// Matches a bold label immediately followed (same line) by a 1-10 number, e.g.
+// "**Reliability Index:** 8.5" or its localized equivalent. The Objective Brief
+// and Sources labels are normally followed by a newline (not a same-line number),
+// so this disambiguates to the reliability line across languages.
+const LOCALIZED_RELIABILITY = /(\*\*[^*\n]{1,60}?:\*\*[ \t]*)([0-9]{1,2}(?:\.[0-9]+)?)\b/
+
+// The reliability label is the LAST bold-label-with-number in the briefing (it
+// comes after the Objective Brief, whose text could coincidentally start with a
+// number). Returning the last 1-10 match keeps us anchored on reliability.
+function findLocalizedReliability(
+  markdown: string
+): { index: number; full: string; label: string } | null {
+  const re = new RegExp(LOCALIZED_RELIABILITY.source, 'g')
+  let match: RegExpExecArray | null
+  let last: { index: number; full: string; label: string } | null = null
+  while ((match = re.exec(markdown)) !== null) {
+    const value = parseFloat(match[2])
+    if (Number.isFinite(value) && value >= 1 && value <= 10) {
+      last = { index: match.index, full: match[0], label: match[1] }
+    }
+  }
+  return last
+}
+
 function injectSourcesIntoMarkdown(markdown: string, sources: GroundedSource[]): string {
   const sourcesBlock = formatSourcesMarkdown(sources)
+
+  // Preferred path: the model emits the language-neutral {{SOURCES}} token under
+  // the (localized) sources label, so injection works regardless of language.
+  if (markdown.includes('{{SOURCES}}')) {
+    return markdown.replace(/\{\{SOURCES\}\}/g, sourcesBlock)
+  }
+
+  // Fallbacks for English-structured or legacy output.
   const replaced = markdown.replace(
     /\*\*Sources Verified:\*\*[\s\S]*?(?=\*\*Reliability Index:\*\*)/i,
     `**Sources Verified:**\n${sourcesBlock}\n\n`
@@ -279,14 +316,26 @@ function injectSourcesIntoMarkdown(markdown: string, sources: GroundedSource[]):
     )
   }
 
-  return `${markdown}\n\n**Sources Verified:**\n${sourcesBlock}`
+  // Last resort: append the bullets without forcing an English label so we never
+  // leak an English heading into a localized briefing.
+  return `${markdown}\n\n${sourcesBlock}`
 }
 
 function parseReliabilityIndex(markdown: string): number | null {
-  const match = markdown.match(/Reliability Index:\*\*\s*([\d.]+)/i)
-  if (!match) return null
-  const value = parseFloat(match[1])
-  return Number.isFinite(value) ? value : null
+  const english = markdown.match(/Reliability Index:\*\*\s*([\d.]+)/i)
+  if (english) {
+    const value = parseFloat(english[1])
+    if (Number.isFinite(value)) return value
+  }
+
+  // Localized label: take the last bold-label-followed-by 1-10 number line.
+  const localized = findLocalizedReliability(markdown)
+  if (localized) {
+    const value = parseFloat(localized.full.replace(localized.label, ''))
+    if (Number.isFinite(value)) return value
+  }
+
+  return null
 }
 
 function clampReliability(parsed: number | null, sourceCount: number, domainCount: number): number {
@@ -307,6 +356,17 @@ function applyReliabilityToMarkdown(markdown: string, reliabilityIndex: number):
     )
   }
 
+  // Localized reliability label: rewrite the number in place (last 1-10 match),
+  // keeping the model's translated label.
+  const localized = findLocalizedReliability(markdown)
+  if (localized) {
+    return (
+      markdown.slice(0, localized.index) +
+      `${localized.label}${reliabilityIndex.toFixed(1)}` +
+      markdown.slice(localized.index + localized.full.length)
+    )
+  }
+
   return `${markdown}\n\n**Reliability Index:** ${reliabilityIndex.toFixed(1)}`
 }
 
@@ -320,7 +380,8 @@ async function compileTruthLedgerMarkdown(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): Promise<TruthLedgerResult> {
   const today = new Date().toISOString().slice(0, 10)
-  const analysisBlock = formatBriefingAnalysisBlock(input.category)
+  const briefingType = input.contentType ?? typeForCategory(input.category)
+  const analysisBlock = formatBriefingAnalysisBlock(input.category, briefingType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
 
   const prompt = `Use current web search. Today is ${today}.
@@ -337,18 +398,30 @@ CRITICAL RULES:
 - Cross-check across multiple independent outlets; label what is confirmed vs. developing/unconfirmed.
 - Neutral, clinical tone; no partisan framing.
 
+EDITORIAL SELF-CHECK (apply before finalizing — this briefing ships without a separate review):
+- Verify every claim is supported by a live search result; soften or remove anything unsupported.
+- Fix stale dates, wrong tense, and outdated denials of events that have since occurred.
+- Strip hype, loaded language, and speculation not grounded in the sources.
+- Keep deal terms, policy points, and stakeholders specific and attributed.
+
 Reliability Index rubric (assign honestly):
 - 8.0–10.0: multiple independent credible confirmations
 - 4.0–7.9: reported by credible outlets, some details unconfirmed or developing
 - 1.0–3.9: single source, heavily disputed, or sparse corroboration
 
-Use EXACTLY this Markdown structure with no extra sections:
+Use EXACTLY this Markdown structure and shape, with no extra sections:
 ## [ SYSTEMIC TOPIC TITLE ]
 **The Objective Brief:** (fact-dense summary of current reported state, key terms, and confidence level)
 ### THE TRUTH LEDGER
-**Sources Verified:** (placeholder — real URLs will be injected)
+**Sources Verified:**
+{{SOURCES}}
 **Reliability Index:** (number 1.0-10.0 per rubric above)
-${analysisBlock}`
+${analysisBlock}
+
+LANGUAGE & LOCALIZATION (critical):
+- Write the ENTIRE output in ${input.language}, INCLUDING every heading and bold label.
+- Translate the section labels into ${input.language} (the headings shown above in English — "The Objective Brief", "The Truth Ledger", "Sources Verified", "Reliability Index", "Analytical Insight" — are meaning guides; render them naturally in ${input.language}, NOT in English).
+- The ONLY text to keep verbatim is the token {{SOURCES}} on its own line under the Sources label — leave it exactly as-is; real source links are injected there afterwards.`
 
   let { text, sources } = await vertexGenerateGrounded(prompt, {
     useSearchGrounding: true,
@@ -393,13 +466,48 @@ ${analysisBlock}`
   return { markdown, sources, reliabilityIndex }
 }
 
-async function generateStoryThumbnail(title: string, category: string): Promise<string> {
-  const prompt = `Editorial conceptual illustration for a news deep-dive briefing about: "${title.slice(0, 120)}".
-Category: ${category}. Clean, neutral, symbolic imagery related to the topic.
-Muted slate and indigo palette, professional news-magazine style.
-No text, no logos, no watermarks, no faces of real people. Square composition.`
+/**
+ * Pulls the most illustration-worthy substance out of the briefing — the
+ * Objective Brief summary — so the cover art reflects the actual topic and key
+ * message rather than a generic category stock photo.
+ */
+function extractBriefKeyMessage(markdown: string): string {
+  const brief = markdown.match(/\*\*The Objective Brief:\*\*\s*([\s\S]*?)(?=\n###|\n\*\*|$)/i)
+  const text = (brief?.[1] ?? markdown).replace(/[#*>`_\[\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.slice(0, 600)
+}
 
-  const buffer = await vertexGenerateImage(prompt)
+function thumbnailStyleForType(type?: ContentType): string {
+  switch (type) {
+    case 'Education':
+      return 'Style: clean, instructional editorial illustration — clear, explanatory, diagrammatic feel. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
+    case 'Entertainment':
+      return 'Style: cinematic, dramatic editorial illustration with strong mood and atmosphere. Rich, moody palette. No text, no logos, no watermarks. Square composition.'
+    default:
+      return 'Style: clean, symbolic, professional news-magazine editorial illustration. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
+  }
+}
+
+async function generateStoryThumbnail(
+  title: string,
+  category: string,
+  keyMessage?: string,
+  contentType?: ContentType
+): Promise<string> {
+  const message = keyMessage?.trim()
+  const prompt = `Create a single editorial cover illustration that effectively illustrates the topic and the key message of this briefing.
+
+Topic: "${title.slice(0, 160)}"
+Category: ${category}${message ? `\n\nKey message to convey visually:\n${message}` : ''}
+
+Make the imagery specific and recognizable to this exact story — depict the concrete subjects, places, objects, settings, or symbolic scene at the heart of it, not a generic category symbol.
+IMPORTANT: Do NOT depict people, faces, portraits, or headshots. Use objects, environments, maps, symbolic motifs, and conceptual imagery instead.
+${thumbnailStyleForType(contentType)}`
+
+  const buffer = await vertexGenerateImage(prompt, {
+    aspectRatio: '1:1',
+    personGeneration: 'dont_allow',
+  })
   if (!buffer || !process.env.BLOB_READ_WRITE_TOKEN) {
     return getThumbnailForCategory(category)
   }
@@ -519,19 +627,123 @@ function trimScriptToLimits(script: PodcastScript): PodcastScript {
   return { directorNotes, turns, wordCount }
 }
 
+export type PodcastFormat =
+  | 'debate'
+  | 'explainer'
+  | 'educational'
+  | 'interview'
+  | 'investigative'
+  | 'analysis'
+
+const PODCAST_FORMATS: PodcastFormat[] = [
+  'debate',
+  'explainer',
+  'educational',
+  'interview',
+  'investigative',
+  'analysis',
+]
+
+interface PodcastClassification {
+  category: string
+  format: PodcastFormat
+}
+
+/**
+ * Lets the model categorize the on-demand podcast (for explore discovery) and
+ * pick the most fitting conversational format for the topic.
+ */
+async function classifyPodcast(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): Promise<PodcastClassification> {
+  const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const prompt = `Classify an on-demand podcast briefing for discovery and production.
+
+Topic: "${input.title}"
+${questionsBlock}
+Pick the single best CATEGORY from this list (exact spelling):
+${CONTENT_CATEGORIES.join(', ')}
+
+Pick the single best FORMAT for how two hosts should cover this topic:
+- debate: opposing viewpoints argued back and forth
+- explainer: clear walkthrough of a complex/confusing topic
+- educational: teaching fundamentals and context to a curious listener
+- interview: probing Q&A where one host leads and the other expounds
+- investigative: digging into evidence, motives, and unanswered questions
+- analysis: data-driven breakdown with comparisons and forecasts
+
+Return ONLY compact JSON: {"category":"<one category>","format":"<one format>"}`
+
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.1,
+    maxOutputTokens: 120,
+    model: VERTEX_FAST_MODEL,
+    useSearchGrounding: false,
+  })
+
+  const fallback: PodcastClassification = {
+    category: CONTENT_CATEGORIES.includes(input.category as never)
+      ? input.category
+      : 'Politics',
+    format: 'analysis',
+  }
+
+  if (!raw) return fallback
+
+  try {
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (!match) return fallback
+    const parsed = JSON.parse(match[0]) as { category?: string; format?: string }
+    const category = CONTENT_CATEGORIES.find(
+      (c) => c.toLowerCase() === (parsed.category ?? '').trim().toLowerCase()
+    )
+    const format = PODCAST_FORMATS.find(
+      (f) => f === (parsed.format ?? '').trim().toLowerCase()
+    )
+    return {
+      category: category ?? fallback.category,
+      format: format ?? fallback.format,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function formatGuidance(format: PodcastFormat): string {
+  switch (format) {
+    case 'debate':
+      return `FORMAT: DEBATE. ${HOST_A} and ${HOST_B} take genuinely opposing positions and argue them respectfully, each steel-manning their side before conceding strong points.`
+    case 'explainer':
+      return `FORMAT: EXPLAINER. ${HOST_A} asks the questions a smart newcomer would; ${HOST_B} unpacks the topic step by step, defining jargon and building intuition.`
+    case 'educational':
+      return `FORMAT: EDUCATIONAL. Teach the fundamentals first, then layer complexity. ${HOST_B} acts as the expert teacher; ${HOST_A} checks understanding and surfaces common misconceptions.`
+    case 'interview':
+      return `FORMAT: INTERVIEW. ${HOST_A} leads a probing Q&A; ${HOST_B} answers as the subject-matter authority with depth and candor.`
+    case 'investigative':
+      return `FORMAT: INVESTIGATIVE. Follow the evidence: motives, money, timeline, and unanswered questions. ${HOST_A} presses; ${HOST_B} weighs what the reporting does and does not support.`
+    case 'analysis':
+    default:
+      return `FORMAT: ANALYSIS. A data-driven breakdown — causal factors, comparisons, and forecasts. ${HOST_B} delivers the factor-by-factor analysis; ${HOST_A} pressure-tests it.`
+  }
+}
+
 async function generatePodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
-  editorialNotes?: string | null
+  editorialNotes?: string | null,
+  format: PodcastFormat = 'analysis'
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
-  const analysisBlock = formatPodcastAnalysisBlock(input.category, HOST_B)
+  const scriptType = input.contentType ?? typeForCategory(input.category)
+  const analysisBlock = formatPodcastAnalysisBlock(input.category, HOST_B, scriptType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
 
   const prompt = `Write the CORE BODY of a prestige intelligence podcast deep-dive in ${input.language} about: "${input.title}".
 ${questionsBlock}
 ${editorialNotes ? `\nEditorial guidance to weave into dialogue (do not contradict the briefing):\n${editorialNotes}\n` : ''}
 ${BRAND_NAME} delivers analytical intelligence NOT available in standard news — causal breakdowns, comparative analysis, and forecasts. This is NOT a recap show. The energy is sharp, dynamic, and confident.
+
+${formatGuidance(format)}
 
 Two hosts (a "duet" that bounces opposing viewpoints back and forth so the analysis feels balanced and unbiased):
 - ${HOST_A} (sharp, modern investigative correspondent — bright, articulate, poised): drives the deep dive with probing analytical questions and presses the counter-argument
@@ -542,7 +754,7 @@ ${briefingExcerpt}
 
 ${analysisBlock}
 
-Structure the body as 3-4 distinct chapters that move the listener forward, e.g.:
+Adapt the chapter structure to the chosen FORMAT, generally moving the listener forward, e.g.:
 1. The Context (how we got here)
 2. The Catalyst (what just changed)
 3. The Opposing Perspectives (steel-man both sides)
@@ -600,7 +812,7 @@ Produce exactly four labeled blocks, each 1-2 sentences, punchy and broadcast-gr
 HOOK: A TV-style cold-open. Lead with the single most startling fact, stakes, or controversy from the briefing. No greeting — drop the listener straight into the tension.
 INTRO: A branded welcome that follows this template, filled with the real topic and place: "Welcome to ${BRAND_NAME}, your unbiased deep-dive network. Today we're unpacking <the topic>, analyzing the data from a macro global lens down to local developments in ${region}." Adapt naturally into ${input.language}.
 SUMMARY: A rapid, objective 2-sentence recap of the core finding and the forecast.
-CTA: Exactly one call to action: invite the listener to generate their own custom-topic briefings in the ${BRAND_NAME} app. Confident, not pushy.
+CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the briefing they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.
 
 Rules:
 - Output ONLY the four lines, each beginning with its label (HOOK:, INTRO:, SUMMARY:, CTA:)
@@ -640,8 +852,17 @@ function assembleEpisode(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): PodcastScript {
   const region = geoFocusLabel(input)
-  const fallbackIntro = `Welcome to ${BRAND_NAME}, your unbiased deep-dive network. Today we're unpacking ${input.title}, analyzing the data from a macro global lens down to local developments in ${region}.`
-  const fallbackCta = `To generate your own custom-topic briefings, open the ${BRAND_NAME} app.`
+  // Bookends come from the model already written in the target language. The
+  // canned fallbacks below are English, so they may ONLY be used for English
+  // episodes — otherwise a failed bookends call would leak English narration
+  // into a non-English podcast.
+  const isEnglish = input.language.trim().toLowerCase() === 'english'
+  const fallbackIntro = isEnglish
+    ? `Welcome to ${BRAND_NAME}, your unbiased deep-dive network. Today we're unpacking ${input.title}, analyzing the data from a macro global lens down to local developments in ${region}.`
+    : ''
+  const fallbackCta = isEnglish
+    ? `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
+    : ''
 
   const hook = bookends?.hook?.trim()
   const intro = (bookends?.intro?.trim() || fallbackIntro).trim()
@@ -658,12 +879,14 @@ function assembleEpisode(
     })
   }
 
-  turns.push({
-    speaker: HOST_B,
-    text: truncateToBytes(`[warm] ${intro}`, TTS_MAX_TURN_BYTES),
-    chapterBreak: true,
-    role: 'intro',
-  })
+  if (intro) {
+    turns.push({
+      speaker: HOST_B,
+      text: truncateToBytes(`[warm] ${intro}`, TTS_MAX_TURN_BYTES),
+      chapterBreak: true,
+      role: 'intro',
+    })
+  }
 
   // Insert the analytical core, marking ~3 even chapter resets across the body.
   const coreTurns = core.turns
@@ -686,43 +909,114 @@ function assembleEpisode(
     })
   }
 
-  turns.push({
-    speaker: HOST_B,
-    text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
-    role: 'cta',
-  })
+  if (cta) {
+    turns.push({
+      speaker: HOST_B,
+      text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
+      role: 'cta',
+    })
+  }
 
   const wordCount = turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0)
   return { directorNotes: core.directorNotes, turns, wordCount }
 }
 
+const TTS_MAX_ATTEMPTS = 4
+
+/**
+ * Synthesizes one line. Retries transient failures (rate limits, 5xx, network
+ * errors, empty bodies) with backoff. CRITICAL: this must NEVER throw — each
+ * line is one entry in a concurrent pool, and a throw would reject the whole
+ * batch (Promise.all) and silently drop a speaker's dialogue. On unrecoverable
+ * failure it returns null, and the caller is responsible for not leaving a gap.
+ */
 async function callGeminiTts(
   token: string,
   body: Record<string, unknown>,
   attempt = 1
 ): Promise<Buffer | null> {
-  const res = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
+  const voice = (body as { voice?: { name?: string; modelName?: string } }).voice
+  try {
+    const res = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
 
-  if (res.status === 429 && attempt < 3) {
-    await sleep(attempt * 5000)
-    return callGeminiTts(token, body, attempt + 1)
-  }
+    // Rate limits and server errors are transient — back off and retry.
+    if ((res.status === 429 || res.status >= 500) && attempt < TTS_MAX_ATTEMPTS) {
+      await sleep(attempt * 4000)
+      return callGeminiTts(token, body, attempt + 1)
+    }
 
-  if (!res.ok) {
-    console.error('[tts] synthesize failed:', res.status, await res.text().catch(() => ''))
+    if (!res.ok) {
+      console.error(
+        '[tts] synthesize failed:',
+        res.status,
+        `voice=${voice?.name} model=${voice?.modelName}`,
+        await res.text().catch(() => '')
+      )
+      return null
+    }
+
+    const data = (await res.json()) as { audioContent?: string }
+    if (!data.audioContent) {
+      if (attempt < TTS_MAX_ATTEMPTS) {
+        await sleep(attempt * 2000)
+        return callGeminiTts(token, body, attempt + 1)
+      }
+      console.error('[tts] empty audioContent for', `voice=${voice?.name}`)
+      return null
+    }
+    return Buffer.from(data.audioContent, 'base64')
+  } catch (err) {
+    if (attempt < TTS_MAX_ATTEMPTS) {
+      await sleep(attempt * 3000)
+      return callGeminiTts(token, body, attempt + 1)
+    }
+    console.error('[tts] network error for', `voice=${voice?.name}`, err)
     return null
   }
+}
 
-  const data = (await res.json()) as { audioContent?: string }
-  if (!data.audioContent) return null
-  return Buffer.from(data.audioContent, 'base64')
+/**
+ * Brief guardrail merged into each Gemini-TTS style prompt. Kept short on
+ * purpose: a long, forceful "voice actor" instruction made the model over-
+ * perform and drag the cadence. The real protection against spoken director
+ * notes is `sanitizeSpokenText` (it strips them from the text entirely); this
+ * just covers the bracket emotion tags we intentionally leave in.
+ */
+const TTS_VOICE_GUARDRAIL =
+  'Treat any [bracketed] cues as performance direction only — never say them aloud.'
+
+/**
+ * Strips structural/metadata artifacts the TTS model occasionally verbalizes.
+ * Bracketed emotion tags (e.g. [curious]) are kept — Gemini-TTS interprets those
+ * paralinguistically — but director-note labels and speaker prefixes are removed.
+ */
+function sanitizeSpokenText(text: string): string {
+  let cleaned = text
+  // Remove explicit director-note / scene blocks anywhere in the line.
+  cleaned = cleaned.replace(/director'?s?\s*notes?\s*[:\-—][^\n]*/gi, '')
+  cleaned = cleaned.replace(/\bdirector_notes\s*[:\-—][^\n]*/gi, '')
+  // Remove leading meta labels the model sometimes echoes back.
+  cleaned = cleaned.replace(
+    /^\s*(note|scene|tone|stage direction|narrator|host\s*[ab]?|sarah(?:\s*chen)?|dr\.?\s*(?:benjamin\s*)?anderson)\s*[:\-—]\s*/i,
+    ''
+  )
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').trim()
+  // Never return empty — an empty TTS input fails the request. Keep the original
+  // line (minus only director-note blocks) if sanitizing stripped everything.
+  return cleaned || text.replace(/\s{2,}/g, ' ').trim()
+}
+
+function buildVoiceStylePrompt(directorNotes: string, hostStyle: string): string {
+  // Lead with the host's voice + scene so they set the primary delivery; the
+  // short guardrail trails so it can't dominate pacing.
+  return `${hostStyle} ${directorNotes} ${TTS_VOICE_GUARDRAIL}`.replace(/\s{2,}/g, ' ').trim()
 }
 
 function buildSingleSpeakerTtsBody(
@@ -731,12 +1025,12 @@ function buildSingleSpeakerTtsBody(
   locale: ReturnType<typeof getVoiceForLanguage>
 ): Record<string, unknown> {
   const host = hostProfileForSpeaker(line.speaker)
-  const stylePrompt = `${directorNotes} ${host.ttsStylePrompt}`.trim()
+  const stylePrompt = buildVoiceStylePrompt(directorNotes, host.ttsStylePrompt)
 
   return {
     input: {
       prompt: stylePrompt,
-      text: line.text,
+      text: sanitizeSpokenText(line.text),
     },
     voice: {
       languageCode: locale.languageCode,
@@ -756,14 +1050,14 @@ async function synthesizeSingleVoiceFallback(
   script: PodcastScript,
   locale: ReturnType<typeof getVoiceForLanguage>
 ): Promise<Buffer[]> {
-  const joinedText = script.turns.map((turn) => turn.text).join(' ')
+  const joinedText = script.turns.map((turn) => sanitizeSpokenText(turn.text)).join(' ')
   const chunks = splitTextIntoByteChunks(joinedText, 3900)
 
   const results = await Promise.all(
     chunks.map((text) =>
       callGeminiTts(token, {
         input: {
-          prompt: `${script.directorNotes} Deliver as an engaging podcast narration.`,
+          prompt: buildVoiceStylePrompt(script.directorNotes, 'Deliver as an engaging podcast narration.'),
           text,
         },
         voice: {
@@ -834,7 +1128,8 @@ async function uploadAudioSegment(
 async function synthesizePodcastAudio(
   script: PodcastScript,
   language: string,
-  title: string
+  title: string,
+  contentType?: ContentType
 ): Promise<{ url: string; durationSeconds: number; segments: AudioSegment[] } | null> {
   const token = await getVertexAccessToken()
   if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
@@ -849,7 +1144,7 @@ async function synthesizePodcastAudio(
     text: line.text,
     role: line.role,
   }))
-  const imagePrompts = await generateLineImagePrompts(promptInputs)
+  const imagePrompts = await generateLineImagePrompts(promptInputs, illustrationStyleForType(contentType))
   const lines = attachImagePrompts(rawLines, imagePrompts)
 
   const lineBuffers = await mapPool(lines, TTS_CONCURRENCY, async (line) =>
@@ -910,30 +1205,49 @@ export async function compileAndCacheStory(
     }
   }
 
-  const taxonomyKey = buildTaxonomyKey({
-    language: input.language,
-    category: input.category,
-    geoScope: input.geoScope as 'Worldwide' | 'Region' | 'Country' | 'State/Province' | 'Local',
-    geoRegion: input.geoRegion,
-    geoCountry: input.geoCountry,
-    geoState: input.geoState,
-    geoLocal: input.geoLocal,
-    languages: [input.language as never],
-    categories: [input.category as never],
-  })
-
   const compiledAt = new Date().toISOString()
 
   report('analysis', 5)
 
-  const [topicKey, ledger] = await Promise.all([
+  const [topicKey, ledger, classification] = await Promise.all([
     canonicalTopicKey(input),
     compileTruthLedgerMarkdown(input),
+    classifyPodcast(input),
   ])
 
-  const reusedThumbnail = await findReusableThumbnail(topicKey, input)
-  let { markdown: markdownContent, sources, reliabilityIndex } = ledger
-  const draftThumbnail = reusedThumbnail ?? getThumbnailForCategory(input.category)
+  // The model categorizes the podcast for explore discovery; an explicit
+  // user-chosen category still wins. It also picks the conversational format.
+  const resolvedCategory = CONTENT_CATEGORIES.includes(input.category as never)
+    ? input.category
+    : classification.category
+  // The user-chosen Type drives framework + illustration style; fall back to
+  // inferring it from the resolved category (e.g. for "Top" browse generations).
+  const podcastType: ContentType = input.contentType ?? typeForCategory(resolvedCategory)
+  // Education/Entertainment have a fixed conversational mode; News keeps the
+  // model-picked format.
+  const podcastFormat: PodcastFormat =
+    podcastType === 'Education'
+      ? 'educational'
+      : podcastType === 'Entertainment'
+        ? 'investigative'
+        : classification.format
+  const resolvedInput = { ...input, category: resolvedCategory, contentType: podcastType }
+
+  const taxonomyKey = buildTaxonomyKey({
+    language: resolvedInput.language,
+    category: resolvedCategory,
+    geoScope: resolvedInput.geoScope as 'Worldwide' | 'Region' | 'Country' | 'State/Province' | 'Local',
+    geoRegion: resolvedInput.geoRegion,
+    geoCountry: resolvedInput.geoCountry,
+    geoState: resolvedInput.geoState,
+    geoLocal: resolvedInput.geoLocal,
+    languages: [resolvedInput.language as never],
+    categories: [resolvedCategory as never],
+  })
+
+  const reusedThumbnail = await findReusableThumbnail(topicKey, resolvedInput)
+  const { markdown: markdownContent, sources, reliabilityIndex } = ledger
+  const draftThumbnail = reusedThumbnail ?? getThumbnailForCategory(resolvedCategory)
 
   report('analysis', 28)
 
@@ -941,7 +1255,7 @@ export async function compileAndCacheStory(
     data: {
       title: input.title,
       language: input.language,
-      category: input.category,
+      category: resolvedCategory,
       geoScope: input.geoScope,
       geoRegion: input.geoRegion,
       geoCountry: input.geoCountry,
@@ -956,6 +1270,8 @@ export async function compileAndCacheStory(
         topicKey,
         compiledAt,
         generating: true,
+        contentType: podcastType,
+        podcastFormat,
         sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
         sourceCount: sources.length,
         domainCount: uniqueDomains(sources),
@@ -970,62 +1286,36 @@ export async function compileAndCacheStory(
 
   report('draft', 32, { storyId: draftStory.id, markdownContent })
 
-  report('editorial', 38)
+  report('editorial', 44)
 
-  const [briefingReview, freshThumbnail] = await Promise.all([
-    reviewBriefing({
-      title: input.title,
-      language: input.language,
-      category: input.category,
-      geoScope: input.geoScope,
-      markdown: markdownContent,
-      sources,
-      reliabilityIndex,
-    }),
+  // The editorial checklist is now folded into the first-pass briefing prompt,
+  // so the briefing ships without a separate (slow, blocking) review. The
+  // podcast script and episode bookends only depend on the briefing markdown,
+  // so they run in parallel with the cover art instead of in a serial chain.
+  const [thumbnailUrl, draftScript, bookends] = await Promise.all([
     reusedThumbnail
       ? Promise.resolve(reusedThumbnail)
-      : generateStoryThumbnail(input.title, input.category),
+      : generateStoryThumbnail(input.title, resolvedCategory, extractBriefKeyMessage(markdownContent), podcastType),
+    generatePodcastScript(resolvedInput, markdownContent, null, podcastFormat),
+    generateEpisodeBookends(resolvedInput, markdownContent),
   ])
 
-  const thumbnailUrl = reusedThumbnail ?? freshThumbnail
-
-  if (briefingReview.updateBaseline) {
-    markdownContent = briefingReview.markdown
-    sources = briefingReview.sources
-    reliabilityIndex = briefingReview.reliabilityIndex
-    await prisma.story.update({
-      where: { id: draftStory.id },
-      data: { markdownContent, reliabilityIndex },
-    })
-    report('draft', 40, { storyId: draftStory.id, markdownContent })
-  } else {
-    sources = briefingReview.sources
-  }
-
-  report('editorial', 52)
-
-  const draftScript = await generatePodcastScript(
-    input,
-    markdownContent,
-    briefingReview.updateBaseline ? null : briefingReview.editorialNotes
-  )
-
-  report('podcast', 58)
+  report('podcast', 60)
 
   let podcastScript: PodcastScript | null = draftScript
   let scriptRevised = false
   if (draftScript) {
-    report('podcast', 64)
+    report('podcast', 66)
     const scriptReview = await reviewPodcastScript(
       {
         title: input.title,
         language: input.language,
-        category: input.category,
+        category: resolvedCategory,
         markdown: markdownContent,
         script: draftScript,
         hostA: HOST_A,
         hostB: HOST_B,
-        editorialNotes: briefingReview.updateBaseline ? null : briefingReview.editorialNotes,
+        editorialNotes: null,
       },
       parsePodcastScript,
       trimScriptToLimits
@@ -1034,14 +1324,24 @@ export async function compileAndCacheStory(
     scriptRevised = scriptReview.revised
   }
 
-  const bookends = await generateEpisodeBookends(input, markdownContent)
-
-  const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, input) : null
+  const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, resolvedInput) : null
 
   report('podcast', 72)
-  const audio = episodeScript
-    ? await synthesizePodcastAudio(episodeScript, input.language, input.title)
-    : null
+  // Audio is best-effort: a TTS/upload failure must not strand the story as an
+  // unfinalized draft. We always finalize with the brief; audio fills in when it
+  // succeeds, and the story stays readable (and retryable) when it doesn't.
+  let audio: Awaited<ReturnType<typeof synthesizePodcastAudio>> = null
+  try {
+    audio = episodeScript
+      ? await synthesizePodcastAudio(episodeScript, input.language, input.title, podcastType)
+      : null
+    if (episodeScript && !audio) {
+      console.error('[generate-story] audio synthesis returned no segments for', draftStory.id)
+    }
+  } catch (err) {
+    console.error('[generate-story] audio synthesis threw for', draftStory.id, err)
+    audio = null
+  }
 
   report('saving', 94)
   const story = await prisma.story.update({
@@ -1057,13 +1357,13 @@ export async function compileAndCacheStory(
         taxonomyKey,
         topicKey,
         compiledAt,
+        contentType: podcastType,
         sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
         sourceCount: sources.length,
         domainCount: uniqueDomains(sources),
         audioSegments: audio?.segments ? (serializeAudioSegments(audio.segments) as object[]) : null,
         editorialReview: {
-          briefingRevised: briefingReview.revised,
-          briefingBaselineUpdated: briefingReview.updateBaseline,
+          editorialFoldedIntoDraft: true,
           scriptRevised,
         },
       },

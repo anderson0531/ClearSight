@@ -4,34 +4,18 @@ import { useMemo } from 'react'
 import type { GeoScope, TaxonomyFilter } from '@/lib/taxonomy'
 import {
   GEO_REGIONS,
-  getCitiesForState,
-  getCountriesForRegion,
+  getAllCountries,
+  getCitiesForCountry,
   getStatesForCountry,
   inferRegionFromCountry,
   mergeOption,
 } from '@/lib/geo-catalog'
-import { GeoSearchSelect, GeoSelect } from '@/components/layout/GeoSelect'
+import { GeoCombobox, GeoSelect } from '@/components/layout/GeoSelect'
 import { useTranslations } from '@/i18n/I18nProvider'
 
 interface GeoFocusSelectorsProps {
   value: TaxonomyFilter
   onChange: (next: TaxonomyFilter) => void
-}
-
-function needsRegion(scope: GeoScope): boolean {
-  return scope === 'Region' || scope === 'Country' || scope === 'State/Province' || scope === 'Local'
-}
-
-function needsCountry(scope: GeoScope): boolean {
-  return scope === 'Country' || scope === 'State/Province' || scope === 'Local'
-}
-
-function needsState(scope: GeoScope): boolean {
-  return scope === 'State/Province' || scope === 'Local'
-}
-
-function needsLocal(scope: GeoScope): boolean {
-  return scope === 'Local'
 }
 
 export function GeoFocusSelectors({ value, onChange }: GeoFocusSelectorsProps) {
@@ -43,70 +27,45 @@ export function GeoFocusSelectors({ value, onChange }: GeoFocusSelectorsProps) {
     [value.geoRegion]
   )
 
-  const countryOptions = useMemo(() => {
-    const base = getCountriesForRegion(value.geoRegion)
-    return mergeOption(value.geoCountry, base)
-  }, [value.geoRegion, value.geoCountry])
+  const countryOptions = useMemo(() => getAllCountries(), [])
 
-  const stateOptions = useMemo(() => {
-    const base = getStatesForCountry(value.geoCountry)
-    return mergeOption(value.geoState, base)
-  }, [value.geoCountry, value.geoState])
+  const stateOptions = useMemo(
+    () => getStatesForCountry(value.geoCountry),
+    [value.geoCountry]
+  )
 
-  const localOptions = useMemo(() => {
-    const base = getCitiesForState(value.geoCountry, value.geoState)
-    return mergeOption(value.geoLocal, base)
-  }, [value.geoCountry, value.geoState, value.geoLocal])
+  const localOptions = useMemo(
+    () => getCitiesForCountry(value.geoCountry),
+    [value.geoCountry]
+  )
 
   const setRegion = (geoRegion: string) => {
-    const nextRegion = geoRegion || undefined
-    const countryStillValid =
-      !value.geoCountry || getCountriesForRegion(nextRegion).includes(value.geoCountry)
-
-    onChange({
-      ...value,
-      geoRegion: nextRegion,
-      geoCountry: countryStillValid ? value.geoCountry : undefined,
-      geoState: countryStillValid ? value.geoState : undefined,
-      geoLocal: countryStillValid ? value.geoLocal : undefined,
-    })
+    onChange({ ...value, geoRegion: geoRegion || undefined })
   }
 
+  // Country can be typed/picked directly — region is inferred for context, not required.
   const setCountry = (geoCountry: string) => {
     const nextCountry = geoCountry || undefined
     const inferredRegion = nextCountry ? inferRegionFromCountry(nextCountry) : undefined
-    const stateStillValid =
-      !value.geoState || getStatesForCountry(nextCountry).includes(value.geoState)
-
     onChange({
       ...value,
-      geoRegion: inferredRegion ?? value.geoRegion,
       geoCountry: nextCountry,
-      geoState: stateStillValid ? value.geoState : undefined,
-      geoLocal: stateStillValid ? value.geoLocal : undefined,
+      geoRegion: inferredRegion ?? value.geoRegion,
     })
   }
 
   const setState = (geoState: string) => {
-    const nextState = geoState || undefined
-    const localStillValid =
-      !value.geoLocal ||
-      getCitiesForState(value.geoCountry, nextState).includes(value.geoLocal)
-
-    onChange({
-      ...value,
-      geoState: nextState,
-      geoLocal: localStillValid ? value.geoLocal : undefined,
-    })
+    onChange({ ...value, geoState: geoState || undefined })
   }
 
   const setLocal = (geoLocal: string) => {
     onChange({ ...value, geoLocal: geoLocal || undefined })
   }
 
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {needsRegion(scope) ? (
+  // World region: a continent-scale area (Europe, Asia-Pacific, …).
+  if (scope === 'Region') {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
         <GeoSelect
           label={t('geoRegion')}
           value={value.geoRegion ?? ''}
@@ -114,46 +73,65 @@ export function GeoFocusSelectors({ value, onChange }: GeoFocusSelectorsProps) {
           placeholder={t('geoSelectRegion')}
           onChange={setRegion}
         />
-      ) : null}
+      </div>
+    )
+  }
 
-      {needsCountry(scope) ? (
-        <GeoSelect
+  if (scope === 'Country') {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <GeoCombobox
           label={t('geoCountry')}
           value={value.geoCountry ?? ''}
           options={countryOptions}
-          placeholder={
-            value.geoRegion ? t('geoSelectCountry') : t('geoSelectRegionFirst')
-          }
+          placeholder={t('geoCountryPlaceholder')}
           onChange={setCountry}
-          disabled={!value.geoRegion}
         />
-      ) : null}
+      </div>
+    )
+  }
 
-      {needsState(scope) ? (
-        <GeoSearchSelect
+  // Country subdivision (state / province / region) — free text so it works for ANY country.
+  if (scope === 'State/Province') {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <GeoCombobox
           label={t('geoState')}
           value={value.geoState ?? ''}
-          options={stateOptions}
-          placeholder={
-            value.geoCountry ? t('geoSelectState') : t('geoSelectCountryFirst')
-          }
-          searchPlaceholder={t('geoSearchState')}
+          options={mergeOption(value.geoState, stateOptions)}
+          placeholder={t('geoStatePlaceholder')}
+          helpText={t('geoStateHelp')}
           onChange={setState}
-          disabled={!value.geoCountry}
         />
-      ) : null}
+        <GeoCombobox
+          label={t('geoCountryOptional')}
+          value={value.geoCountry ?? ''}
+          options={countryOptions}
+          placeholder={t('geoCountryPlaceholder')}
+          onChange={setCountry}
+        />
+      </div>
+    )
+  }
 
-      {needsLocal(scope) ? (
-        <GeoSearchSelect
-          label={t('geoLocal')}
-          value={value.geoLocal ?? ''}
-          options={localOptions}
-          placeholder={value.geoState ? t('geoSelectLocal') : t('geoSelectStateFirst')}
-          searchPlaceholder={t('geoSearchLocal')}
-          onChange={setLocal}
-          disabled={!value.geoState}
-        />
-      ) : null}
+  // Local: any city or town worldwide — enter directly, country is optional context.
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <GeoCombobox
+        label={t('geoLocal')}
+        value={value.geoLocal ?? ''}
+        options={mergeOption(value.geoLocal, localOptions)}
+        placeholder={t('geoLocalPlaceholder')}
+        helpText={t('geoLocalHelp')}
+        onChange={setLocal}
+      />
+      <GeoCombobox
+        label={t('geoCountryOptional')}
+        value={value.geoCountry ?? ''}
+        options={countryOptions}
+        placeholder={t('geoCountryPlaceholder')}
+        onChange={setCountry}
+      />
     </div>
   )
 }

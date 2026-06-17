@@ -297,7 +297,7 @@ export function AudioPlayer() {
   const buffered = totalDuration > 0 ? Math.min(100, (globalBuffered / totalDuration) * 100) : 0
 
   return (
-    <footer className="glass-header fixed bottom-0 start-0 end-0 z-50 safe-area-bottom">
+    <footer className="audio-player-bar glass-header fixed bottom-0 start-0 end-0 z-50 safe-area-bottom">
       <audio ref={musicRef} preload="auto" aria-hidden className="hidden" />
       <audio
         ref={audioRef}

@@ -40,6 +40,7 @@ export async function POST(request: Request) {
 
   switch (event.action) {
     case WHOP_EVENTS.MEMBERSHIP_ACTIVATED:
+      // TODO: map event.data.plan_id to User.plan (FREE | PREMIUM | CREATOR) when Whop products are configured
       await provisionSubscriptionCycle(user.id)
       break
 

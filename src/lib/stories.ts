@@ -139,9 +139,11 @@ function buildWhereClause(filter: TaxonomyFilter, topCategory: boolean) {
 
 export async function listStories(
   filter: TaxonomyFilter,
-  options: { playableOnly?: boolean; onProgress?: StoriesFetchProgressFn } = {}
+  options: { playableOnly?: boolean; sort?: 'recent' | 'top'; onProgress?: StoriesFetchProgressFn } = {}
 ): Promise<StoryCard[]> {
-  const { playableOnly = false, onProgress } = options
+  const { playableOnly = false, sort = 'recent', onProgress } = options
+  // "Top" ranking only makes sense for finished, playable episodes.
+  const wantPlayable = playableOnly || sort === 'top'
   const primaryCategory = filter.categories[0]
   const topCategory = primaryCategory ? isTopCategory(primaryCategory) : true
 
@@ -158,13 +160,13 @@ export async function listStories(
 
     const where = {
       ...buildWhereClause(filter, topCategory),
-      ...(playableOnly ? { audioUrl: { not: null } } : {}),
+      ...(wantPlayable ? { audioUrl: { not: null } } : {}),
     }
 
     const rows = await prisma.story.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: playableOnly ? 50 : TARGET_COUNT * 2,
+      take: wantPlayable ? 50 : TARGET_COUNT * 2,
     })
 
     report('catalog', 32)
@@ -172,9 +174,13 @@ export async function listStories(
     const dedupedRows = dedupeDbRows(rows)
     const generated = dedupedRows.map(mapStory)
 
-    if (playableOnly) {
+    if (wantPlayable) {
+      const ranked =
+        sort === 'top'
+          ? [...generated].sort((a, b) => (b.reliabilityIndex ?? 0) - (a.reliabilityIndex ?? 0))
+          : generated
       report('done', 100)
-      return generated.slice(0, 50)
+      return ranked.slice(0, 50)
     }
 
     if (generated.length >= TARGET_COUNT) {

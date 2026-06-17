@@ -2,10 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X } from 'lucide-react'
+import { Mic, X } from 'lucide-react'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import { setPendingGeneration } from '@/lib/generation-session'
-import { inferCategoryFromTitle } from '@/lib/user-topics'
 import { isTopCategory, type Category } from '@/lib/taxonomy'
 import { useTranslations } from '@/i18n/I18nProvider'
 
@@ -23,10 +22,12 @@ function geoFocusSummary(filter: TaxonomyFilter): string {
   )
 }
 
-function resolveCategory(filter: TaxonomyFilter, title: string): string {
+function resolveCategory(filter: TaxonomyFilter): string {
   const primary = filter.categories[0] ?? 'Top'
+  // Leave general topics as "Top" so the AI categorizes the podcast for explore;
+  // an explicitly selected category is respected as the user's intent.
   if (isTopCategory(primary as Category)) {
-    return inferCategoryFromTitle(title)
+    return 'Top'
   }
   return primary
 }
@@ -65,7 +66,8 @@ export function AddTopicDialog({ filter }: AddTopicDialogProps) {
     setPendingGeneration({
       title: trimmedTitle,
       language: filter.languages[0] ?? 'English',
-      category: resolveCategory(filter, trimmedTitle),
+      category: resolveCategory(filter),
+      contentType: filter.contentType,
       geoScope: filter.geoScope,
       geoRegion: filter.geoRegion,
       geoCountry: filter.geoCountry,
@@ -81,8 +83,8 @@ export function AddTopicDialog({ filter }: AddTopicDialogProps) {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="btn-accent mb-4">
-        <Plus className="h-4 w-4" />
-        {t('addTopicButton')}
+        <Mic className="h-4 w-4" />
+        {t('onDemandPodcastButton')}
       </button>
 
       {open ? (
@@ -100,7 +102,8 @@ export function AddTopicDialog({ filter }: AddTopicDialogProps) {
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('addTopicTitle')}</h3>
+                <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('onDemandPodcastTitle')}</h3>
+                <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('onDemandPodcastSubtitle')}</p>
                 <p className="mt-1 text-xs text-[var(--muted-strong)]">
                   {t('addTopicGeoHint', { geo: geoFocusSummary(filter) })}
                 </p>
@@ -158,7 +161,8 @@ export function AddTopicDialog({ filter }: AddTopicDialogProps) {
                 {t('close')}
               </button>
               <button type="submit" className="btn-accent justify-center" disabled={title.trim().length < 3}>
-                {t('createBriefing')}
+                <Mic className="h-4 w-4" />
+                {t('onDemandPodcastCreate')}
               </button>
             </div>
           </form>

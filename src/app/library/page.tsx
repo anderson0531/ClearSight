@@ -1,33 +1,112 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Play, Trash2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import {
+  Play,
+  Trash2,
+  Heart,
+  ListMusic,
+  Search as SearchIcon,
+  Mic,
+  Mic2,
+  BarChart3,
+  X,
+} from 'lucide-react'
 import { PageShell } from '@/components/layout/PageShell'
-import { useTranslations } from '@/i18n/I18nProvider'
+import { useUser } from '@/components/providers/UserProvider'
+import { useI18n } from '@/i18n/I18nProvider'
+import type { TaxonomyFilter } from '@/lib/taxonomy'
+import {
+  SAVED_SEARCHES_EVENT,
+  loadSavedSearches,
+  removeSavedSearch,
+  type SavedSearch,
+} from '@/lib/saved-searches'
+import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
 import { useAudioQueue } from '@/store/useAudioQueue'
 
+function LibrarySection({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string
+  icon: typeof Heart
+  children: React.ReactNode
+}) {
+  return (
+    <section className="mb-8">
+      <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--muted)]">
+        <Icon className="h-4 w-4" />
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
+
+function EmptyCard({ message }: { message: string }) {
+  return (
+    <div className="glass-panel rounded-xl px-5 py-6 text-sm text-[var(--muted-strong)]">
+      {message}
+    </div>
+  )
+}
+
 export default function LibraryPage() {
-  const t = useTranslations()
+  const { t, locale } = useI18n()
+  const router = useRouter()
+  const { plan } = useUser()
   const queue = useAudioQueue((s) => s.queue)
   const currentTrack = useAudioQueue((s) => s.currentTrack)
   const recentTracks = useAudioQueue((s) => s.recentTracks)
   const playTrack = useAudioQueue((s) => s.playTrack)
   const removeFromQueue = useAudioQueue((s) => s.removeFromQueue)
 
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
+
+  useEffect(() => {
+    const sync = () => setSavedSearches(loadSavedSearches())
+    sync()
+    window.addEventListener(SAVED_SEARCHES_EVENT, sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(SAVED_SEARCHES_EVENT, sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [])
+
   const upNext = queue.filter((track) => track.id !== currentTrack?.id)
+
+  const openSavedSearch = (search: SavedSearch) => {
+    // Restore the saved criteria but pin the language to the current locale so
+    // discovery only ever surfaces the selected language.
+    const restored: TaxonomyFilter = {
+      ...search.filter,
+      languages: [locale.englishName as TaxonomyFilter['languages'][number]],
+    }
+    persistTaxonomyFilter(restored)
+    router.push('/search')
+  }
+
+  const handleRemoveSavedSearch = (id: string) => {
+    setSavedSearches(removeSavedSearch(id))
+  }
+
+  const isPremium = plan === 'PREMIUM' || plan === 'CREATOR'
+  const isCreator = plan === 'CREATOR'
 
   return (
     <PageShell title={t('libraryTitle')}>
-      <section className="mb-10">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-[var(--muted)]">
-          {t('libraryQueue')}
-        </h2>
+      <LibrarySection title={t('libraryQueue')} icon={ListMusic}>
         {upNext.length === 0 ? (
           <div className="glass-panel rounded-xl p-8 text-center">
             <p className="text-[var(--foreground)]">{t('libraryEmpty')}</p>
             <p className="mt-1 text-sm text-[var(--muted-strong)]">{t('libraryEmptyHint')}</p>
-            <Link href="/" className="btn-accent mt-4">
-              {t('navDiscover')}
+            <Link href="/search" className="btn-accent mt-4">
+              {t('navSearch')}
             </Link>
           </div>
         ) : (
@@ -62,13 +141,67 @@ export default function LibraryPage() {
             ))}
           </ul>
         )}
-      </section>
+      </LibrarySection>
+
+      <LibrarySection title={t('librarySavedSearches')} icon={SearchIcon}>
+        {savedSearches.length === 0 ? (
+          <EmptyCard message={t('librarySavedSearchesEmpty')} />
+        ) : (
+          <ul className="space-y-2">
+            {savedSearches.map((search) => (
+              <li
+                key={search.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-white/[0.03] px-4 py-3"
+              >
+                <button
+                  type="button"
+                  onClick={() => openSavedSearch(search)}
+                  className="min-w-0 flex-1 truncate text-left text-sm font-medium text-[var(--foreground)] hover:text-[#c7cff0]"
+                  title={t('librarySavedSearchOpen')}
+                >
+                  {search.label}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveSavedSearch(search.id)}
+                  className="rounded p-2 text-[var(--muted)] hover:text-red-400 min-h-10 min-w-10"
+                  aria-label={t('librarySavedSearchRemove')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </LibrarySection>
+
+      <LibrarySection title={t('libraryLiked')} icon={Heart}>
+        <EmptyCard message={t('libraryLikedEmpty')} />
+      </LibrarySection>
+
+      <LibrarySection title={t('libraryPlaylists')} icon={ListMusic}>
+        <EmptyCard message={t('libraryPlaylistsEmpty')} />
+      </LibrarySection>
+
+      {isPremium ? (
+        <LibrarySection title={t('libraryOnDemand')} icon={Mic}>
+          <EmptyCard message={t('libraryOnDemandEmpty')} />
+        </LibrarySection>
+      ) : null}
+
+      {isCreator ? (
+        <>
+          <LibrarySection title={t('libraryChannels')} icon={Mic2}>
+            <EmptyCard message={t('libraryChannelsEmpty')} />
+          </LibrarySection>
+          <LibrarySection title={t('libraryTopRated')} icon={BarChart3}>
+            <EmptyCard message={t('libraryTopRatedEmpty')} />
+          </LibrarySection>
+        </>
+      ) : null}
 
       {recentTracks.length > 0 ? (
-        <section>
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {t('libraryRecent')}
-          </h2>
+        <LibrarySection title={t('libraryRecent')} icon={Play}>
           <ul className="space-y-2">
             {recentTracks.map((track) => (
               <li
@@ -92,7 +225,7 @@ export default function LibraryPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </LibrarySection>
       ) : null}
     </PageShell>
   )

@@ -8,11 +8,18 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
+enum Plan {
+  FREE
+  PREMIUM
+  CREATOR
+}
+
 model User {
   id                   String       @id @default(cuid())
   whopUserId           String?      @unique
   email                String?
   affiliateCode        String?
+  plan                 Plan         @default(FREE)
   coreTokens           Int          @default(0)
   subscriptionActive   Boolean      @default(false)
   subscriptionCycleStart DateTime?

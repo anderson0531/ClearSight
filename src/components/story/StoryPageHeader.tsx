@@ -1,14 +1,18 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
-import { Clapperboard, Clock, Globe, Shield } from 'lucide-react'
+import { Clapperboard, Clock, Globe, Images, Loader2, Shield, Sparkles } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
 import { ShareBriefingButton } from '@/components/story/ShareBriefingButton'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
-import { AnimaticStage, type AnimaticStageHandle } from '@/components/story/AnimaticStage'
-import { AppHeader } from '@/components/layout/AppHeader'
-import { DEFAULT_TAXONOMY } from '@/lib/taxonomy'
+import {
+  AnimaticStage,
+  type AnimaticStageHandle,
+  type AnimaticStageState,
+} from '@/components/story/AnimaticStage'
+import { useUser } from '@/components/providers/UserProvider'
+import { canGenerateOnDemand } from '@/lib/plans'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
 import type { AudioSegment } from '@/types/story'
@@ -46,7 +50,14 @@ export function StoryPageHeader({
   thumbnailUrl,
 }: StoryHeaderProps) {
   const t = useTranslations()
+  const { plan } = useUser()
+  const canIllustrate = canGenerateOnDemand(plan)
   const animaticRef = useRef<AnimaticStageHandle>(null)
+  const [animaticState, setAnimaticState] = useState<AnimaticStageState>({
+    canView: false,
+    isGenerating: false,
+    hasIllustrations: false,
+  })
   const categoryKey = CATEGORY_MESSAGE_KEYS[category]
   const categoryLabel = categoryKey ? t(categoryKey) : category
 
@@ -54,17 +65,19 @@ export function StoryPageHeader({
     animaticRef.current?.openView()
   }
 
+  const handleIllustrate = () => {
+    animaticRef.current?.generateIllustrations()
+  }
+
   return (
-    <>
-      <AppHeader value={DEFAULT_TAXONOMY} onChange={() => {}} showFilters={false} />
-      <header className="border-b border-[var(--border)] bg-[var(--surface)]">
-        <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
-          <Link
-            href="/"
-            className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
-          >
-            ← {t('backToDiscover')}
-          </Link>
+    <header className="border-b border-[var(--border)] bg-[var(--surface)]">
+      <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
+        <Link
+          href="/"
+          className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+        >
+          ← {t('backToHome')}
+        </Link>
 
           <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
             {thumbnailUrl ? (
@@ -132,6 +145,45 @@ export function StoryPageHeader({
                   <Clapperboard className="h-4 w-4" />
                   {t('viewBriefing')}
                 </button>
+                {canIllustrate ? (
+                  <button
+                    type="button"
+                    onClick={handleIllustrate}
+                    disabled={!audioUrl || animaticState.isGenerating || animaticState.hasIllustrations}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={
+                      animaticState.hasIllustrations
+                        ? t('illustrateReadyHint')
+                        : !audioUrl
+                          ? t('animaticUnavailable')
+                          : t('illustrateHint')
+                    }
+                  >
+                    {animaticState.isGenerating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Images className="h-4 w-4" />
+                    )}
+                    {animaticState.isGenerating
+                      ? t('illustrating')
+                      : animaticState.hasIllustrations
+                        ? t('illustrationsReady')
+                        : t('illustrate')}
+                    {!animaticState.isGenerating && !animaticState.hasIllustrations ? (
+                      <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                        {t('illustrateCredits', { count: 2 })}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : (
+                  <Link
+                    href="/premium"
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-credit)]/30 bg-[var(--accent-credit-muted)] px-4 py-2 text-sm font-semibold text-[#e8d5a8] transition-colors hover:bg-[var(--accent-credit-muted)]"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {t('upgradeCta')}
+                  </Link>
+                )}
                 <ShareBriefingButton title={title} storyId={id} />
               </div>
             </div>
@@ -143,10 +195,9 @@ export function StoryPageHeader({
             title={title}
             audioUrl={audioUrl}
             audioSegments={audioSegments}
-            hideInlineControls
+            onStateChange={setAnimaticState}
           />
         </div>
       </header>
-    </>
   )
 }

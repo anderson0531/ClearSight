@@ -82,6 +82,41 @@ export async function verifyAndConsumeCredits(
   })
 }
 
+/**
+ * Atomically burns `amount` core tokens for an add-on action (e.g. generating
+ * animatic illustrations). Unlike `verifyAndConsumeCredits` this does not create
+ * a generation row — it's a flat charge against an existing briefing. Throws
+ * CreditError on unauthorized / inactive / insufficient balance.
+ */
+export async function consumeCredits(userId: string, amount: number): Promise<void> {
+  if (amount <= 0) return
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { coreTokens: true, subscriptionActive: true },
+    })
+
+    if (!user) {
+      throw new CreditError('User not found', 'UNAUTHORIZED')
+    }
+    if (!user.subscriptionActive) {
+      throw new CreditError('Active subscription required', 'SUBSCRIPTION_INACTIVE')
+    }
+    if (user.coreTokens < amount) {
+      throw new CreditError('Insufficient core generation tokens', 'INSUFFICIENT_TOKENS')
+    }
+
+    const updated = await tx.user.update({
+      where: { id: userId, coreTokens: { gte: amount } },
+      data: { coreTokens: { decrement: amount } },
+    })
+
+    if (updated.coreTokens < 0) {
+      throw new CreditError('Token race condition prevented', 'INSUFFICIENT_TOKENS')
+    }
+  })
+}
+
 export async function addCoreTokens(userId: string, count: number): Promise<void> {
   await prisma.user.update({
     where: { id: userId },

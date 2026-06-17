@@ -1,456 +1,184 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ListMusic } from 'lucide-react'
-import { AppHeader } from '@/components/layout/AppHeader'
-import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
-import { MediaGrid } from '@/components/discovery/MediaGrid'
-import { StageProgress } from '@/components/ui/StageProgress'
-import { DEFAULT_TAXONOMY, type TaxonomyFilter } from '@/lib/taxonomy'
+import { Search } from 'lucide-react'
+import { CategoryTiles } from '@/components/discovery/CategoryTiles'
+import { StoryRow } from '@/components/discovery/StoryRow'
+import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
+import { useUser } from '@/components/providers/UserProvider'
+import { buildStoryParams, filterMockStories, type GeoDefaults } from '@/lib/discovery-utils'
+import { DEFAULT_TAXONOMY, type Category, type TaxonomyFilter } from '@/lib/taxonomy'
+import { loadPersistedTaxonomyFilter, persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
 import {
-  hasPersistedTaxonomyFilter,
-  loadPersistedTaxonomyFilter,
-  persistTaxonomyFilter,
-} from '@/lib/taxonomy-persistence'
-import { inferRegionFromCountry } from '@/lib/geo-catalog'
-import { MOCK_STORIES } from '@/lib/mock-stories'
-import { setPendingGeneration } from '@/lib/generation-session'
-import { mergeUserTopicsWithStories } from '@/lib/user-topics'
+  SAVED_SEARCHES_EVENT,
+  loadSavedSearches,
+  type SavedSearch,
+} from '@/lib/saved-searches'
 import { useI18n } from '@/i18n/I18nProvider'
-import { CATEGORY_MESSAGE_KEYS, GEO_MESSAGE_KEYS } from '@/i18n/messages/en'
-import { useAudioQueue } from '@/store/useAudioQueue'
-import type { AudioTrack, StoryCard } from '@/types/story'
+import type { StoryCard } from '@/types/story'
 
-interface GeoDefaults {
-  geoScope: string
-  geoRegion?: string
-  geoCountry?: string
-  geoState?: string
-  geoLocal?: string
+function greetingKey(): 'homeGreetingMorning' | 'homeGreetingAfternoon' | 'homeGreetingEvening' {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'homeGreetingMorning'
+  if (hour < 17) return 'homeGreetingAfternoon'
+  return 'homeGreetingEvening'
 }
 
-function filterMockStories(filter: TaxonomyFilter): StoryCard[] {
-  return MOCK_STORIES.filter((story) => {
-    const langMatch = filter.languages.includes(story.language as TaxonomyFilter['languages'][number])
-    const catMatch =
-      filter.categories.includes('Top') ||
-      filter.categories.includes(story.category as TaxonomyFilter['categories'][number])
-    const geoMatch = story.geoScope === filter.geoScope
-    const queryMatch = filter.query
-      ? story.title.toLowerCase().includes(filter.query.toLowerCase())
-      : true
-    return langMatch && catMatch && geoMatch && queryMatch
-  }).slice(0, 10)
-}
-
-function buildStoryParams(filter: TaxonomyFilter, playable = false): URLSearchParams {
-  const params = new URLSearchParams({
-    languages: filter.languages.join(','),
-    categories: filter.categories.join(','),
-    geoScope: filter.geoScope,
-  })
-  if (filter.query) params.set('query', filter.query)
-  if (filter.geoRegion) params.set('geoRegion', filter.geoRegion)
-  if (filter.geoCountry) params.set('geoCountry', filter.geoCountry)
-  if (filter.geoState) params.set('geoState', filter.geoState)
-  if (filter.geoLocal) params.set('geoLocal', filter.geoLocal)
-  if (playable) params.set('playable', '1')
-  return params
-}
-
-function toAudioTrack(story: StoryCard): AudioTrack {
-  return {
-    id: story.id,
-    title: story.title,
-    audioUrl: story.audioUrl!,
-    audioSegments: story.audioSegments,
-    thumbnailUrl: story.thumbnailUrl,
-    durationSeconds: story.durationSeconds,
-    storyId: story.id,
-  }
-}
-
-type FetchStage = 'catalog' | 'discovery' | 'done'
-
-const FETCH_STAGE_ANCHOR: Record<FetchStage, number> = {
-  catalog: 8,
-  discovery: 42,
-  done: 100,
-}
-
-const FETCH_STAGE_CAP: Record<FetchStage, number> = {
-  catalog: 38,
-  discovery: 95,
-  done: 100,
-}
-
-const FETCH_STAGE_LABELS = {
-  catalog: 'progressStoriesCatalog',
-  discovery: 'progressStoriesDiscovery',
-  done: 'progressStoriesDiscovery',
-} as const
-
-type FetchEvent =
-  | { type: 'progress'; stage: FetchStage; percent: number }
-  | { type: 'done'; stories: StoryCard[] }
-  | { type: 'error'; error?: string }
-
-export default function DiscoveryPage() {
-  const router = useRouter()
+export default function HomePage() {
   const { t, locale } = useI18n()
-  const playTrack = useAudioQueue((s) => s.playTrack)
-  const setPlaylistContext = useAudioQueue((s) => s.setPlaylistContext)
-
-  const [filter, setFilterState] = useState<TaxonomyFilter>(DEFAULT_TAXONOMY)
-  const [filtersReady, setFiltersReady] = useState(false)
-  const [detectedLocation, setDetectedLocation] = useState<string | null>(null)
-  const [geoDefaults, setGeoDefaults] = useState<GeoDefaults | null>(null)
-  const geoAutoApplied = useRef(false)
-  const [baseStories, setBaseStories] = useState<StoryCard[]>([])
-  const [playableCount, setPlayableCount] = useState(0)
-  const [hasLoaded, setHasLoaded] = useState(false)
-  const [fetchStage, setFetchStage] = useState<FetchStage | null>(null)
-  const [fetchPercent, setFetchPercent] = useState(0)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [coreTokens, setCoreTokens] = useState<number | null>(null)
-  const [startingStation, setStartingStation] = useState(false)
-  const [isPending, startTransition] = useTransition()
-
-  const stories = useMemo(
-    () => mergeUserTopicsWithStories(baseStories, filter),
-    [baseStories, filter]
-  )
-
-  const setFilter = useCallback((next: TaxonomyFilter) => {
-    persistTaxonomyFilter(next)
-    startTransition(() => {
-      setFilterState(next)
-      setHasLoaded(false)
-    })
-  }, [])
+  const { plan } = useUser()
+  const router = useRouter()
+  const [stories, setStories] = useState<StoryCard[]>([])
+  const [topStories, setTopStories] = useState<StoryCard[]>([])
+  const [recommended, setRecommended] = useState<StoryCard[]>([])
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fallback: TaxonomyFilter = {
-      ...DEFAULT_TAXONOMY,
-      languages: [locale.englishName as TaxonomyFilter['languages'][number]],
+    const sync = () => setSavedSearches(loadSavedSearches())
+    sync()
+    window.addEventListener(SAVED_SEARCHES_EVENT, sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(SAVED_SEARCHES_EVENT, sync)
+      window.removeEventListener('storage', sync)
     }
-    const loaded = loadPersistedTaxonomyFilter(fallback)
-    if (loaded.geoCountry && !loaded.geoRegion) {
-      const region = inferRegionFromCountry(loaded.geoCountry)
-      if (region) loaded.geoRegion = region
-    }
-    setFilterState(loaded)
-    setFiltersReady(true)
-    // Restore saved discovery filters once on mount; locale fallback only when nothing is saved.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (!filtersReady) return
-    const lang = locale.englishName as TaxonomyFilter['languages'][number]
-    setFilterState((prev) => {
-      if (prev.languages[0] === lang) return prev
-      const next = { ...prev, languages: [lang] }
-      persistTaxonomyFilter(next)
-      setHasLoaded(false)
-      return next
-    })
-  }, [locale.englishName, filtersReady])
-
-  const applyDetectedLocation = useCallback(() => {
-    if (!geoDefaults) return
-    setFilter({
-      ...filter,
-      geoScope: geoDefaults.geoScope as TaxonomyFilter['geoScope'],
-      geoRegion: geoDefaults.geoRegion,
-      geoCountry: geoDefaults.geoCountry,
-      geoState: geoDefaults.geoState,
-      geoLocal: geoDefaults.geoLocal,
-    })
-  }, [filter, geoDefaults, setFilter])
-
-  const buildStationLabel = useCallback(() => {
-    const category = filter.categories[0] ?? 'Top'
-    const categoryKey = CATEGORY_MESSAGE_KEYS[category]
-    const categoryLabel = categoryKey ? t(categoryKey) : category
-    const geoKey = GEO_MESSAGE_KEYS[filter.geoScope]
-    const geoLabel = geoKey ? t(geoKey) : filter.geoScope
-    const area =
-      filter.geoLocal ??
-      filter.geoState ??
-      filter.geoCountry ??
-      filter.geoRegion ??
-      null
-    return area ? `${categoryLabel} · ${area}` : `${categoryLabel} · ${geoLabel}`
-  }, [filter, t])
-
-  useEffect(() => {
-    void fetch('/api/me')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { coreTokens?: number } | null) => {
-        if (data?.coreTokens != null) setCoreTokens(data.coreTokens)
-      })
-      .catch(() => {
-        /* demo mode offline */
-      })
-  }, [])
-
-  useEffect(() => {
-    void fetch('/api/geo')
-      .then((res) => (res.ok ? res.json() : null))
-      .then(
-        (
-          data: {
-            label?: string
-            defaults?: GeoDefaults
-          } | null
-        ) => {
-          if (!data) return
-          if (data.label) setDetectedLocation(data.label)
-          if (data.defaults) {
-            setGeoDefaults(data.defaults)
-            if (
-              !geoAutoApplied.current &&
-              !hasPersistedTaxonomyFilter() &&
-              data.defaults.geoScope !== 'Worldwide'
-            ) {
-              geoAutoApplied.current = true
-              setFilterState((prev) => {
-                const next = {
-                  ...prev,
-                  geoScope: data.defaults!.geoScope as TaxonomyFilter['geoScope'],
-                  geoRegion: data.defaults!.geoRegion,
-                  geoCountry: data.defaults!.geoCountry,
-                  geoState: data.defaults!.geoState,
-                  geoLocal: data.defaults!.geoLocal,
-                }
-                persistTaxonomyFilter(next)
-                return next
-              })
-            }
-          }
-        }
-      )
-      .catch(() => {
-        /* ignore */
-      })
-  }, [])
-
-  useEffect(() => {
-    if (!fetchStage || fetchStage === 'done') return
-    const cap = FETCH_STAGE_CAP[fetchStage]
-    const id = setInterval(() => {
-      setFetchPercent((prev) =>
-        prev >= cap ? prev : Math.min(cap, prev + Math.max(0.5, (cap - prev) * 0.07))
-      )
-    }, 400)
-    return () => clearInterval(id)
-  }, [fetchStage])
-
-  useEffect(() => {
-    if (!filtersReady) return
-
     let cancelled = false
-    const controller = new AbortController()
-    const params = buildStoryParams(filter)
-    params.set('stream', '1')
+    const lang = locale.englishName as TaxonomyFilter['languages'][number]
 
-    setFetchStage('catalog')
-    setFetchPercent(0)
-    setHasLoaded(false)
+    const fallback: TaxonomyFilter = { ...DEFAULT_TAXONOMY, languages: [lang] }
+    // Discovery only ever shows the active locale's language; the persisted
+    // filter can carry a stale language from before a locale switch.
+    const persisted = loadPersistedTaxonomyFilter(fallback)
+    const baseFilter: TaxonomyFilter = {
+      ...persisted,
+      languages: [lang],
+      categories: ['Top'],
+    }
 
-    void (async () => {
+    const run = async () => {
+      let geo: { defaults?: GeoDefaults } | null = null
       try {
-        const res = await fetch(`/api/stories?${params}`, { signal: controller.signal })
-        if (!res.ok || !res.body) {
-          if (!cancelled) setBaseStories(filterMockStories(filter))
-          return
-        }
-
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let loadedStories: StoryCard[] | null = null
-
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const chunks = buffer.split('\n\n')
-          buffer = chunks.pop() ?? ''
-
-          for (const chunk of chunks) {
-            const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'))
-            if (!dataLine) continue
-            const json = dataLine.slice(5).trim()
-            if (!json) continue
-
-            let evt: FetchEvent
-            try {
-              evt = JSON.parse(json) as FetchEvent
-            } catch {
-              continue
-            }
-
-            if (cancelled) continue
-
-            if (evt.type === 'progress') {
-              setFetchStage(evt.stage)
-              setFetchPercent((prev) => Math.max(prev, FETCH_STAGE_ANCHOR[evt.stage] ?? prev))
-            } else if (evt.type === 'done') {
-              loadedStories = evt.stories
-              setFetchStage('done')
-              setFetchPercent(100)
-            }
-          }
-        }
-
-        if (!cancelled) {
-          setBaseStories(loadedStories ?? filterMockStories(filter))
-        }
+        const res = await fetch('/api/geo')
+        geo = res.ok ? await res.json() : null
       } catch {
-        if (!cancelled) setBaseStories(filterMockStories(filter))
-      } finally {
-        if (!cancelled) {
-          setHasLoaded(true)
-          setFetchStage(null)
-          setFetchPercent(0)
+        geo = null
+      }
+
+      const browseFilter: TaxonomyFilter = {
+        ...baseFilter,
+        geoScope: (geo?.defaults?.geoScope as TaxonomyFilter['geoScope']) ?? baseFilter.geoScope,
+        geoRegion: geo?.defaults?.geoRegion ?? baseFilter.geoRegion,
+        geoCountry: geo?.defaults?.geoCountry ?? baseFilter.geoCountry,
+        geoState: geo?.defaults?.geoState ?? baseFilter.geoState,
+        geoLocal: geo?.defaults?.geoLocal ?? baseFilter.geoLocal,
+      }
+
+      const fetchStories = async (
+        filter: TaxonomyFilter,
+        extra: Record<string, string> = {}
+      ): Promise<StoryCard[]> => {
+        const params = buildStoryParams(filter, true)
+        for (const [key, val] of Object.entries(extra)) params.set(key, val)
+        try {
+          const res = await fetch(`/api/stories?${params}`)
+          const data = (res.ok ? await res.json() : null) as { stories?: StoryCard[] } | null
+          return data?.stories ?? []
+        } catch {
+          return []
         }
       }
-    })()
+
+      // Recommendation signal: the category the user saves searches for most.
+      const saved = loadSavedSearches()
+      const prefCategory = saved
+        .map((s) => s.filter.categories?.[0])
+        .find((c): c is Category => Boolean(c) && c !== 'Top')
+
+      const [discover, top, recs] = await Promise.all([
+        fetchStories(browseFilter),
+        fetchStories(browseFilter, { sort: 'top' }),
+        prefCategory
+          ? fetchStories({ ...browseFilter, categories: [prefCategory] })
+          : Promise.resolve<StoryCard[]>([]),
+      ])
+
+      if (cancelled) return
+      setStories(discover.length ? discover : filterMockStories(browseFilter))
+      setTopStories(top)
+      setRecommended(recs)
+      setLoading(false)
+    }
+
+    void run()
 
     return () => {
       cancelled = true
-      controller.abort()
     }
-  }, [filter, filtersReady])
+  }, [locale.englishName])
 
-  useEffect(() => {
-    if (!filtersReady) return
-
-    let cancelled = false
-    const controller = new AbortController()
-    const params = buildStoryParams(filter, true)
-
-    fetch(`/api/stories?${params}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { stories?: StoryCard[] } | null) => {
-        if (cancelled) return
-        const playable = (data?.stories ?? []).filter((story) => story.audioUrl && !story.requiresGeneration)
-        setPlayableCount(playable.length)
-      })
-      .catch(() => {
-        if (!cancelled) {
-          const playable = stories.filter((story) => story.audioUrl && !story.requiresGeneration)
-          setPlayableCount(playable.length)
-        }
-      })
-
-    return () => {
-      cancelled = true
-      controller.abort()
+  const openSavedSearch = (search: SavedSearch) => {
+    const restored: TaxonomyFilter = {
+      ...search.filter,
+      languages: [locale.englishName as TaxonomyFilter['languages'][number]],
     }
-  }, [filter, filtersReady, stories])
-
-  const handlePlayAll = async () => {
-    setStartingStation(true)
-    try {
-      const params = buildStoryParams(filter, true)
-      const res = await fetch(`/api/stories?${params}`)
-      const data = (res.ok ? await res.json() : null) as { stories?: StoryCard[] } | null
-      const playableStories = (data?.stories ?? stories).filter(
-        (story) => story.audioUrl && !story.requiresGeneration
-      )
-
-      if (playableStories.length === 0) return
-
-      const queue = playableStories.map(toAudioTrack)
-      const stationLabel = buildStationLabel()
-
-      setPlaylistContext({
-        id: `station:${filter.categories[0]}:${filter.geoScope}`,
-        label: stationLabel,
-        shuffle: false,
-        loop: false,
-      })
-      playTrack(queue[0], queue)
-    } finally {
-      setStartingStation(false)
-    }
+    persistTaxonomyFilter(restored)
+    router.push('/search')
   }
-
-  const handleGenerate = (story: StoryCard) => {
-    setErrorMessage(null)
-    setPendingGeneration({
-      title: story.title,
-      language: story.language,
-      category: story.category,
-      geoScope: story.geoScope,
-      geoRegion: story.geoRegion,
-      geoCountry: story.geoCountry,
-      geoState: story.geoState,
-      geoLocal: story.geoLocal,
-    })
-    router.push('/story/create')
-  }
-
-  const loading = !filtersReady || !hasLoaded || isPending
-  const canPlayAll = playableCount > 0 && !startingStation
 
   return (
-    <div className="page-shell pb-28">
-      <AppHeader
-        value={filter}
-        onChange={setFilter}
-        coreTokens={coreTokens}
-        errorMessage={errorMessage}
-        onDismissError={() => setErrorMessage(null)}
-        detectedLocation={detectedLocation}
-        onApplyDetected={geoDefaults ? applyDetectedLocation : undefined}
-      />
+    <main className="fade-in mx-auto max-w-7xl px-3 py-6 sm:px-4 sm:py-8">
+      <section className="home-hero">
+        <p className="home-greeting">{t(greetingKey())}</p>
+        <h1 className="home-hero-title">{t('homeStartBrowsing')}</h1>
+        <Link href="/search" className="home-search-entry">
+          <Search className="h-5 w-5 text-[var(--muted)]" />
+          <span>{t('homeSearchPrompt')}</span>
+        </Link>
+      </section>
 
-      <main className="mx-auto max-w-7xl px-3 py-5 sm:px-4 sm:py-6">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="section-title">{t('topTopics')}</h2>
-            {!loading && playableCount === 0 ? (
-              <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('playAllHint')}</p>
-            ) : null}
+      {savedSearches.length > 0 ? (
+        <section className="mb-8">
+          <h2 className="home-section-title">{t('homeSavedSearches')}</h2>
+          <div className="flex flex-wrap gap-2">
+            {savedSearches.map((search) => (
+              <button
+                key={search.id}
+                type="button"
+                onClick={() => openSavedSearch(search)}
+                className="filter-pill px-4 py-1.5 font-semibold"
+              >
+                {search.label}
+              </button>
+            ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {loading ? (
-              <StageProgress
-                t={t}
-                stage={fetchStage}
-                percent={fetchPercent}
-                stageLabels={FETCH_STAGE_LABELS}
-                fallbackLabel="updating"
-                compact
-              />
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void handlePlayAll()}
-              disabled={!canPlayAll}
-              className="btn-accent"
-              title={playableCount === 0 ? t('playAllHint') : undefined}
-            >
-              <ListMusic className="h-4 w-4" />
-              {startingStation ? t('updating') : t('playAll')}
-            </button>
-          </div>
-        </div>
-        <AddTopicDialog filter={filter} />
-        <MediaGrid
-          stories={stories}
-          loading={loading}
-          loadingStage={fetchStage}
-          loadingPercent={fetchPercent}
-          onGenerate={handleGenerate}
+        </section>
+      ) : null}
+
+      {plan === 'FREE' ? (
+        <UpgradeCTA
+          title={t('homeUpsellTitle')}
+          body={t('homeUpsellBody')}
+          className="mb-8"
         />
-      </main>
-    </div>
+      ) : null}
+
+      {loading ? (
+        <div className="mb-8 h-40 animate-pulse rounded-xl bg-[var(--surface)]" />
+      ) : (
+        <>
+          <StoryRow stories={topStories} title={t('homeTopPodcasts')} />
+          <StoryRow stories={recommended} title={t('homeRecommended')} />
+          <StoryRow stories={stories} title={t('homeDiscoverNew')} />
+        </>
+      )}
+
+      <CategoryTiles />
+    </main>
   )
 }

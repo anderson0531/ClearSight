@@ -3,19 +3,22 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import {
-  Clapperboard,
-  Loader2,
+  Images,
+  Maximize,
+  Minimize,
   Pause,
   Play,
   RotateCcw,
+  Users,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { HOSTS, HOSTS_IMAGE } from '@/lib/hosts'
+import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE } from '@/lib/hosts'
 import { BACKGROUND_MUSIC } from '@/lib/music-assets'
 import {
+  segmentDisplayImage,
   segmentHasAnimaticMetadata,
   segmentsHaveRenderedImages,
 } from '@/lib/animatic-utils'
@@ -25,7 +28,11 @@ import type { AudioSegment } from '@/types/story'
 type TransitionEffect = 'kenburns' | 'crossfade' | 'slide' | 'zoom' | 'none'
 
 const BACKGROUND_MUSIC_VOLUME_RATIO = 0.3
-const OUTRO_TAIL_SECONDS = 10
+/** Silence after the final line before the outro theme swells in. */
+const OUTRO_MUSIC_DELAY_SECONDS = 5
+/** How long the outro theme plays once it starts. */
+const OUTRO_MUSIC_SECONDS = 10
+const OUTRO_TAIL_SECONDS = OUTRO_MUSIC_DELAY_SECONDS + OUTRO_MUSIC_SECONDS
 
 interface AnimaticStageProps {
   storyId: string
@@ -33,12 +40,22 @@ interface AnimaticStageProps {
   audioUrl: string | null
   audioSegments?: AudioSegment[] | null
   hideInlineControls?: boolean
+  /** Reports player capability/state up to the header so it can drive controls. */
+  onStateChange?: (state: AnimaticStageState) => void
+}
+
+export interface AnimaticStageState {
+  canView: boolean
+  isGenerating: boolean
+  hasIllustrations: boolean
 }
 
 export interface AnimaticStageHandle {
   openView: () => void
+  generateIllustrations: () => void
   canView: boolean
   isGenerating: boolean
+  hasIllustrations: boolean
 }
 
 function formatTime(seconds: number): string {
@@ -70,7 +87,7 @@ function frameAnimationClass(effect: TransitionEffect, index: number): string {
  * effects, synced audio, captions, and volume + effect controls.
  */
 export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>(function AnimaticStage(
-  { storyId, title, audioUrl, audioSegments, hideInlineControls = false },
+  { storyId, title, audioUrl, audioSegments, hideInlineControls = false, onStateChange },
   ref
 ) {
   const t = useTranslations()
@@ -79,6 +96,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const audioRef = useRef<HTMLAudioElement>(null)
   const musicRef = useRef<HTMLAudioElement>(null)
   const outroTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const [segments, setSegments] = useState<AudioSegment[] | null>(audioSegments ?? null)
   const [generating, setGenerating] = useState(false)
@@ -93,6 +113,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
   const [effect, setEffect] = useState<TransitionEffect>('kenburns')
+  // When illustrations exist the viewer can toggle between them and the default
+  // host portraits. Defaults to showing illustrations once they're available.
+  const [useIllustrations, setUseIllustrations] = useState(true)
 
   const canUseAnimatic = useMemo(() => {
     if (!audioUrl || !segments?.length) return false
@@ -115,8 +138,37 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }, [segments])
 
   const currentSegment = segments?.[segmentIndex]
-  const frameSrc = currentSegment?.imageUrl || HOSTS_IMAGE
+  const frameSrc = segmentDisplayImage(currentSegment, segmentIndex, useIllustrations)
   const frameClass = frameAnimationClass(effect, segmentIndex)
+
+  // Every distinct frame the player might show in either mode, resolved up front
+  // so we can warm the browser cache before playback (studio poster + each
+  // segment's illustration AND host-portrait variant).
+  const frameSources = useMemo(() => {
+    const urls = new Set<string>([HOSTS_IMAGE])
+    ;(segments ?? []).forEach((segment, index) => {
+      urls.add(segmentDisplayImage(segment, index, true))
+      urls.add(segmentDisplayImage(segment, index, false))
+    })
+    return Array.from(urls)
+  }, [segments])
+
+  // Preload all frames once they're known. Decoding ahead of time removes the
+  // visible delay on first display; subsequent loads hit the browser cache.
+  useEffect(() => {
+    if (typeof window === 'undefined' || frameSources.length === 0) return
+    const images = frameSources.map((src) => {
+      const img = new window.Image()
+      img.decoding = 'async'
+      img.src = src
+      return img
+    })
+    return () => {
+      images.forEach((img) => {
+        img.src = ''
+      })
+    }
+  }, [frameSources])
   const fxDuration =
     effect === 'kenburns'
       ? `${Math.max(1, currentSegment?.durationSeconds ?? 8)}s`
@@ -146,15 +198,21 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     if (!music) return
     stopOutroMusic()
     setOutroPlaying(true)
-    music.src = BACKGROUND_MUSIC.outro
-    music.loop = false
-    music.volume = musicVolume
-    music.load()
-    void music.play().catch(() => {})
+    // Let the closing line breathe: wait 5s of silence, then swell the theme.
     outroTimerRef.current = setTimeout(() => {
-      stopOutroMusic()
-      setIsPlaying(false)
-    }, OUTRO_TAIL_SECONDS * 1000)
+      const el = musicRef.current
+      if (el) {
+        el.src = BACKGROUND_MUSIC.outro
+        el.loop = false
+        el.volume = musicVolume
+        el.load()
+        void el.play().catch(() => {})
+      }
+      outroTimerRef.current = setTimeout(() => {
+        stopOutroMusic()
+        setIsPlaying(false)
+      }, OUTRO_MUSIC_SECONDS * 1000)
+    }, OUTRO_MUSIC_DELAY_SECONDS * 1000)
   }, [stopOutroMusic, musicVolume])
 
   const syncBackgroundMusic = useCallback(
@@ -198,6 +256,22 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     setCurrentTime(0)
   }, [stopOutroMusic])
 
+  const toggleFullscreen = useCallback(() => {
+    const el = stageRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {})
+    } else {
+      void el.requestFullscreen?.().catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
   const handleGenerate = useCallback(async () => {
     setError(null)
     setGenerating(true)
@@ -229,22 +303,32 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
   const openView = useCallback(() => {
     if (!audioUrl || !canUseAnimatic) return
-    if (hasRenderedImages) {
-      startAnimatic()
-      return
-    }
-    void handleGenerate()
-  }, [audioUrl, canUseAnimatic, hasRenderedImages, startAnimatic, handleGenerate])
+    // The player always has visuals now (generated illustrations or the host
+    // speaking portraits as defaults), so View always plays immediately.
+    startAnimatic()
+  }, [audioUrl, canUseAnimatic, startAnimatic])
 
   useImperativeHandle(
     ref,
     () => ({
       openView,
+      generateIllustrations: () => void handleGenerate(),
       canView: Boolean(audioUrl && canUseAnimatic),
       isGenerating: generating,
+      hasIllustrations: hasRenderedImages,
     }),
-    [openView, audioUrl, canUseAnimatic, generating]
+    [openView, handleGenerate, audioUrl, canUseAnimatic, generating, hasRenderedImages]
   )
+
+  // Mirror player state up to the header so it can render the View / Illustrate
+  // controls and reflect generation progress.
+  useEffect(() => {
+    onStateChange?.({
+      canView: Boolean(audioUrl && canUseAnimatic),
+      isGenerating: generating,
+      hasIllustrations: hasRenderedImages,
+    })
+  }, [onStateChange, audioUrl, canUseAnimatic, generating, hasRenderedImages])
 
   // Drive the per-segment audio + background music while playing inline.
   useEffect(() => {
@@ -301,12 +385,18 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
   return (
     <div className="fade-in mt-6 overflow-hidden rounded-xl border border-[var(--border)] bg-black/20">
-      <div className="relative aspect-video w-full overflow-hidden">
+      <div
+        ref={stageRef}
+        className={`relative w-full overflow-hidden bg-black ${
+          isFullscreen ? 'flex h-full items-center justify-center' : 'aspect-video'
+        }`}
+      >
         {showStatic ? (
           <Image
             src={HOSTS_IMAGE}
             alt="Dr. Benjamin Anderson and Sarah Chen in the ClearSight studio"
             fill
+            unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
             className="object-cover object-top"
           />
@@ -317,6 +407,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             alt={title}
             fill
             priority
+            unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
             className={`object-cover ${frameClass}`}
             style={{ animationDuration: fxDuration }}
@@ -341,47 +432,35 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         {showStatic ? (
           <>
             {/* Hosts banner overlay */}
-            <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-end justify-between gap-2 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-white/80">
-                {t('playerSubtitle')}
-              </p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                {HOSTS.map((host) => (
-                  <div key={host.name} className="leading-tight">
-                    <p className="text-xs font-semibold text-white">{host.name}</p>
-                    <p className="text-[10px] text-white/70">{host.role}</p>
-                  </div>
-                ))}
+            <div className="absolute inset-x-0 bottom-0 p-3">
+              <div className="relative flex items-end justify-between gap-3">
+                <div className="max-w-[45%] leading-tight">
+                  <p className="text-xs font-semibold text-white">{HOST_ANDERSON.name}</p>
+                  <p className="text-[10px] text-white/70">{HOST_ANDERSON.role}</p>
+                </div>
+
+                <p className="pointer-events-none absolute inset-x-0 bottom-0 text-center text-[11px] font-semibold uppercase tracking-wider text-white/80">
+                  {t('playerSubtitle')}
+                </p>
+
+                <div className="max-w-[45%] text-end leading-tight">
+                  <p className="text-xs font-semibold text-white">{HOST_SARAH.name}</p>
+                  <p className="text-[10px] text-white/70">{HOST_SARAH.role}</p>
+                </div>
               </div>
             </div>
 
-            {/* Centered generate / play control */}
+            {/* Centered play control */}
             {!hideInlineControls && canUseAnimatic ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                {hasRenderedImages ? (
-                  <button
-                    type="button"
-                    onClick={startAnimatic}
-                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-black/30 transition-transform hover:scale-105"
-                  >
-                    <Play className="h-4 w-4" />
-                    {t('viewBriefing')}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void handleGenerate()}
-                    disabled={generating}
-                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-black/30 transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {generating ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Clapperboard className="h-4 w-4" />
-                    )}
-                    {generating ? t('animaticGenerating') : t('viewBriefing')}
-                  </button>
-                )}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={startAnimatic}
+                  className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-black/30 transition-transform hover:scale-105"
+                >
+                  <Play className="h-4 w-4" />
+                  {t('viewBriefing')}
+                </button>
               </div>
             ) : null}
           </>
@@ -438,6 +517,14 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
                 <span className="text-[11px] tabular-nums text-white/80">
                   {formatTime(currentTime)} / {formatTime(totalDuration)}
                 </span>
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  className="ms-auto inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/70"
+                  aria-label={isFullscreen ? t('animaticExitFullscreen') : t('animaticFullscreen')}
+                >
+                  {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+                </button>
               </div>
             </div>
           </>
@@ -507,6 +594,22 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
               <option value="none">{t('animaticEffectNone')}</option>
             </select>
           </label>
+
+          {hasRenderedImages ? (
+            <button
+              type="button"
+              onClick={() => setUseIllustrations((on) => !on)}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+              aria-pressed={useIllustrations}
+            >
+              {useIllustrations ? (
+                <Images className="h-3.5 w-3.5" />
+              ) : (
+                <Users className="h-3.5 w-3.5" />
+              )}
+              {useIllustrations ? t('animaticShowingIllustrations') : t('animaticShowingHosts')}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

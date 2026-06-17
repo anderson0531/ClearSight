@@ -1,4 +1,4 @@
-import { HOSTS_IMAGE } from '@/lib/hosts'
+import { HOSTS_IMAGE, speakingImagesForSpeaker } from '@/lib/hosts'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
@@ -30,6 +30,33 @@ export function segmentsHaveRenderedImages(segments: AudioSegment[]): boolean {
   )
 }
 
-export function segmentDisplayImage(segment: AudioSegment | null | undefined): string {
-  return segment?.imageUrl ?? HOSTS_IMAGE
+/**
+ * Image shown for a segment in the animatic player. Intro/outro lines always use
+ * the studio image. For body lines: when `useIllustrations` is true and a
+ * generated illustration exists, it's shown; otherwise it falls back to the
+ * speaker's "speaking" portrait (the index rotates through them so consecutive
+ * lines vary). Setting `useIllustrations` to false forces the default host
+ * portraits even when illustrations exist — that powers the player's toggle.
+ */
+export function segmentDisplayImage(
+  segment: AudioSegment | null | undefined,
+  index = 0,
+  useIllustrations = true
+): string {
+  if (segment && roleUsesHostsImage(segment.role)) return HOSTS_IMAGE
+
+  if (
+    useIllustrations &&
+    segment?.imageUrl &&
+    !segment.imageUrl.startsWith('/hosts/')
+  ) {
+    return segment.imageUrl
+  }
+
+  const speakingImages = speakingImagesForSpeaker(segment?.speaker)
+  if (speakingImages.length > 0) {
+    return speakingImages[Math.abs(index) % speakingImages.length]!
+  }
+
+  return HOSTS_IMAGE
 }

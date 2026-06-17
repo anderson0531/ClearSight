@@ -8,6 +8,7 @@ export async function GET() {
     return NextResponse.json(
       {
         id: null,
+        plan: 'FREE',
         subscriptionActive: false,
         coreTokens: 0,
         email: null,
@@ -19,6 +20,7 @@ export async function GET() {
 
   return NextResponse.json({
     id: user.id,
+    plan: user.plan,
     subscriptionActive: user.subscriptionActive,
     coreTokens: user.coreTokens,
     email: user.email,

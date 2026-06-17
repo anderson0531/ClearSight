@@ -3,12 +3,14 @@ import { z } from 'zod'
 import { verifyAndConsumeCredits, CreditError } from '@/lib/credits'
 import { compileAndCacheStory, type GenerationProgress } from '@/lib/generate-story'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
+import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 
 const generateSchema = z.object({
   title: z.string().min(3).max(200),
   language: z.string().min(1),
   category: z.string().min(1),
+  contentType: z.enum(['News', 'Education', 'Entertainment']).optional(),
   geoScope: z.string().min(1),
   geoRegion: z.string().optional(),
   geoCountry: z.string().optional(),
@@ -28,7 +30,13 @@ export async function POST(request: Request) {
 
   let generationId = ''
   try {
-    await ensureDemoUser(userId)
+    const user = await ensureDemoUser(userId)
+    if (!canGenerateOnDemand(user.plan)) {
+      return NextResponse.json(
+        { error: 'Premium or Creator plan required for on-demand podcasts', code: 'PLAN_REQUIRED' },
+        { status: 403 }
+      )
+    }
     const taxonomyKey = [body.language, body.category, body.geoScope].join('|')
     const consumed = await verifyAndConsumeCredits(userId, taxonomyKey)
     generationId = consumed.generationId

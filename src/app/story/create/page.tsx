@@ -60,6 +60,7 @@ export default function BriefingCreatePage() {
   const router = useRouter()
   const t = useTranslations()
   const started = useRef(false)
+  const consumed = useRef(false)
 
   const [params, setParams] = useState<PendingGeneration | null>(null)
   const [showOverlay, setShowOverlay] = useState(true)
@@ -73,9 +74,16 @@ export default function BriefingCreatePage() {
   const [genStage, setGenStage] = useState<GenStage | null>('analysis')
   const [genPercent, setGenPercent] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [audioMissing, setAudioMissing] = useState(false)
   const [backgroundWork, setBackgroundWork] = useState(false)
 
   useEffect(() => {
+    // Consume exactly once. consumePendingGeneration() clears sessionStorage, so
+    // a second effect run (e.g. React StrictMode in dev) would otherwise find
+    // nothing and bounce the user back to the home screen mid-generation.
+    if (consumed.current) return
+    consumed.current = true
+
     const pending = consumePendingGeneration()
     if (!pending) {
       router.replace('/')
@@ -129,7 +137,14 @@ export default function BriefingCreatePage() {
         setGenPercent(100)
         setBackgroundWork(false)
         removeUserTopicByTitle(pending.title)
-        router.replace(`/story/${story.id}`)
+        // Audio is best-effort: only treat this as a clean success (and hand off
+        // to the permanent briefing page) when audio actually rendered. When it
+        // didn't, stay here and surface it instead of silently redirecting.
+        if (story.audioUrl) {
+          router.replace(`/story/${story.id}`)
+        } else {
+          setAudioMissing(true)
+        }
       },
       onError: (message) => {
         setErrorMessage(message)
@@ -181,6 +196,21 @@ export default function BriefingCreatePage() {
             <Link href="/" className="mt-2 inline-block text-[var(--accent)] hover:underline">
               ← {t('backToDiscover')}
             </Link>
+          </div>
+        ) : null}
+
+        {audioMissing && !errorMessage ? (
+          <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            <p className="font-semibold">{t('audioFailedTitle')}</p>
+            <p className="mt-1 text-amber-200/90">{t('audioFailedBody')}</p>
+            {storyId ? (
+              <Link
+                href={`/story/${storyId}`}
+                className="mt-2 inline-block text-[var(--accent)] hover:underline"
+              >
+                {t('viewBriefing')} →
+              </Link>
+            ) : null}
           </div>
         ) : null}
 

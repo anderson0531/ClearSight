@@ -18,15 +18,20 @@ export async function getCurrentUserId(): Promise<string> {
 export async function ensureDemoUser(userId: string = DEMO_USER_ID) {
   return prisma.user.upsert({
     where: { id: userId },
-    update: {},
+    update:
+      userId === DEMO_USER_ID
+        ? { plan: 'CREATOR', subscriptionActive: true }
+        : {},
     create: {
       id: userId,
       email: 'demo@clearsight.local',
+      plan: 'CREATOR',
       subscriptionActive: true,
       coreTokens: 5000,
     },
     select: {
       id: true,
+      plan: true,
       coreTokens: true,
       subscriptionActive: true,
       email: true,
@@ -42,6 +47,7 @@ export async function getCurrentUser() {
       where: { id: userId },
       select: {
         id: true,
+        plan: true,
         coreTokens: true,
         subscriptionActive: true,
         email: true,

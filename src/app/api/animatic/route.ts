@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { renderStoryAnimatic } from '@/lib/animatic'
+import { consumeCredits, CreditError } from '@/lib/credits'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
+import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 
 const bodySchema = z.object({
   storyId: z.string().min(1),
 })
+
+/** Flat credit charge for generating animatic illustration frames. */
+const ILLUSTRATION_CREDITS = 2
 
 export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))
@@ -15,10 +20,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    await ensureDemoUser(await getCurrentUserId())
-    const result = await renderStoryAnimatic(parsed.data.storyId)
-    return NextResponse.json(result)
+    const userId = await getCurrentUserId()
+    const user = await ensureDemoUser(userId)
+    if (!canGenerateOnDemand(user.plan)) {
+      return NextResponse.json(
+        { error: 'Premium or Creator plan required for illustrations', code: 'PLAN_REQUIRED' },
+        { status: 403 }
+      )
+    }
+    // Charged only when new frames will actually be generated
+    const result = await renderStoryAnimatic(parsed.data.storyId, {
+      onWillRender: async () => {
+        await consumeCredits(userId, ILLUSTRATION_CREDITS)
+      },
+    })
+    return NextResponse.json({ ...result, creditsCharged: result.newlyRendered > 0 ? ILLUSTRATION_CREDITS : 0 })
   } catch (error) {
+    if (error instanceof CreditError) {
+      const status = error.code === 'INSUFFICIENT_TOKENS' ? 402 : 403
+      return NextResponse.json({ error: error.message, code: error.code }, { status })
+    }
     if (isDatabaseUnavailableError(error)) {
       return NextResponse.json({ error: 'Database unavailable', code: 'DB_UNAVAILABLE' }, { status: 503 })
     }

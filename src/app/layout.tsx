@@ -2,7 +2,9 @@ import type { Metadata, Viewport } from 'next'
 import { cookies } from 'next/headers'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { AudioPlayer } from '@/components/audio/AudioPlayer'
+import { AppShell } from '@/components/layout/AppShell'
 import { AffiliateTrackerProvider } from '@/components/providers/AffiliateTrackerProvider'
+import { UserProvider } from '@/components/providers/UserProvider'
 import { I18nProvider } from '@/i18n/I18nProvider'
 import { DEFAULT_LOCALE_CODE, getLocaleByCode } from '@/i18n/locales'
 import { CLEARSIGHT_LOGO_URL } from '@/lib/brand-assets'
@@ -57,9 +59,13 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-slate-100">
         <I18nProvider initialLocaleCode={locale.code}>
-          <AffiliateTrackerProvider />
-          <div className="flex-1">{children}</div>
-          <AudioPlayer />
+          <UserProvider>
+            <AffiliateTrackerProvider />
+            <AppShell>
+              <div className="flex-1">{children}</div>
+            </AppShell>
+            <AudioPlayer />
+          </UserProvider>
         </I18nProvider>
       </body>
     </html>

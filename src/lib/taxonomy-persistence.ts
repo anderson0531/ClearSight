@@ -3,7 +3,9 @@ import {
   CATEGORIES,
   DEFAULT_TAXONOMY,
   GEO_SCOPES,
+  isContentType,
   type Category,
+  type ContentType,
   type GeoScope,
   type Language,
   type TaxonomyFilter,
@@ -42,7 +44,12 @@ function normalizeFilter(raw: Partial<TaxonomyFilter>, fallback: TaxonomyFilter)
 
   const geoScope = isGeoScope(raw.geoScope) ? raw.geoScope : fallback.geoScope
 
+  const contentType: ContentType = isContentType(raw.contentType)
+    ? raw.contentType
+    : fallback.contentType
+
   return {
+    contentType,
     languages: languages.length > 0 ? languages : fallback.languages,
     categories: categories.length > 0 ? categories : fallback.categories,
     geoScope,
