@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation'
 import { ListMusic } from 'lucide-react'
 import { AppHeader } from '@/components/layout/AppHeader'
-import { AddTopicForm } from '@/components/discovery/AddTopicForm'
+import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
 import { MediaGrid } from '@/components/discovery/MediaGrid'
 import { StageProgress } from '@/components/ui/StageProgress'
 import { DEFAULT_TAXONOMY, type TaxonomyFilter } from '@/lib/taxonomy'
@@ -15,8 +15,8 @@ import {
 } from '@/lib/taxonomy-persistence'
 import { inferRegionFromCountry } from '@/lib/geo-catalog'
 import { MOCK_STORIES } from '@/lib/mock-stories'
-import { normalizeTitle } from '@/lib/normalize-title'
-import { mergeUserTopicsWithStories, removeUserTopicByTitle } from '@/lib/user-topics'
+import { setPendingGeneration } from '@/lib/generation-session'
+import { mergeUserTopicsWithStories } from '@/lib/user-topics'
 import { useI18n } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS, GEO_MESSAGE_KEYS } from '@/i18n/messages/en'
 import { useAudioQueue } from '@/store/useAudioQueue'
@@ -71,8 +71,6 @@ function toAudioTrack(story: StoryCard): AudioTrack {
   }
 }
 
-type GenStage = 'analysis' | 'editorial' | 'podcast' | 'saving' | 'done'
-
 type FetchStage = 'catalog' | 'discovery' | 'done'
 
 const FETCH_STAGE_ANCHOR: Record<FetchStage, number> = {
@@ -93,31 +91,10 @@ const FETCH_STAGE_LABELS = {
   done: 'progressStoriesDiscovery',
 } as const
 
-const GEN_STAGE_ANCHOR: Record<GenStage, number> = {
-  analysis: 6,
-  editorial: 38,
-  podcast: 58,
-  saving: 94,
-  done: 100,
-}
-
-const GEN_STAGE_CAP: Record<GenStage, number> = {
-  analysis: 35,
-  editorial: 55,
-  podcast: 90,
-  saving: 98,
-  done: 100,
-}
-
 type FetchEvent =
   | { type: 'progress'; stage: FetchStage; percent: number }
   | { type: 'done'; stories: StoryCard[] }
   | { type: 'error'; error?: string }
-
-type GenEvent =
-  | { type: 'progress'; stage: GenStage; percent: number }
-  | { type: 'done'; story: StoryCard & { markdownContent?: string } }
-  | { type: 'error'; error?: string; code?: string }
 
 export default function DiscoveryPage() {
   const router = useRouter()
@@ -131,14 +108,10 @@ export default function DiscoveryPage() {
   const [geoDefaults, setGeoDefaults] = useState<GeoDefaults | null>(null)
   const geoAutoApplied = useRef(false)
   const [baseStories, setBaseStories] = useState<StoryCard[]>([])
-  const [userTopicsVersion, setUserTopicsVersion] = useState(0)
   const [playableCount, setPlayableCount] = useState(0)
   const [hasLoaded, setHasLoaded] = useState(false)
   const [fetchStage, setFetchStage] = useState<FetchStage | null>(null)
   const [fetchPercent, setFetchPercent] = useState(0)
-  const [generatingStoryId, setGeneratingStoryId] = useState<string | null>(null)
-  const [genStage, setGenStage] = useState<GenStage | null>(null)
-  const [genPercent, setGenPercent] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coreTokens, setCoreTokens] = useState<number | null>(null)
   const [startingStation, setStartingStation] = useState(false)
@@ -146,12 +119,8 @@ export default function DiscoveryPage() {
 
   const stories = useMemo(
     () => mergeUserTopicsWithStories(baseStories, filter),
-    [baseStories, filter, userTopicsVersion]
+    [baseStories, filter]
   )
-
-  const handleTopicAdded = useCallback(() => {
-    setUserTopicsVersion((version) => version + 1)
-  }, [])
 
   const setFilter = useCallback((next: TaxonomyFilter) => {
     persistTaxonomyFilter(next)
@@ -267,17 +236,6 @@ export default function DiscoveryPage() {
         /* ignore */
       })
   }, [])
-
-  useEffect(() => {
-    if (!genStage || genStage === 'done') return
-    const cap = GEN_STAGE_CAP[genStage]
-    const id = setInterval(() => {
-      setGenPercent((prev) =>
-        prev >= cap ? prev : Math.min(cap, prev + Math.max(0.4, (cap - prev) * 0.06))
-      )
-    }, 450)
-    return () => clearInterval(id)
-  }, [genStage])
 
   useEffect(() => {
     if (!fetchStage || fetchStage === 'done') return
@@ -423,146 +381,19 @@ export default function DiscoveryPage() {
     }
   }
 
-  const handleGenerate = async (story: StoryCard) => {
+  const handleGenerate = (story: StoryCard) => {
     setErrorMessage(null)
-    setGeneratingStoryId(story.id)
-    setGenStage('analysis')
-    setGenPercent(0)
-
-    try {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: story.title,
-          language: story.language,
-          category: story.category,
-          geoScope: story.geoScope,
-          geoRegion: story.geoRegion,
-          geoCountry: story.geoCountry,
-          geoState: story.geoState,
-          geoLocal: story.geoLocal,
-        }),
-      })
-
-      if (!res.ok || !res.body) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null
-        if (res.status === 402) {
-          setErrorMessage(data?.error ?? t('errorCredits'))
-        } else if (res.status === 503) {
-          setErrorMessage(data?.error ?? t('errorDatabase'))
-        } else {
-          setErrorMessage(data?.error ?? t('errorGeneric'))
-        }
-        return
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let generated: (StoryCard & { markdownContent?: string }) | null = null
-      let streamError: string | null = null
-
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const chunks = buffer.split('\n\n')
-        buffer = chunks.pop() ?? ''
-
-        for (const chunk of chunks) {
-          const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'))
-          if (!dataLine) continue
-          const json = dataLine.slice(5).trim()
-          if (!json) continue
-
-          let evt: GenEvent
-          try {
-            evt = JSON.parse(json) as GenEvent
-          } catch {
-            continue
-          }
-
-          if (evt.type === 'progress') {
-            setGenStage(evt.stage)
-            setGenPercent((prev) => Math.max(prev, GEN_STAGE_ANCHOR[evt.stage] ?? prev))
-          } else if (evt.type === 'done') {
-            generated = evt.story
-          } else if (evt.type === 'error') {
-            streamError = evt.error ?? t('errorGeneric')
-          }
-        }
-      }
-
-      if (streamError) {
-        setErrorMessage(streamError)
-        return
-      }
-      if (!generated) {
-        setErrorMessage(t('errorGeneric'))
-        return
-      }
-
-      const finalStory = generated
-      setGenStage('done')
-      setGenPercent(100)
-
-      removeUserTopicByTitle(story.title)
-      setUserTopicsVersion((version) => version + 1)
-
-      const generatedCard: StoryCard = {
-        id: finalStory.id,
-        title: finalStory.title,
-        language: finalStory.language,
-        category: finalStory.category,
-        geoScope: finalStory.geoScope,
-        geoRegion: finalStory.geoRegion,
-        geoCountry: finalStory.geoCountry,
-        geoState: finalStory.geoState,
-        geoLocal: finalStory.geoLocal,
-        audioUrl: finalStory.audioUrl,
-        audioSegments: finalStory.audioSegments,
-        durationSeconds: finalStory.durationSeconds,
-        reliabilityIndex: finalStory.reliabilityIndex,
-        thumbnailUrl: finalStory.thumbnailUrl,
-        requiresGeneration: false,
-        isCached: true,
-      }
-
-      const titleKey = normalizeTitle(story.title)
-      setBaseStories((prev) => {
-        const without = prev.filter((item) => normalizeTitle(item.title) !== titleKey)
-        return [generatedCard, ...without].slice(0, 10)
-      })
-
-      if (finalStory.audioUrl) {
-        const track: AudioTrack = {
-          id: finalStory.id,
-          title: finalStory.title,
-          audioUrl: finalStory.audioUrl,
-          audioSegments: finalStory.audioSegments,
-          thumbnailUrl: finalStory.thumbnailUrl,
-          durationSeconds: finalStory.durationSeconds,
-          storyId: finalStory.id,
-        }
-        playTrack(track, [track])
-      }
-
-      void fetch('/api/me')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((me: { coreTokens?: number } | null) => {
-          if (me?.coreTokens != null) setCoreTokens(me.coreTokens)
-        })
-
-      router.push(`/story/${finalStory.id}`)
-    } catch {
-      setErrorMessage(t('errorNetwork'))
-    } finally {
-      setGeneratingStoryId(null)
-      setGenStage(null)
-      setGenPercent(0)
-    }
+    setPendingGeneration({
+      title: story.title,
+      language: story.language,
+      category: story.category,
+      geoScope: story.geoScope,
+      geoRegion: story.geoRegion,
+      geoCountry: story.geoCountry,
+      geoState: story.geoState,
+      geoLocal: story.geoLocal,
+    })
+    router.push('/story/create')
   }
 
   const loading = !filtersReady || !hasLoaded || isPending
@@ -611,15 +442,12 @@ export default function DiscoveryPage() {
             </button>
           </div>
         </div>
-        <AddTopicForm filter={filter} onAdded={handleTopicAdded} />
+        <AddTopicDialog filter={filter} />
         <MediaGrid
           stories={stories}
           loading={loading}
           loadingStage={fetchStage}
           loadingPercent={fetchPercent}
-          generatingStoryId={generatingStoryId}
-          generationStage={genStage}
-          generationPercent={genPercent}
           onGenerate={handleGenerate}
         />
       </main>

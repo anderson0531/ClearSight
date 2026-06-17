@@ -20,11 +20,13 @@ import { audioDurationSeconds } from '@/lib/audio-duration'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE } from '@/lib/hosts'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
 
-export type GenerationStage = 'analysis' | 'editorial' | 'podcast' | 'saving' | 'done'
+export type GenerationStage = 'analysis' | 'draft' | 'editorial' | 'podcast' | 'saving' | 'done'
 
 export interface GenerationProgress {
   stage: GenerationStage
   percent: number
+  storyId?: string
+  markdownContent?: string
 }
 
 export type GenerationProgressFn = (progress: GenerationProgress) => void
@@ -40,6 +42,7 @@ export interface GenerateStoryInput {
   geoState?: string
   geoLocal?: string
   generationId: string
+  questions?: string[]
 }
 
 interface TruthLedgerResult {
@@ -307,18 +310,25 @@ function applyReliabilityToMarkdown(markdown: string, reliabilityIndex: number):
   return `${markdown}\n\n**Reliability Index:** ${reliabilityIndex.toFixed(1)}`
 }
 
+function formatUserQuestionsBlock(questions?: string[]): string {
+  const trimmed = (questions ?? []).map((q) => q.trim()).filter((q) => q.length >= 3).slice(0, 3)
+  if (trimmed.length === 0) return ''
+  return `\nUser-guided questions to address in this briefing:\n${trimmed.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
+}
+
 async function compileTruthLedgerMarkdown(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): Promise<TruthLedgerResult> {
   const today = new Date().toISOString().slice(0, 10)
   const analysisBlock = formatBriefingAnalysisBlock(input.category)
+  const questionsBlock = formatUserQuestionsBlock(input.questions)
 
   const prompt = `Use current web search. Today is ${today}.
 
 Compile an unbiased Truth Ledger briefing for: "${input.title}".
 Write the entire briefing in ${input.language}.
 Category: ${input.category}. Geographic scope: ${input.geoScope}.
-
+${questionsBlock}
 CRITICAL RULES:
 - Cover developments from the last ~48 hours and the CURRENT state of this story as of ${today}.
 - Report what credible outlets ARE reporting, with attribution ("according to…", "reported by…").
@@ -511,13 +521,16 @@ function trimScriptToLimits(script: PodcastScript): PodcastScript {
 
 async function generatePodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
-  markdown: string
+  markdown: string,
+  editorialNotes?: string | null
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
   const analysisBlock = formatPodcastAnalysisBlock(input.category, HOST_B)
+  const questionsBlock = formatUserQuestionsBlock(input.questions)
 
   const prompt = `Write the CORE BODY of a prestige intelligence podcast deep-dive in ${input.language} about: "${input.title}".
-
+${questionsBlock}
+${editorialNotes ? `\nEditorial guidance to weave into dialogue (do not contradict the briefing):\n${editorialNotes}\n` : ''}
 ${BRAND_NAME} delivers analytical intelligence NOT available in standard news — causal breakdowns, comparative analysis, and forecasts. This is NOT a recap show. The energy is sharp, dynamic, and confident.
 
 Two hosts (a "duet" that bounces opposing viewpoints back and forth so the analysis feels balanced and unbiased):
@@ -889,9 +902,9 @@ export async function compileAndCacheStory(
   input: GenerateStoryInput,
   onProgress?: GenerationProgressFn
 ) {
-  const report = (stage: GenerationStage, percent: number) => {
+  const report = (stage: GenerationStage, percent: number, extra?: Partial<GenerationProgress>) => {
     try {
-      onProgress?.({ stage, percent })
+      onProgress?.({ stage, percent, ...extra })
     } catch {
       /* progress is best-effort */
     }
@@ -920,10 +933,46 @@ export async function compileAndCacheStory(
 
   const reusedThumbnail = await findReusableThumbnail(topicKey, input)
   let { markdown: markdownContent, sources, reliabilityIndex } = ledger
+  const draftThumbnail = reusedThumbnail ?? getThumbnailForCategory(input.category)
+
+  report('analysis', 28)
+
+  const draftStory = await prisma.story.create({
+    data: {
+      title: input.title,
+      language: input.language,
+      category: input.category,
+      geoScope: input.geoScope,
+      geoRegion: input.geoRegion,
+      geoCountry: input.geoCountry,
+      geoState: input.geoState,
+      geoLocal: input.geoLocal,
+      markdownContent,
+      thumbnailUrl: draftThumbnail,
+      reliabilityIndex,
+      isCached: false,
+      sourcesVerified: {
+        taxonomyKey,
+        topicKey,
+        compiledAt,
+        generating: true,
+        sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
+        sourceCount: sources.length,
+        domainCount: uniqueDomains(sources),
+      },
+    },
+  })
+
+  await prisma.generation.update({
+    where: { id: input.generationId },
+    data: { storyId: draftStory.id },
+  })
+
+  report('draft', 32, { storyId: draftStory.id, markdownContent })
 
   report('editorial', 38)
 
-  const [briefingReview, draftScript, bookends, freshThumbnail] = await Promise.all([
+  const [briefingReview, freshThumbnail] = await Promise.all([
     reviewBriefing({
       title: input.title,
       language: input.language,
@@ -933,8 +982,6 @@ export async function compileAndCacheStory(
       sources,
       reliabilityIndex,
     }),
-    generatePodcastScript(input, markdownContent),
-    generateEpisodeBookends(input, markdownContent),
     reusedThumbnail
       ? Promise.resolve(reusedThumbnail)
       : generateStoryThumbnail(input.title, input.category),
@@ -942,11 +989,27 @@ export async function compileAndCacheStory(
 
   const thumbnailUrl = reusedThumbnail ?? freshThumbnail
 
-  markdownContent = briefingReview.markdown
-  sources = briefingReview.sources
-  reliabilityIndex = briefingReview.reliabilityIndex
+  if (briefingReview.updateBaseline) {
+    markdownContent = briefingReview.markdown
+    sources = briefingReview.sources
+    reliabilityIndex = briefingReview.reliabilityIndex
+    await prisma.story.update({
+      where: { id: draftStory.id },
+      data: { markdownContent, reliabilityIndex },
+    })
+    report('draft', 40, { storyId: draftStory.id, markdownContent })
+  } else {
+    sources = briefingReview.sources
+  }
 
   report('editorial', 52)
+
+  const draftScript = await generatePodcastScript(
+    input,
+    markdownContent,
+    briefingReview.updateBaseline ? null : briefingReview.editorialNotes
+  )
+
   report('podcast', 58)
 
   let podcastScript: PodcastScript | null = draftScript
@@ -962,6 +1025,7 @@ export async function compileAndCacheStory(
         script: draftScript,
         hostA: HOST_A,
         hostB: HOST_B,
+        editorialNotes: briefingReview.updateBaseline ? null : briefingReview.editorialNotes,
       },
       parsePodcastScript,
       trimScriptToLimits
@@ -970,8 +1034,8 @@ export async function compileAndCacheStory(
     scriptRevised = scriptReview.revised
   }
 
-  // Wrap the reviewed core with the blueprint structure (hook → branded intro →
-  // chaptered body → summary → CTA) before synthesis.
+  const bookends = await generateEpisodeBookends(input, markdownContent)
+
   const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, input) : null
 
   report('podcast', 72)
@@ -980,16 +1044,9 @@ export async function compileAndCacheStory(
     : null
 
   report('saving', 94)
-  const story = await prisma.story.create({
+  const story = await prisma.story.update({
+    where: { id: draftStory.id },
     data: {
-      title: input.title,
-      language: input.language,
-      category: input.category,
-      geoScope: input.geoScope,
-      geoRegion: input.geoRegion,
-      geoCountry: input.geoCountry,
-      geoState: input.geoState,
-      geoLocal: input.geoLocal,
       markdownContent,
       audioUrl: audio?.url ?? null,
       durationSeconds: audio?.durationSeconds ?? null,
@@ -1006,15 +1063,11 @@ export async function compileAndCacheStory(
         audioSegments: audio?.segments ? (serializeAudioSegments(audio.segments) as object[]) : null,
         editorialReview: {
           briefingRevised: briefingReview.revised,
+          briefingBaselineUpdated: briefingReview.updateBaseline,
           scriptRevised,
         },
       },
     },
-  })
-
-  await prisma.generation.update({
-    where: { id: input.generationId },
-    data: { storyId: story.id },
   })
 
   report('done', 100)

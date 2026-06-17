@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import {
   Clapperboard,
@@ -32,6 +32,13 @@ interface AnimaticStageProps {
   title: string
   audioUrl: string | null
   audioSegments?: AudioSegment[] | null
+  hideInlineControls?: boolean
+}
+
+export interface AnimaticStageHandle {
+  openView: () => void
+  canView: boolean
+  isGenerating: boolean
 }
 
 function formatTime(seconds: number): string {
@@ -62,12 +69,10 @@ function frameAnimationClass(effect: TransitionEffect, index: number): string {
  * control; once an animatic exists it plays in place with Ken Burns / transition
  * effects, synced audio, captions, and volume + effect controls.
  */
-export function AnimaticStage({
-  storyId,
-  title,
-  audioUrl,
-  audioSegments,
-}: AnimaticStageProps) {
+export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>(function AnimaticStage(
+  { storyId, title, audioUrl, audioSegments, hideInlineControls = false },
+  ref
+) {
   const t = useTranslations()
   const pauseGlobalAudio = useAudioQueue((s) => s.pause)
 
@@ -222,6 +227,25 @@ export function AnimaticStage({
     }
   }, [storyId, t, startAnimatic])
 
+  const openView = useCallback(() => {
+    if (!audioUrl || !canUseAnimatic) return
+    if (hasRenderedImages) {
+      startAnimatic()
+      return
+    }
+    void handleGenerate()
+  }, [audioUrl, canUseAnimatic, hasRenderedImages, startAnimatic, handleGenerate])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openView,
+      canView: Boolean(audioUrl && canUseAnimatic),
+      isGenerating: generating,
+    }),
+    [openView, audioUrl, canUseAnimatic, generating]
+  )
+
   // Drive the per-segment audio + background music while playing inline.
   useEffect(() => {
     const audio = audioRef.current
@@ -332,7 +356,7 @@ export function AnimaticStage({
             </div>
 
             {/* Centered generate / play control */}
-            {canUseAnimatic ? (
+            {!hideInlineControls && canUseAnimatic ? (
               <div className="absolute inset-0 flex items-center justify-center">
                 {hasRenderedImages ? (
                   <button
@@ -341,7 +365,7 @@ export function AnimaticStage({
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-black/30 transition-transform hover:scale-105"
                   >
                     <Play className="h-4 w-4" />
-                    {t('animaticPlay')}
+                    {t('viewBriefing')}
                   </button>
                 ) : (
                   <button
@@ -355,7 +379,7 @@ export function AnimaticStage({
                     ) : (
                       <Clapperboard className="h-4 w-4" />
                     )}
-                    {generating ? t('animaticGenerating') : t('animaticGenerate')}
+                    {generating ? t('animaticGenerating') : t('viewBriefing')}
                   </button>
                 )}
               </div>
@@ -487,4 +511,4 @@ export function AnimaticStage({
       ) : null}
     </div>
   )
-}
+})

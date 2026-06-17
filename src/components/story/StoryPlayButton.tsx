@@ -57,7 +57,7 @@ export function StoryPlayButton({
       className="btn-accent"
     >
       <Play className={`h-4 w-4 ${isActive ? '' : 'ms-0.5'}`} />
-      {isActive ? t('playing') : t('playBriefing')}
+      {isActive ? t('playing') : t('listen')}
     </button>
   )
 }

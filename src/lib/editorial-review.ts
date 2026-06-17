@@ -22,6 +22,10 @@ export interface BriefingReviewResult {
   sources: GroundedSource[]
   reliabilityIndex: number
   revised: boolean
+  /** When true, corrected briefing should replace the published baseline text. */
+  updateBaseline: boolean
+  /** Podcast-only guidance when baseline is kept but editorial found minor issues. */
+  editorialNotes: string | null
 }
 
 export interface PodcastTurn {
@@ -43,6 +47,7 @@ export interface PodcastReviewInput {
   script: PodcastScriptDraft
   hostA?: string
   hostB?: string
+  editorialNotes?: string | null
 }
 
 export interface PodcastReviewResult {
@@ -112,6 +117,49 @@ function applyReliabilityToMarkdown(markdown: string, reliabilityIndex: number):
   return `${markdown}\n\n**Reliability Index:** ${reliabilityIndex.toFixed(1)}`
 }
 
+function extractObjectiveBrief(markdown: string): string {
+  const match = markdown.match(/\*\*The Objective Brief:\*\*([\s\S]*?)(?=###|$)/i)
+  return match?.[1]?.trim() ?? markdown.slice(0, 800)
+}
+
+function wordOverlapRatio(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean))
+  const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(Boolean))
+  if (wordsA.size === 0 || wordsB.size === 0) return 0
+  let overlap = 0
+  for (const word of wordsA) {
+    if (wordsB.has(word)) overlap += 1
+  }
+  return overlap / Math.max(wordsA.size, wordsB.size)
+}
+
+function parseEditorialNotes(raw: string): { notes: string | null; updateBaseline: boolean | null } {
+  const notesMatch = raw.match(/---EDITORIAL_NOTES---\s*([\s\S]*?)\s*---BASELINE_UPDATE---/i)
+  const updateMatch = raw.match(/---BASELINE_UPDATE---\s*(yes|no)/i)
+  const notes = notesMatch?.[1]?.trim() || null
+  const updateBaseline = updateMatch ? updateMatch[1].toLowerCase() === 'yes' : null
+  return { notes, updateBaseline }
+}
+
+function stripEditorialMarkers(markdown: string): string {
+  return markdown.replace(/\s*---EDITORIAL_NOTES---[\s\S]*$/i, '').trim()
+}
+
+function assessBaselineUpdate(
+  original: string,
+  revised: string,
+  originalReliability: number,
+  newReliability: number,
+  explicit: boolean | null
+): boolean {
+  if (explicit != null) return explicit
+  if (Math.abs(originalReliability - newReliability) >= 1.0) return true
+  const overlap = wordOverlapRatio(extractObjectiveBrief(original), extractObjectiveBrief(revised))
+  if (overlap < 0.72) return true
+  if (Math.abs(original.length - revised.length) / Math.max(original.length, 1) > 0.35) return true
+  return false
+}
+
 function mergeSources(existing: GroundedSource[], incoming: GroundedSource[]): GroundedSource[] {
   const seen = new Set<string>()
   const merged: GroundedSource[] = []
@@ -153,6 +201,12 @@ EDITORIAL REVIEW CHECKLIST:
 7. Recalibrate Reliability Index (1.0–10.0) if corroboration level changed
 8. Keep the exact Markdown section structure below
 
+After the briefing, append these markers (required):
+---EDITORIAL_NOTES---
+<one short paragraph: factual nuance, attribution fixes, or podcast guidance if baseline stays unchanged>
+---BASELINE_UPDATE---
+yes if factual corrections require replacing the published briefing text; no if changes are minor stylistic tweaks only
+
 Return ONLY the revised briefing in ${input.language} with EXACTLY this structure:
 ## [ SYSTEMIC TOPIC TITLE ]
 **The Objective Brief:**
@@ -173,25 +227,51 @@ Return ONLY the revised briefing in ${input.language} with EXACTLY this structur
       sources: input.sources,
       reliabilityIndex: input.reliabilityIndex,
       revised: false,
+      updateBaseline: false,
+      editorialNotes: null,
     }
   }
 
+  const { notes: editorialNotes, updateBaseline: explicitUpdate } = parseEditorialNotes(text)
+  const cleanedText = stripEditorialMarkers(text)
+
   const sources = mergeSources(input.sources, reviewSources)
-  const parsedReliability = parseReliabilityIndex(text)
+  const parsedReliability = parseReliabilityIndex(cleanedText)
   const reliabilityIndex = clampReliability(
     parsedReliability ?? input.reliabilityIndex,
     sources.length,
     uniqueDomains(sources)
   )
 
-  let markdown = injectSourcesIntoMarkdown(text, sources)
-  markdown = applyReliabilityToMarkdown(markdown, reliabilityIndex)
+  let revisedMarkdown = injectSourcesIntoMarkdown(cleanedText, sources)
+  revisedMarkdown = applyReliabilityToMarkdown(revisedMarkdown, reliabilityIndex)
+
+  const updateBaseline = assessBaselineUpdate(
+    input.markdown,
+    revisedMarkdown,
+    input.reliabilityIndex,
+    reliabilityIndex,
+    explicitUpdate
+  )
+
+  if (updateBaseline) {
+    return {
+      markdown: revisedMarkdown,
+      sources,
+      reliabilityIndex,
+      revised: true,
+      updateBaseline: true,
+      editorialNotes: null,
+    }
+  }
 
   return {
-    markdown,
+    markdown: input.markdown,
     sources,
-    reliabilityIndex,
-    revised: markdown.trim() !== input.markdown.trim(),
+    reliabilityIndex: input.reliabilityIndex,
+    revised: editorialNotes != null || revisedMarkdown.trim() !== input.markdown.trim(),
+    updateBaseline: false,
+    editorialNotes,
   }
 }
 
@@ -222,6 +302,7 @@ Category: ${category}
 APPROVED BRIEFING (sole source of truth for facts — do not add factual claims beyond this):
 ${input.markdown.slice(0, 3800)}
 
+${input.editorialNotes ? `EDITORIAL NOTES (incorporate in dialogue — do not contradict the briefing):\n${input.editorialNotes}\n` : ''}
 CURRENT SCRIPT:
 ${scriptText}
 

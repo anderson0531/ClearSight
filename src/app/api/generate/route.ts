@@ -14,6 +14,7 @@ const generateSchema = z.object({
   geoCountry: z.string().optional(),
   geoState: z.string().optional(),
   geoLocal: z.string().optional(),
+  questions: z.array(z.string().min(3).max(300)).max(3).optional(),
 })
 
 export async function POST(request: Request) {
@@ -55,7 +56,31 @@ export async function POST(request: Request) {
       try {
         const story = await compileAndCacheStory(
           { ...body, userId, generationId },
-          (progress: GenerationProgress) => send({ type: 'progress', ...progress })
+          (progress: GenerationProgress) => {
+            if (progress.stage === 'draft' && progress.storyId && progress.markdownContent) {
+              send({
+                type: 'draft',
+                story: {
+                  id: progress.storyId,
+                  title: body.title,
+                  language: body.language,
+                  category: body.category,
+                  geoScope: body.geoScope,
+                  geoRegion: body.geoRegion,
+                  geoCountry: body.geoCountry,
+                  geoState: body.geoState,
+                  geoLocal: body.geoLocal,
+                  markdownContent: progress.markdownContent,
+                  thumbnailUrl: null,
+                  audioUrl: null,
+                  audioSegments: null,
+                  durationSeconds: null,
+                  reliabilityIndex: null,
+                },
+              })
+            }
+            send({ type: 'progress', stage: progress.stage, percent: progress.percent })
+          }
         )
 
         send({

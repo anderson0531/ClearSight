@@ -1,11 +1,12 @@
 'use client'
 
+import { useRef } from 'react'
 import Link from 'next/link'
-import { Clock, Globe, Shield } from 'lucide-react'
+import { Clapperboard, Clock, Globe, Shield } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
 import { ShareBriefingButton } from '@/components/story/ShareBriefingButton'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
-import { AnimaticStage } from '@/components/story/AnimaticStage'
+import { AnimaticStage, type AnimaticStageHandle } from '@/components/story/AnimaticStage'
 import { AppHeader } from '@/components/layout/AppHeader'
 import { DEFAULT_TAXONOMY } from '@/lib/taxonomy'
 import { useTranslations } from '@/i18n/I18nProvider'
@@ -45,8 +46,13 @@ export function StoryPageHeader({
   thumbnailUrl,
 }: StoryHeaderProps) {
   const t = useTranslations()
+  const animaticRef = useRef<AnimaticStageHandle>(null)
   const categoryKey = CATEGORY_MESSAGE_KEYS[category]
   const categoryLabel = categoryKey ? t(categoryKey) : category
+
+  const handleView = () => {
+    animaticRef.current?.openView()
+  }
 
   return (
     <>
@@ -116,16 +122,28 @@ export function StoryPageHeader({
                   thumbnailUrl={thumbnailUrl}
                   durationSeconds={durationSeconds}
                 />
+                <button
+                  type="button"
+                  onClick={handleView}
+                  disabled={!audioUrl}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={!audioUrl ? t('animaticUnavailable') : undefined}
+                >
+                  <Clapperboard className="h-4 w-4" />
+                  {t('viewBriefing')}
+                </button>
                 <ShareBriefingButton title={title} storyId={id} />
               </div>
             </div>
           </div>
 
           <AnimaticStage
+            ref={animaticRef}
             storyId={id}
             title={title}
             audioUrl={audioUrl}
             audioSegments={audioSegments}
+            hideInlineControls
           />
         </div>
       </header>

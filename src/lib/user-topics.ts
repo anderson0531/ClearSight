@@ -35,7 +35,7 @@ function hashTitle(title: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
-function inferCategoryFromTitle(title: string): ContentCategory {
+export function inferCategoryFromTitle(title: string): ContentCategory {
   const text = title.toLowerCase()
 
   if (/sport|match|league|cup|tournament|championship|olympic|nba|nfl|mlb|fifa|goal|coach|player|knicks|lakers/.test(text)) {
