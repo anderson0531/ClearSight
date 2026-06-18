@@ -1,6 +1,7 @@
 import { CLEARSIGHT_HOSTS_STUDIO_URL } from '@/lib/brand-assets'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { HOST_ART, SHOW_COVER_ART, SHOW_INTRO_ART, SHOW_STUDIO_ART } from '@/lib/host-art'
+import { SHOW_INTRO_AUDIO } from '@/lib/show-audio'
 import {
   canonicalizeCategory,
   categoriesForType,
@@ -27,6 +28,17 @@ export interface Show {
   name: string
   /** One-paragraph channel description shown on the channel page. */
   description: string
+  /**
+   * The channel's clear area of focus. Used by on-demand moderation to accept
+   * broad topics that fit the theme and reject off-theme ones. Distinct from the
+   * marketing `description`.
+   */
+  focus: string
+  /**
+   * Short, branded spoken welcome in the show's voice. Reused as the per-show
+   * episode INTRO template and as the channel-page audio intro script.
+   */
+  introTagline: string
   contentType: ContentType
   /** Categories/topics this show covers. Empty = the default for its type. */
   categories: string[]
@@ -46,6 +58,8 @@ export interface Show {
   introImage: string
   /** Fixed cover key-art used as the channel hero and channel cards. */
   coverImage: string
+  /** Pre-generated, tap-to-play channel intro audio (undefined until generated). */
+  introAudio?: string
 }
 
 // Placeholder studio + portrait artwork. New shows reuse the canonical studio
@@ -280,11 +294,42 @@ export const HOST_BREE = host({
 })
 
 // ---------------------------------------------------------------------------
+// Home & Lifestyle — "The Good Life" (duo, warm practical service journalism)
+// ---------------------------------------------------------------------------
+export const HOST_MAYA = host({
+  name: 'Maya Ellis',
+  role: 'Lifestyle host',
+  voiceId: 'Aoede',
+  ttsStylePrompt:
+    'Warm, encouraging lifestyle host. Friendly and reassuring, sharing practical guidance at an easy, conversational pace.',
+  speakingRate: 1.0,
+  bio: 'A warm lifestyle host who turns everyday goals into simple, doable steps.',
+  persona:
+    'Warm, encouraging lifestyle host who meets listeners where they are and breaks goals into approachable, practical steps.',
+  aliases: ['maya', 'ellis'],
+  speakingImages: [],
+})
+
+export const HOST_CALEB = host({
+  name: 'Caleb Ward',
+  role: 'Practical co-host',
+  voiceId: 'Puck',
+  ttsStylePrompt:
+    'Down-to-earth practical co-host. Friendly and grounded, adding hands-on tips and realistic trade-offs at a natural pace.',
+  speakingRate: 1.0,
+  bio: 'A hands-on co-host who keeps advice realistic, affordable, and easy to start.',
+  persona:
+    'Down-to-earth co-host who pressure-tests advice for real budgets and schedules and surfaces the common pitfalls.',
+  aliases: ['caleb', 'ward'],
+  speakingImages: [],
+})
+
+// ---------------------------------------------------------------------------
 // Show registry
 // ---------------------------------------------------------------------------
 
 function makeShow(
-  show: Omit<Show, 'format' | 'introImage' | 'coverImage'> & { introImage?: string }
+  show: Omit<Show, 'format' | 'introImage' | 'coverImage' | 'introAudio'> & { introImage?: string }
 ): Show {
   const studioImage = SHOW_STUDIO_ART[show.id] ?? show.studioImage
   // Prefer generated intro art; fall back to an explicit intro (News uses the
@@ -297,6 +342,8 @@ function makeShow(
     // Fixed poster-style cover for the channel hero/cards; degrades to the intro
     // frame (and then studio) until the cover art is generated.
     coverImage: SHOW_COVER_ART[show.id] ?? introImage,
+    // Pre-generated channel intro audio; undefined until the script runs.
+    introAudio: SHOW_INTRO_AUDIO[show.id],
     format: show.hosts.length === 1 ? 'solo' : 'dialogue',
   }
 }
@@ -306,6 +353,10 @@ export const SHOW_NEWS = makeShow({
   name: 'The ClearSight Brief',
   description:
     'The flagship ClearSight news desk. Dr. Anderson and Sarah Chen cut through the noise with dense, even-handed analysis of the day’s most consequential stories — steel-manning every side and forecasting what comes next, across politics, business, technology, science, and more.',
+  focus:
+    'Current events and consequential news across politics, business, economics, technology, science, world affairs, and society — analyzed with even-handed, evidence-based depth.',
+  introTagline:
+    'Welcome to The ClearSight Brief, your unbiased deep-dive into the stories that matter — where we steel-man every side and forecast what comes next.',
   contentType: 'News',
   categories: [],
   hosts: [HOST_SARAH, HOST_ANDERSON],
@@ -330,6 +381,10 @@ export const SHOW_ACADEMY = makeShow({
   name: 'ClearSight Academy',
   description:
     'Your guided tour through big ideas. Dr. Lena Okafor and Diego Santos build understanding from first principles — defining the jargon, working through vivid examples, and busting the common misconceptions across science, math, history, technology, and beyond.',
+  focus:
+    'Educational explainers that teach concepts from first principles across science, mathematics, history, technology, health, economics, and the broader world of ideas.',
+  introTagline:
+    'Welcome to ClearSight Academy, where we build big ideas from the ground up — defining the jargon and making the complex click.',
   contentType: 'Education',
   categories: [],
   hosts: [HOST_LENA, HOST_DIEGO],
@@ -353,6 +408,10 @@ export const SHOW_PIVOT = makeShow({
   name: 'The Pivot',
   description:
     'Career strategy for a fast-changing world. Priya Menon turns labor-market shifts into concrete, doable next steps — what’s changing, who it affects, the skills that matter now, and exactly how to start building them today.',
+  focus:
+    'Careers, work, and the labor market — industry shifts, in-demand skills, job-search strategy, and practical professional growth.',
+  introTagline:
+    'Welcome to The Pivot, where we turn a fast-changing job market into your next concrete move.',
   contentType: 'Education',
   categories: ['Career & Job Market'],
   hosts: [HOST_PRIYA],
@@ -375,6 +434,10 @@ export const SHOW_CASEFILE = makeShow({
   name: 'The Casefile',
   description:
     'Meticulous true-crime storytelling with a conscience. Investigative journalist Vivian Cross and ex-detective Frank Calderon reconstruct each case from the evidence up — weighing competing theories, respecting the people involved, and naming what’s still unresolved.',
+  focus:
+    'Real, documented true-crime cases and investigations — timelines, evidence, and competing theories told meticulously and respectfully. Not fictional crime or gratuitous gore.',
+  introTagline:
+    'Welcome to The Casefile, where we reconstruct each case from the evidence up — meticulously, and with respect for everyone involved.',
   contentType: 'Entertainment',
   categories: ['True Crime'],
   hosts: [HOST_VIVIAN, HOST_FRANK],
@@ -398,6 +461,10 @@ export const SHOW_UNEXPLAINED = makeShow({
   name: 'The Unexplained',
   description:
     'Where wonder meets rigor. Open-minded researcher Iris Lang lays out the strangest claims and the most intriguing evidence, while skeptic scientist Dr. Hugo Reyes pressure-tests every one — a genuine believer-vs-skeptic clash over the mysteries that won’t go away.',
+  focus:
+    'Unexplained phenomena and enduring mysteries — strange claims, anomalies, and the unsolved — explored through a genuine believer-versus-skeptic lens.',
+  introTagline:
+    'Welcome to The Unexplained, where wonder meets rigor and every mystery gets the believer-versus-skeptic treatment.',
   contentType: 'Entertainment',
   categories: ['Unexplained & Mystery'],
   hosts: [HOST_IRIS, HOST_HUGO],
@@ -421,6 +488,10 @@ export const SHOW_GREENROOM = makeShow({
   name: 'The Green Room',
   description:
     'The pop-culture conversation, unfiltered. Zoe Tan brings the sharp hot takes and Andre Brooks grounds them in context and history — fast, funny, plugged-in breakdowns of what the culture is actually talking about and why it matters.',
+  focus:
+    'Pop culture and the entertainment conversation — celebrities, trends, internet moments, and the discourse, with sharp takes grounded in context.',
+  introTagline:
+    'Welcome to The Green Room, where we serve the hottest takes in pop culture — and then back them up.',
   contentType: 'Entertainment',
   categories: ['Pop Culture'],
   hosts: [HOST_ZOE, HOST_ANDRE],
@@ -443,6 +514,10 @@ export const SHOW_FRAMEBYFRAME = makeShow({
   name: 'Frame by Frame',
   description:
     'Cinema and television, taken seriously and joyfully. Critic Nora Adeyemi reads craft, performance, and form with a painter’s eye, while Sam Ortiz connects every work to its genre, industry, and audience — spoiler-aware verdicts on what’s worth your time.',
+  focus:
+    'Film and television — reviews, craft analysis, performances, genres, and the industry, delivered with spoiler-aware verdicts.',
+  introTagline:
+    'Welcome to Frame by Frame, where we take film and TV seriously — and joyfully — one frame at a time.',
   contentType: 'Entertainment',
   categories: ['Film & TV'],
   hosts: [HOST_NORA, HOST_SAM],
@@ -465,6 +540,10 @@ export const SHOW_LINERNOTES = makeShow({
   name: 'Liner Notes',
   description:
     'A love letter to the craft of music. Mia Solis breaks down songwriting, production, and arrangement with infectious enthusiasm, and Theo Nakamura places every release in its cultural and historical context — plus the tracks you shouldn’t miss.',
+  focus:
+    'Music — artists, releases, songwriting, production, and the culture and history around the sound, with listening recommendations.',
+  introTagline:
+    'Welcome to Liner Notes, a love letter to the craft of music — where we break down the sound and the story behind it.',
   contentType: 'Entertainment',
   categories: ['Music'],
   hosts: [HOST_MIA, HOST_THEO],
@@ -487,6 +566,10 @@ export const SHOW_PLAYERTWO = makeShow({
   name: 'Player Two',
   description:
     'Games, from the inside out. Kai Nguyen breaks down mechanics, design, and the meta with insider energy, while Bree Sullivan weighs community reaction and who a game is really for — the headlines players are actually talking about.',
+  focus:
+    'Video games and gaming culture — releases, mechanics, design, the meta, industry news, and community reaction.',
+  introTagline:
+    'Welcome to Player Two, where we break down games from the inside out — mechanics, meta, and all.',
   contentType: 'Entertainment',
   categories: ['Gaming'],
   hosts: [HOST_KAI, HOST_BREE],
@@ -504,6 +587,543 @@ export const SHOW_PLAYERTWO = makeShow({
   studioImage: PLACEHOLDER_STUDIO,
 })
 
+export const SHOW_GOODLIFE = makeShow({
+  id: 'the-good-life',
+  name: 'The Good Life',
+  description:
+    'Practical inspiration for everyday living. Maya Ellis and Caleb Ward turn the goals behind a better daily life — cooking, travel, home, health, money, relationships, and more — into simple, doable steps, with the reasoning and trade-offs spelled out so you can actually start today.',
+  focus:
+    'Home and lifestyle how-to and inspiration across food, travel, home & garden, health & fitness, relationships, personal finance, parenting, style, wellness, and pets — practical, evergreen, and actionable.',
+  introTagline:
+    'Welcome to The Good Life, where we turn everyday goals into simple, doable steps you can start today.',
+  contentType: 'Lifestyle',
+  categories: [],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, inviting lifestyle editorial illustration — bright, friendly, aspirational, with natural light and a clean modern palette.',
+  scriptStructure: [
+    'Hook: the everyday goal or problem this solves',
+    'What to know first: the key context or principle',
+    'Step by step: the concrete approach and options',
+    'Pitfalls & trade-offs: common mistakes and how to weigh choices',
+    'Action plan: the simple first steps to take today',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright, homey lifestyle studio. Tone: warm, encouraging, practical. Pace: relaxed and conversational.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+// ---------------------------------------------------------------------------
+// Per-category Lifestyle channels (reuse The Good Life's house cast). Each owns
+// a single category so on-demand episodes are tagged with that exact category.
+// ---------------------------------------------------------------------------
+export const SHOW_KITCHEN = makeShow({
+  id: 'clearsight-kitchen',
+  name: 'ClearSight Kitchen',
+  description:
+    'Cook with confidence. Maya Ellis and Caleb Ward turn recipes, techniques, and meal planning into simple, repeatable steps — what to buy, how to make it, and the little tricks that make it work every time.',
+  focus:
+    'Food and cooking — recipes, techniques, baking, meal prep, ingredients, world cuisine, and kitchen know-how, made practical and doable.',
+  introTagline:
+    'Welcome to ClearSight Kitchen, where we turn great food into simple steps you can actually make tonight.',
+  contentType: 'Lifestyle',
+  categories: ['Food & Cooking'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, appetizing food editorial illustration — fresh ingredients and inviting kitchen scenes, natural light, clean modern palette.',
+  scriptStructure: [
+    'Hook: the dish or skill and why it is worth making',
+    'What to know first: key ingredients, tools, or technique',
+    'Step by step: the method, in clear order',
+    'Pitfalls & trade-offs: common mistakes and easy fixes',
+    'Action plan: how to start and make it your own',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright, homey kitchen studio. Tone: warm, encouraging, practical. Pace: relaxed and conversational.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_TRAVEL = makeShow({
+  id: 'clearsight-travel',
+  name: 'ClearSight Travel',
+  description:
+    'Travel smarter and farther. Maya Ellis and Caleb Ward break down destinations, planning, and on-the-road know-how into practical itineraries and tips — so you spend less, see more, and stress less.',
+  focus:
+    'Travel — destinations, trip planning, budget travel, road trips, packing, and practical travel tips for every kind of traveler.',
+  introTagline:
+    'Welcome to ClearSight Travel, where we turn wanderlust into a plan you can actually book.',
+  contentType: 'Lifestyle',
+  categories: ['Travel'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: vivid, inviting travel editorial illustration — scenic destinations and journey motifs, bright natural light, aspirational and clean.',
+  scriptStructure: [
+    'Hook: the destination or travel goal and why now',
+    'What to know first: timing, budget, and logistics',
+    'Step by step: how to plan and what to prioritize',
+    'Pitfalls & trade-offs: common mistakes and how to avoid them',
+    'Action plan: the first steps to start booking',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright travel-desk studio. Tone: warm, adventurous, practical. Pace: relaxed and conversational.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_HOMEGARDEN = makeShow({
+  id: 'clearsight-home-garden',
+  name: 'ClearSight Home & Garden',
+  description:
+    'Make your space work for you. Maya Ellis and Caleb Ward tackle interior design, DIY projects, gardening, and organization with realistic, budget-aware steps — the why behind each choice and how to actually get it done.',
+  focus:
+    'Home and garden — interior design, DIY projects, gardening, organization, and decor, with practical, budget-aware guidance.',
+  introTagline:
+    'Welcome to ClearSight Home & Garden, where we turn a better space into a weekend you can plan.',
+  contentType: 'Lifestyle',
+  categories: ['Home & Garden'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, inviting home-and-garden editorial illustration — tidy interiors and lush greenery, natural light, clean modern palette.',
+  scriptStructure: [
+    'Hook: the space or project and the goal',
+    'What to know first: materials, budget, and constraints',
+    'Step by step: the approach and the options',
+    'Pitfalls & trade-offs: common mistakes and how to weigh choices',
+    'Action plan: the first steps to take this week',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright, homey design studio. Tone: warm, encouraging, practical. Pace: relaxed and conversational.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_FITNESS = makeShow({
+  id: 'clearsight-fitness',
+  name: 'ClearSight Fitness',
+  description:
+    'Get healthier without the hype. Maya Ellis and Caleb Ward translate workouts, nutrition, and recovery into sustainable routines — what the evidence supports, how to start, and how to keep going.',
+  focus:
+    'Health and fitness — workouts, nutrition, running, strength training, yoga, and recovery, grounded in practical, sustainable habits.',
+  introTagline:
+    'Welcome to ClearSight Fitness, where we turn healthy goals into a routine you can keep.',
+  contentType: 'Lifestyle',
+  categories: ['Health & Fitness'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: energetic, clean fitness editorial illustration — movement and wellbeing motifs, bright natural light, modern palette.',
+  scriptStructure: [
+    'Hook: the fitness goal and why it matters',
+    'What to know first: the principle or evidence behind it',
+    'Step by step: the routine or approach to follow',
+    'Pitfalls & trade-offs: common mistakes and how to stay safe',
+    'Action plan: the simple first steps to start today',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright, active wellness studio. Tone: warm, motivating, practical. Pace: relaxed and encouraging.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_RELATIONSHIPS = makeShow({
+  id: 'clearsight-relationships',
+  name: 'ClearSight Relationships',
+  description:
+    'Build better connections. Maya Ellis and Caleb Ward explore dating, marriage, friendship, and communication with warmth and realism — concrete tools and conversations that actually help.',
+  focus:
+    'Relationships — dating, marriage, friendship, communication, and family ties, explored with warm, practical, non-judgmental guidance.',
+  introTagline:
+    'Welcome to ClearSight Relationships, where we turn connection into conversations you can actually have.',
+  contentType: 'Lifestyle',
+  categories: ['Relationships'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, human relationships editorial illustration — connection and conversation motifs, soft natural light, clean modern palette.',
+  scriptStructure: [
+    'Hook: the relationship situation or goal',
+    'What to know first: the underlying dynamic',
+    'Step by step: the approach and the conversation',
+    'Pitfalls & trade-offs: common mistakes and how to avoid them',
+    'Action plan: the first steps to try this week',
+  ],
+  sceneDirectorNotes:
+    'Scene: warm, intimate conversation studio. Tone: warm, empathetic, practical. Pace: relaxed and thoughtful.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_MONEY = makeShow({
+  id: 'clearsight-personal-finance',
+  name: 'ClearSight Money',
+  description:
+    'Take charge of your money. Maya Ellis and Caleb Ward make budgeting, saving, investing, and debt payoff approachable — clear steps and the reasoning behind them, for real budgets and real life.',
+  focus:
+    'Personal finance — budgeting, saving, investing, debt payoff, and retirement planning, explained in plain, actionable terms.',
+  introTagline:
+    'Welcome to ClearSight Money, where we turn financial goals into steps you can start with what you have.',
+  contentType: 'Lifestyle',
+  categories: ['Personal Finance'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: clean, reassuring personal-finance editorial illustration — everyday money and planning motifs, bright modern palette.',
+  scriptStructure: [
+    'Hook: the money goal or problem this solves',
+    'What to know first: the key principle behind it',
+    'Step by step: the concrete plan and options',
+    'Pitfalls & trade-offs: common mistakes and how to weigh choices',
+    'Action plan: the first steps to take today',
+  ],
+  sceneDirectorNotes:
+    'Scene: clean, modern money-talk studio. Tone: warm, reassuring, practical. Pace: relaxed and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_FAMILY = makeShow({
+  id: 'clearsight-family',
+  name: 'ClearSight Family',
+  description:
+    'Parenting, made a little easier. Maya Ellis and Caleb Ward cover newborns through teens, family routines, and work-life balance with practical, judgment-free guidance you can actually use.',
+  focus:
+    'Parenting and family — newborns, toddlers, teens, family activities, and work-life balance, with practical, judgment-free guidance.',
+  introTagline:
+    'Welcome to ClearSight Family, where we turn the hard parts of parenting into steps you can take today.',
+  contentType: 'Lifestyle',
+  categories: ['Parenting & Family'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, wholesome family editorial illustration — home and togetherness motifs, soft natural light, clean modern palette.',
+  scriptStructure: [
+    'Hook: the parenting situation or goal',
+    'What to know first: the developmental or practical context',
+    'Step by step: the approach to try',
+    'Pitfalls & trade-offs: common mistakes and how to avoid them',
+    'Action plan: the first steps to start this week',
+  ],
+  sceneDirectorNotes:
+    'Scene: warm, homey family studio. Tone: warm, supportive, practical. Pace: relaxed and reassuring.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_STYLE = makeShow({
+  id: 'clearsight-style',
+  name: 'ClearSight Style',
+  description:
+    'Look and feel your best. Maya Ellis and Caleb Ward decode trends, wardrobe basics, and grooming into a personal style that fits your life and budget — what to keep, what to skip, and why.',
+  focus:
+    'Style and fashion — trends, wardrobe basics, sustainable fashion, grooming, and accessories, with practical, budget-aware guidance.',
+  introTagline:
+    'Welcome to ClearSight Style, where we turn fashion into a wardrobe that actually works for you.',
+  contentType: 'Lifestyle',
+  categories: ['Style & Fashion'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: chic, polished fashion editorial illustration — wardrobe and style motifs, clean lines, bright modern palette.',
+  scriptStructure: [
+    'Hook: the style goal or question',
+    'What to know first: the principle or context behind it',
+    'Step by step: how to build or choose it',
+    'Pitfalls & trade-offs: common mistakes and how to weigh choices',
+    'Action plan: the first steps to refresh your look',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright, stylish wardrobe studio. Tone: warm, confident, practical. Pace: relaxed and upbeat.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_WELLNESS = makeShow({
+  id: 'clearsight-wellness',
+  name: 'ClearSight Wellness',
+  description:
+    'Calmer days, clearer mind. Maya Ellis and Caleb Ward explore meditation, sleep, stress relief, and self-care with grounded, evidence-aware practices you can fit into a busy life.',
+  focus:
+    'Mindfulness and wellness — meditation, sleep, stress relief, journaling, and self-care, grounded in practical, evidence-aware habits.',
+  introTagline:
+    'Welcome to ClearSight Wellness, where we turn calm into small habits you can actually keep.',
+  contentType: 'Lifestyle',
+  categories: ['Mindfulness & Wellness'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: serene, calming wellness editorial illustration — mindfulness and rest motifs, soft natural light, soothing palette.',
+  scriptStructure: [
+    'Hook: the wellbeing goal and why it matters',
+    'What to know first: the principle or evidence behind it',
+    'Step by step: the practice to try',
+    'Pitfalls & trade-offs: common mistakes and how to stay consistent',
+    'Action plan: the simple first steps to start today',
+  ],
+  sceneDirectorNotes:
+    'Scene: calm, softly lit wellness studio. Tone: warm, soothing, practical. Pace: unhurried and gentle.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_PETS = makeShow({
+  id: 'clearsight-pets',
+  name: 'ClearSight Pets',
+  description:
+    'Happier, healthier pets. Maya Ellis and Caleb Ward cover dogs, cats, pet health, and training with practical, vet-aware advice — what to do, what to watch for, and how to start.',
+  focus:
+    'Pets — dogs, cats, pet health, training, and adoption, with practical, vet-aware guidance for everyday pet owners.',
+  introTagline:
+    'Welcome to ClearSight Pets, where we turn pet care into simple steps for a happier companion.',
+  contentType: 'Lifestyle',
+  categories: ['Pets'],
+  hosts: [HOST_MAYA, HOST_CALEB],
+  visualStyle:
+    'Style: warm, friendly pets editorial illustration — companion-animal motifs, soft natural light, clean modern palette.',
+  scriptStructure: [
+    'Hook: the pet goal or problem this solves',
+    'What to know first: the behavior or health context',
+    'Step by step: the approach to follow',
+    'Pitfalls & trade-offs: common mistakes and when to see a vet',
+    'Action plan: the first steps to take this week',
+  ],
+  sceneDirectorNotes:
+    'Scene: warm, friendly pet-care studio. Tone: warm, caring, practical. Pace: relaxed and upbeat.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+// ---------------------------------------------------------------------------
+// Per-category Education channels (reuse ClearSight Academy's house cast). Each
+// owns a single category so on-demand episodes are tagged with that category.
+// ---------------------------------------------------------------------------
+export const SHOW_MATH = makeShow({
+  id: 'clearsight-math',
+  name: 'ClearSight Math',
+  description:
+    'Math that finally clicks. Dr. Lena Okafor and Diego Santos build mathematical ideas from first principles — defining the notation, walking through vivid examples, and busting the misconceptions that trip everyone up.',
+  focus:
+    'Mathematics — arithmetic to advanced topics, taught from first principles with clear definitions, worked examples, and intuition.',
+  introTagline:
+    'Welcome to ClearSight Math, where we build mathematical ideas from the ground up and make them click.',
+  contentType: 'Education',
+  categories: ['Mathematics'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: clean, instructional editorial illustration — geometric and diagrammatic motifs, explanatory and clear.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_SCIENCE = makeShow({
+  id: 'clearsight-science',
+  name: 'ClearSight Science',
+  description:
+    'How the world really works. Dr. Lena Okafor and Diego Santos unpack discoveries and everyday science from first principles — defining the jargon, working through examples, and correcting the myths.',
+  focus:
+    'Science and discovery — biology, chemistry, physics, and breakthroughs, explained from first principles for the curious non-expert.',
+  introTagline:
+    'Welcome to ClearSight Science, where we unpack how the world works, one clear idea at a time.',
+  contentType: 'Education',
+  categories: ['Science & Discovery'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: clear, instructional editorial illustration — scientific and experimental motifs, explanatory and vivid.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_COSMOS = makeShow({
+  id: 'clearsight-cosmos',
+  name: 'ClearSight Cosmos',
+  description:
+    'A guided tour of the universe. Dr. Lena Okafor and Diego Santos explore space, astronomy, and cosmology from first principles — making the vast and abstract concrete and picturable.',
+  focus:
+    'Space and astronomy — planets, stars, cosmology, and space exploration, explained from first principles with vivid analogies.',
+  introTagline:
+    'Welcome to ClearSight Cosmos, where we make the universe feel a little closer and a lot clearer.',
+  contentType: 'Education',
+  categories: ['Space & Astronomy'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: awe-inspiring, instructional editorial illustration — cosmic and celestial motifs, deep space palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_HISTORY = makeShow({
+  id: 'clearsight-history',
+  name: 'ClearSight History',
+  description:
+    'The past, made vivid and clear. Dr. Lena Okafor and Diego Santos trace events, people, and turning points from first principles — the context, the causes, and the myths worth correcting.',
+  focus:
+    'History — civilizations, events, figures, and turning points, explained with context, causation, and myth-busting clarity.',
+  introTagline:
+    'Welcome to ClearSight History, where we turn the past into a story you can actually follow.',
+  contentType: 'Education',
+  categories: ['History'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: rich, instructional editorial illustration — historical and archival motifs, warm palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_MEDICINE = makeShow({
+  id: 'clearsight-medicine',
+  name: 'ClearSight Medicine',
+  description:
+    'Understand your health. Dr. Lena Okafor and Diego Santos explain medicine and the human body from first principles — defining the terms, working through examples, and correcting the common myths.',
+  focus:
+    'Medicine and health — the human body, conditions, treatments, and medical science, explained clearly for the curious non-expert.',
+  introTagline:
+    'Welcome to ClearSight Medicine, where we make how the body and medicine work clear and approachable.',
+  contentType: 'Education',
+  categories: ['Medicine & Health'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: clean, instructional editorial illustration — anatomical and medical motifs, calm palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_TECH = makeShow({
+  id: 'clearsight-tech-coding',
+  name: 'ClearSight Tech',
+  description:
+    'How technology actually works. Dr. Lena Okafor and Diego Santos explain computing, coding, and the tech shaping our lives from first principles — defining the jargon and making the abstract concrete.',
+  focus:
+    'Technology and coding — computing, software, the internet, AI, and programming concepts, explained clearly from first principles.',
+  introTagline:
+    'Welcome to ClearSight Tech, where we make how technology works clear, one concept at a time.',
+  contentType: 'Education',
+  categories: ['Technology & Coding'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: clean, instructional editorial illustration — computing and circuitry motifs, modern palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_ECONOMICS = makeShow({
+  id: 'clearsight-economics',
+  name: 'ClearSight Economics',
+  description:
+    'Make sense of money and markets. Dr. Lena Okafor and Diego Santos explain economics from first principles — defining the terms, working through examples, and clearing up the common confusions.',
+  focus:
+    'Money and economics — markets, trade, policy, and economic ideas, explained from first principles for the curious non-expert.',
+  introTagline:
+    'Welcome to ClearSight Economics, where we turn money and markets into ideas you can actually follow.',
+  contentType: 'Education',
+  categories: ['Money & Economics'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: clean, instructional editorial illustration — economic and market motifs, modern palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_ARTS = makeShow({
+  id: 'clearsight-arts',
+  name: 'ClearSight Arts',
+  description:
+    'The story behind the art. Dr. Lena Okafor and Diego Santos explore art, literature, music, and culture from first principles — the context, the craft, and the ideas that make it matter.',
+  focus:
+    'Arts and culture — visual art, literature, music, film, and cultural movements, explained with context and accessible insight.',
+  introTagline:
+    'Welcome to ClearSight Arts, where we open up the ideas and craft behind the art we love.',
+  contentType: 'Education',
+  categories: ['Arts & Culture'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: rich, instructional editorial illustration — artistic and cultural motifs, expressive palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_NATURE = makeShow({
+  id: 'clearsight-nature',
+  name: 'ClearSight Nature',
+  description:
+    'The natural world, up close. Dr. Lena Okafor and Diego Santos explore ecosystems, wildlife, and the environment from first principles — how it works, why it matters, and the myths worth correcting.',
+  focus:
+    'Nature and environment — ecosystems, wildlife, climate, and conservation, explained from first principles for the curious non-expert.',
+  introTagline:
+    'Welcome to ClearSight Nature, where we make the natural world clearer and closer.',
+  contentType: 'Education',
+  categories: ['Nature & Environment'],
+  hosts: [HOST_LENA, HOST_DIEGO],
+  visualStyle:
+    'Style: lush, instructional editorial illustration — natural-world and ecosystem motifs, organic palette, explanatory.',
+  scriptStructure: [
+    'Hook: a question or surprising fact that makes the topic matter',
+    'Why it matters: stakes and relevance',
+    'Core concept: explained from first principles, defining each term',
+    'Worked example / analogy: make it concrete and picturable',
+    'Common misconception: surface and correct it',
+    'Recap: the key takeaways to remember',
+  ],
+  sceneDirectorNotes:
+    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
 export const SHOWS: Show[] = [
   SHOW_NEWS,
   SHOW_ACADEMY,
@@ -514,6 +1134,26 @@ export const SHOWS: Show[] = [
   SHOW_FRAMEBYFRAME,
   SHOW_LINERNOTES,
   SHOW_PLAYERTWO,
+  SHOW_GOODLIFE,
+  SHOW_KITCHEN,
+  SHOW_TRAVEL,
+  SHOW_HOMEGARDEN,
+  SHOW_FITNESS,
+  SHOW_RELATIONSHIPS,
+  SHOW_MONEY,
+  SHOW_FAMILY,
+  SHOW_STYLE,
+  SHOW_WELLNESS,
+  SHOW_PETS,
+  SHOW_MATH,
+  SHOW_SCIENCE,
+  SHOW_COSMOS,
+  SHOW_HISTORY,
+  SHOW_MEDICINE,
+  SHOW_TECH,
+  SHOW_ECONOMICS,
+  SHOW_ARTS,
+  SHOW_NATURE,
 ]
 
 /** Look up a show by its stable id. */
@@ -593,6 +1233,7 @@ const DEFAULT_SHOW_BY_TYPE: Record<ContentType, Show> = {
   News: SHOW_NEWS,
   Education: SHOW_ACADEMY,
   Entertainment: SHOW_CASEFILE,
+  Lifestyle: SHOW_GOODLIFE,
 }
 
 export interface ResolveShowInput {

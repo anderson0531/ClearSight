@@ -26,6 +26,9 @@ export default async function ChannelPage({ params, searchParams }: ChannelPageP
         contentType={show.contentType}
         categories={categoriesForShow(show)}
         initialCategory={initialCategory}
+        showName={show.name}
+        showDescription={show.description}
+        showFocus={show.focus}
       />
     </main>
   )

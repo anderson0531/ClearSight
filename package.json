@@ -20,6 +20,7 @@
     "generate:music": "node scripts/generate-music.mjs",
     "generate:host-art": "node scripts/generate-host-art.mjs",
     "generate:pwa-icons": "node scripts/upload-pwa-icons.mjs",
+    "generate:show-intros": "node scripts/generate-show-intros.mjs",
     "db:gcp": "node scripts/start-gcp-db.mjs",
     "db:push": "node -e \"import('./scripts/database-url.mjs').then(m=>m.resolveAndApplyDatabaseEnv()).then(()=>process.exit(0))\" && npx prisma db push"
   },

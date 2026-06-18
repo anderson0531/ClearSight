@@ -103,10 +103,37 @@ const ENTERTAINMENT_FRAMEWORK: AnalysisFramework = {
   ],
 }
 
+const LIFESTYLE_FRAMEWORK: AnalysisFramework = {
+  label: 'Practical lifestyle guide',
+  briefingDirectives: [
+    'Lead with the practical question or goal the listener actually has',
+    'Give specific, actionable steps or options — not vague encouragement',
+    'Explain the why behind each recommendation so choices are informed',
+    'Note common mistakes, trade-offs, and how to avoid or weigh them',
+  ],
+  podcastDirectives: [
+    'Open with the real-life situation or goal the episode solves for',
+    'Walk through concrete, doable steps the listener can act on today',
+    'Explain the reasoning and trade-offs behind each tip',
+    'Share practical examples, rules of thumb, and pitfalls to avoid',
+  ],
+  analyticalArc:
+    'Structure: (1) the goal / problem → (2) what to know first → (3) step-by-step approach & options → (4) pitfalls and trade-offs → (5) a simple action plan',
+  forecastMandate:
+    'MANDATORY: Close with a short, concrete action plan — the first steps the listener should take.',
+  antiFluffRules: [
+    'Ban vague motivation with no concrete action ("just be consistent")',
+    'Ban unexplained recommendations — always give the reason and trade-off',
+    'Every segment must add a step, option, example, or pitfall',
+    'Keep it warm and practical — no hype, no filler reactions',
+  ],
+}
+
 const TYPE_FRAMEWORKS: Record<ContentType, AnalysisFramework> = {
   News: DEFAULT_FRAMEWORK,
   Education: EDUCATION_FRAMEWORK,
   Entertainment: ENTERTAINMENT_FRAMEWORK,
+  Lifestyle: LIFESTYLE_FRAMEWORK,
 }
 
 /**

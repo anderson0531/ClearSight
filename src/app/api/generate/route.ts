@@ -17,6 +17,7 @@ const generateSchema = z.object({
   geoState: z.string().optional(),
   geoLocal: z.string().optional(),
   questions: z.array(z.string().min(3).max(300)).max(3).optional(),
+  description: z.string().max(1000).optional(),
 })
 
 export async function POST(request: Request) {

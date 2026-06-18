@@ -39,6 +39,17 @@ const CATEGORY_COLORS: Partial<Record<Category, string>> = {
   'Film & TV': 'category-tile-film-tv',
   Music: 'category-tile-music',
   Gaming: 'category-tile-gaming',
+  // Home & Lifestyle
+  'Food & Cooking': 'category-tile-food',
+  Travel: 'category-tile-travel',
+  'Home & Garden': 'category-tile-home-garden',
+  'Health & Fitness': 'category-tile-fitness',
+  Relationships: 'category-tile-relationships',
+  'Personal Finance': 'category-tile-personal-finance',
+  'Parenting & Family': 'category-tile-parenting',
+  'Style & Fashion': 'category-tile-style',
+  'Mindfulness & Wellness': 'category-tile-wellness',
+  Pets: 'category-tile-pets',
 }
 
 function CategoryTypeGroup({ contentType }: { contentType: ContentType }) {

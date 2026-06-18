@@ -155,7 +155,7 @@ export default function WelcomePage() {
                     {t(PLAN_CTA_KEYS[planId])}
                   </Link>
                   <p className="mt-2 text-center text-[11px] text-[var(--muted-strong)]">
-                    {t('planSecureCheckout')}
+                    {t('landingPlanNote')}
                   </p>
                 </div>
               )

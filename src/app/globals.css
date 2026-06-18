@@ -177,6 +177,28 @@ input[type='search']::-webkit-search-cancel-button {
   padding: 0.625rem 0.875rem;
 }
 
+/* Rectangular multi-line input for dialogs (shares the search-input look but
+   keeps a small corner radius instead of the pill shape). */
+.dialog-textarea {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: rgba(20, 24, 32, 0.85);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  padding: 0.625rem 0.875rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dialog-textarea::placeholder {
+  color: var(--muted-strong);
+}
+
+.dialog-textarea:focus {
+  border-color: rgba(91, 106, 191, 0.45);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(91, 106, 191, 0.1);
+}
+
 .geo-action-btn,
 .geo-action-btn-muted {
   display: inline-flex;
@@ -812,13 +834,27 @@ input[type='search']::-webkit-search-cancel-button {
 }
 
 /* Channel page ---------------------------------------------------------- */
+/* Break the hero out of the page's horizontal padding so it spans the
+   full width of the max-w-7xl content section. */
+.channel-hero-bleed {
+  margin-inline: -0.75rem;
+}
+
+@media (min-width: 640px) {
+  .channel-hero-bleed {
+    margin-inline: -1rem;
+  }
+}
+
 .channel-hero {
   position: relative;
+  width: 100%;
   aspect-ratio: 16 / 7;
   max-height: 22rem;
   overflow: hidden;
-  border-radius: 1rem;
-  border: 1px solid var(--border);
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
@@ -904,8 +940,16 @@ input[type='search']::-webkit-search-cancel-button {
 }
 
 /* Channel follow button (over the hero) -------------------------------- */
-.channel-follow-btn {
+.channel-hero-actions {
   margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.channel-follow-btn,
+.channel-intro-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -921,7 +965,8 @@ input[type='search']::-webkit-search-cancel-button {
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.channel-follow-btn:hover {
+.channel-follow-btn:hover,
+.channel-intro-btn:hover {
   background: rgba(0, 0, 0, 0.5);
   border-color: #fff;
 }
@@ -1100,6 +1145,17 @@ input[type='search']::-webkit-search-cancel-button {
 .category-tile-film-tv { background: linear-gradient(135deg, #2c5282, #1a365d); }
 .category-tile-music { background: linear-gradient(135deg, #6b46c1, #322659); }
 .category-tile-gaming { background: linear-gradient(135deg, #2c7a7b, #1d4044); }
+/* Home & Lifestyle */
+.category-tile-food { background: linear-gradient(135deg, #dd6b20, #9c4221); }
+.category-tile-travel { background: linear-gradient(135deg, #0987a0, #086f83); }
+.category-tile-home-garden { background: linear-gradient(135deg, #2f855a, #22543d); }
+.category-tile-fitness { background: linear-gradient(135deg, #e53e3e, #9b2c2c); }
+.category-tile-relationships { background: linear-gradient(135deg, #d53f8c, #97266d); }
+.category-tile-personal-finance { background: linear-gradient(135deg, #b7791f, #744210); }
+.category-tile-parenting { background: linear-gradient(135deg, #dd6b20, #b7791f); }
+.category-tile-style { background: linear-gradient(135deg, #9f7aea, #553c9a); }
+.category-tile-wellness { background: linear-gradient(135deg, #319795, #285e61); }
+.category-tile-pets { background: linear-gradient(135deg, #975a16, #5f370e); }
 
 /* ── Premium / upsell ── */
 

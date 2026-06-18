@@ -11,6 +11,8 @@ export interface PendingGeneration {
   geoState?: string
   geoLocal?: string
   questions?: string[]
+  /** Creator's approved, optimized podcast description that steers generation. */
+  description?: string
 }
 
 const STORAGE_KEY = 'clearsight:pending-generation'

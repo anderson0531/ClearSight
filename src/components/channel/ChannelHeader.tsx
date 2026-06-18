@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Heart } from 'lucide-react'
+import { Heart, Pause, Play } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { Show } from '@/lib/shows'
 import { FAVORITES_EVENT, isChannelFollowed, toggleFollowChannel } from '@/lib/favorites'
@@ -25,33 +25,71 @@ export function ChannelHeader({ show }: { show: Show }) {
     }
   }, [show.id])
 
+  // Short, standalone channel intro clip (not part of the global player queue).
+  const introRef = useRef<HTMLAudioElement | null>(null)
+  const [introPlaying, setIntroPlaying] = useState(false)
+  const toggleIntro = () => {
+    const el = introRef.current
+    if (!el) return
+    if (el.paused) {
+      void el.play().catch(() => setIntroPlaying(false))
+    } else {
+      el.pause()
+    }
+  }
+
   return (
     <header>
-      <div className="channel-hero">
-        <Image
-          src={show.coverImage}
-          alt={show.name}
-          fill
-          priority
-          sizes="100vw"
-          className="channel-hero-img"
-        />
-        <div className="channel-hero-overlay" />
-        <div className="channel-hero-body">
+      <div className="channel-hero-bleed">
+        <div className="channel-hero">
+          <Image
+            src={show.coverImage}
+            alt={show.name}
+            fill
+            priority
+            sizes="100vw"
+            className="channel-hero-img"
+          />
+          <div className="channel-hero-overlay" />
+          <div className="channel-hero-body">
           <span className="show-card-type">{typeLabel}</span>
           <h1 className="channel-hero-title">{show.name}</h1>
           <p className="channel-hero-hosts">{show.hosts.map((h) => h.shortName).join(' & ')}</p>
-          <button
-            type="button"
-            onClick={() => setFollowing(toggleFollowChannel(show.id))}
-            className={`channel-follow-btn ${following ? 'channel-follow-btn-active' : ''}`}
-            aria-pressed={following}
-          >
-            <Heart className={`h-4 w-4 ${following ? 'fill-current' : ''}`} />
-            {following ? t('channelFollowing') : t('channelFollow')}
-          </button>
+          <div className="channel-hero-actions">
+            <button
+              type="button"
+              onClick={() => setFollowing(toggleFollowChannel(show.id))}
+              className={`channel-follow-btn ${following ? 'channel-follow-btn-active' : ''}`}
+              aria-pressed={following}
+            >
+              <Heart className={`h-4 w-4 ${following ? 'fill-current' : ''}`} />
+              {following ? t('channelFollowing') : t('channelFollow')}
+            </button>
+            {show.introAudio ? (
+              <button
+                type="button"
+                onClick={toggleIntro}
+                className="channel-intro-btn"
+                aria-pressed={introPlaying}
+              >
+                {introPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                {introPlaying ? t('channelPauseIntro') : t('channelPlayIntro')}
+              </button>
+            ) : null}
+          </div>
+          </div>
         </div>
       </div>
+      {show.introAudio ? (
+        <audio
+          ref={introRef}
+          src={show.introAudio}
+          preload="none"
+          onPlay={() => setIntroPlaying(true)}
+          onPause={() => setIntroPlaying(false)}
+          onEnded={() => setIntroPlaying(false)}
+        />
+      ) : null}
 
       <section className="mt-6">
         <h2 className="filter-label">{t('channelAbout')}</h2>

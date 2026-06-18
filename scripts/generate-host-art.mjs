@@ -26,7 +26,7 @@ const PORTRAITS_PER_HOST = 2
 
 // A consistent studio look so every show feels like the same network.
 const STUDIO_BASE =
-  'Professional podcast studio interior, warm key lighting, soft bokeh background, broadcast microphones on desk, premium and modern. No text, no logos, no watermarks.'
+  'Professional podcast studio interior, warm key lighting, soft bokeh background, broadcast microphones on desk, premium and modern. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 
 const SHOW_SPECS = [
   {
@@ -72,21 +72,21 @@ const SHOW_SPECS = [
 ]
 
 const PORTRAIT_BASE =
-  'Cinematic broadcast portrait, single person seated at a podcast microphone, looking toward camera, warm studio lighting, shallow depth of field, photorealistic, premium. No text, no logos, no watermarks.'
+  'Cinematic broadcast portrait, single person seated at a podcast microphone, looking toward camera, warm studio lighting, shallow depth of field, photorealistic, premium. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 
 // Host-populated "intro" frame for each show — the equivalent of the existing
 // Anderson + Chen news studio image, used as the show's home-page intro card.
 const INTRO_DUO_BASE =
-  'Cinematic wide podcast intro shot: two co-hosts seated together at the broadcast desk with microphones, mid-conversation, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. No text, no logos, no watermarks.'
+  'Cinematic wide podcast intro shot: two co-hosts seated together at the broadcast desk with microphones, mid-conversation, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 const INTRO_SOLO_BASE =
-  'Cinematic wide podcast intro shot: a single host seated at the broadcast desk with a microphone, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. No text, no logos, no watermarks.'
+  'Cinematic wide podcast intro shot: a single host seated at the broadcast desk with a microphone, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 
 // Fixed "cover" key-art for each channel's hero — a polished show poster, NOT a
 // mid-conversation frame: host(s) posed confidently for the camera.
 const COVER_DUO_BASE =
-  'Premium podcast cover key-art for a show poster: two co-hosts posed confidently side by side, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. No text, no logos, no watermarks.'
+  'Premium podcast cover key-art for a show poster: two co-hosts posed confidently side by side, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 const COVER_SOLO_BASE =
-  'Premium podcast cover key-art for a show poster: a single host posed confidently, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. No text, no logos, no watermarks.'
+  'Premium podcast cover key-art for a show poster: a single host posed confidently, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
 
 const HOST_SPECS = [
   { name: 'Dr. Lena Okafor', look: 'Warm, lucid female lead educator, 40s, approachable and confident.' },
@@ -107,22 +107,55 @@ const HOST_SPECS = [
 ]
 
 // Host looks for cover art, including the News pair (which is not part of
-// HOST_SPECS because its portraits/studio art already exist).
+// HOST_SPECS because its portraits/studio art already exist) and the Lifestyle
+// house cast (Maya + Caleb) which is reused across all Lifestyle channels.
 const COVER_HOST_LOOKS = {
   ...Object.fromEntries(HOST_SPECS.map((h) => [h.name, h.look])),
   'Dr. Benjamin Anderson': 'Seasoned male news anchor and lead analyst, 50s, grounded, calm, authoritative.',
   'Sarah Chen': 'Bright female investigative correspondent, 30s, articulate, confident, modern.',
+  'Maya Ellis': 'Warm, approachable female lifestyle host, 30s, friendly, stylish, encouraging.',
+  'Caleb Ward': 'Easygoing, practical male lifestyle co-host, 30s, warm and personable.',
 }
 
-// Every channel gets a fixed cover, including News. Reuses each show's studio
-// styling so the poster matches the show's world.
+// Per-category channels reuse a content type's house cast, so they need no new
+// portraits — only a fresh cover. Each entry mirrors the SHOW_SPECS shape.
+const LIFESTYLE_HOSTS = ['Maya Ellis', 'Caleb Ward']
+const EDUCATION_HOSTS = ['Dr. Lena Okafor', 'Diego Santos']
+const EXTRA_COVER_SPECS = [
+  // The Good Life flagship (still lacks a cover).
+  { id: 'the-good-life', studioPrompt: `${STUDIO_BASE} Bright, homey lifestyle studio, warm and inviting.`, hosts: LIFESTYLE_HOSTS },
+  // Lifestyle per-category channels.
+  { id: 'clearsight-kitchen', studioPrompt: `${STUDIO_BASE} Bright, appetizing kitchen studio with fresh-food motifs.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-travel', studioPrompt: `${STUDIO_BASE} Bright travel-desk studio with adventurous, scenic motifs.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-home-garden', studioPrompt: `${STUDIO_BASE} Bright home-and-garden design studio with tidy interiors and greenery.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-fitness', studioPrompt: `${STUDIO_BASE} Bright, active wellness studio with energetic, healthy motifs.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-relationships', studioPrompt: `${STUDIO_BASE} Warm, intimate conversation studio, soft and personable.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-personal-finance', studioPrompt: `${STUDIO_BASE} Clean, modern money-talk studio, reassuring and practical.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-family', studioPrompt: `${STUDIO_BASE} Warm, homey family studio, wholesome and supportive.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-style', studioPrompt: `${STUDIO_BASE} Bright, stylish wardrobe studio, chic and polished.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-wellness', studioPrompt: `${STUDIO_BASE} Calm, softly lit wellness studio, serene and soothing.`, hosts: LIFESTYLE_HOSTS },
+  { id: 'clearsight-pets', studioPrompt: `${STUDIO_BASE} Warm, friendly pet-care studio, upbeat and caring.`, hosts: LIFESTYLE_HOSTS },
+  // Education per-category channels.
+  { id: 'clearsight-math', studioPrompt: `${STUDIO_BASE} Bright teaching studio with geometric and diagrammatic motifs.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-science', studioPrompt: `${STUDIO_BASE} Bright teaching studio with scientific and experimental motifs.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-cosmos', studioPrompt: `${STUDIO_BASE} Teaching studio with cosmic and celestial motifs, deep-space palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-history', studioPrompt: `${STUDIO_BASE} Teaching studio with historical and archival motifs, warm palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-medicine', studioPrompt: `${STUDIO_BASE} Bright teaching studio with anatomical and medical motifs, calm palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-tech-coding', studioPrompt: `${STUDIO_BASE} Bright teaching studio with computing and circuitry motifs, modern palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-economics', studioPrompt: `${STUDIO_BASE} Bright teaching studio with economic and market motifs, modern palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-arts', studioPrompt: `${STUDIO_BASE} Teaching studio with artistic and cultural motifs, expressive palette.`, hosts: EDUCATION_HOSTS },
+  { id: 'clearsight-nature', studioPrompt: `${STUDIO_BASE} Teaching studio with natural-world and ecosystem motifs, organic palette.`, hosts: EDUCATION_HOSTS },
+]
+
+// Every channel gets a fixed cover except News: The ClearSight Brief keeps the
+// canonical Anderson + Chen studio image (see HOSTS_IMAGE in shows.ts).
 const COVER_SPECS = [
-  {
-    id: 'clearsight-brief',
-    studioPrompt: `${STUDIO_BASE} Modern intelligence newsroom, muted slate and indigo palette, authoritative.`,
-    hosts: ['Dr. Benjamin Anderson', 'Sarah Chen'],
-  },
-  ...SHOW_SPECS.map((spec) => ({ id: spec.id, studioPrompt: spec.studioPrompt, hosts: spec.hosts })),
+  ...SHOW_SPECS.map((spec) => ({
+    id: spec.id,
+    studioPrompt: spec.studioPrompt,
+    hosts: spec.hosts,
+  })),
+  ...EXTRA_COVER_SPECS,
 ]
 
 function loadDotEnv() {

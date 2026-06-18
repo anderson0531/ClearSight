@@ -16,6 +16,8 @@ export function illustrationStyleForType(type?: ContentType): string {
       return 'Style: clear, instructional editorial illustration — diagrammatic, labeled-feeling, explanatory.'
     case 'Entertainment':
       return 'Style: cinematic, dramatic, moody editorial illustration with strong atmosphere.'
+    case 'Lifestyle':
+      return 'Style: warm, inviting lifestyle editorial illustration — bright natural light, friendly and aspirational.'
     default:
       return ''
   }

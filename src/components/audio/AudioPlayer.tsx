@@ -20,7 +20,7 @@ import type { AudioSegment, AudioTrack } from '@/types/story'
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const
 const SLEEP_OPTIONS = [0, 15, 30, 60] as const
-const BACKGROUND_MUSIC_VOLUME_RATIO = 0.3
+const BACKGROUND_MUSIC_VOLUME_RATIO = 0.2
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'

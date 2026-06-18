@@ -28,7 +28,7 @@ import type { AudioSegment } from '@/types/story'
 
 type TransitionEffect = 'kenburns' | 'crossfade' | 'slide' | 'zoom' | 'none'
 
-const BACKGROUND_MUSIC_VOLUME_RATIO = 0.3
+const BACKGROUND_MUSIC_VOLUME_RATIO = 0.2
 /** Silence after the final line before the outro theme swells in. */
 const OUTRO_MUSIC_DELAY_SECONDS = 5
 /** How long the outro theme plays once it starts. */

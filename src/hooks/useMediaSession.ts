@@ -48,7 +48,15 @@ export function useMediaSession() {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && e.target instanceof HTMLElement && e.target.tagName !== 'INPUT') {
+      const el = e.target instanceof HTMLElement ? e.target : null
+      // Don't hijack the spacebar while the user is typing in any editable field.
+      const typing =
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable)
+      if (e.code === 'Space' && !typing) {
         e.preventDefault()
         togglePlay()
       }

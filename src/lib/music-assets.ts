@@ -14,7 +14,7 @@ export const MUSIC_ASSETS: {
   outro: { url: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-outro.wav", durationSeconds: 6 },
 }
 
-/** Background beds played under intro/outro dialogue at 30% volume (client overlay). */
+/** Background beds played under intro/outro dialogue at 20% volume (client overlay). */
 export const BACKGROUND_MUSIC = {
   intro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_Morning_Brief.mp3',
   outro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_ClearSight_Brief.mp3',

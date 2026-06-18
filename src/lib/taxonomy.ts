@@ -7,7 +7,7 @@ export const GEO_SCOPES = ['Worldwide', 'Region', 'Country', 'State/Province', '
 // (like Spotify is music), with Education and Entertainment as sibling modes.
 // The Type drives discovery filtering AND the generation pipeline (script
 // framework + illustration style + default conversational format).
-export const CONTENT_TYPES = ['News', 'Education', 'Entertainment'] as const
+export const CONTENT_TYPES = ['News', 'Education', 'Entertainment', 'Lifestyle'] as const
 export type ContentType = (typeof CONTENT_TYPES)[number]
 export const DEFAULT_CONTENT_TYPE: ContentType = 'News'
 
@@ -57,10 +57,25 @@ export const ENTERTAINMENT_CATEGORIES = [
   'Gaming',
 ] as const
 
+// Home & Lifestyle topics: practical, evergreen, service-journalism subjects.
+export const LIFESTYLE_CATEGORIES = [
+  'Food & Cooking',
+  'Travel',
+  'Home & Garden',
+  'Health & Fitness',
+  'Relationships',
+  'Personal Finance',
+  'Parenting & Family',
+  'Style & Fashion',
+  'Mindfulness & Wellness',
+  'Pets',
+] as const
+
 export const CONTENT_CATEGORIES = [
   ...NEWS_CATEGORIES,
   ...EDUCATION_CATEGORIES,
   ...ENTERTAINMENT_CATEGORIES,
+  ...LIFESTYLE_CATEGORIES,
 ] as const
 
 export const CATEGORIES = ['Top', ...CONTENT_CATEGORIES] as const
@@ -74,6 +89,7 @@ const CATEGORIES_BY_TYPE: Record<ContentType, readonly string[]> = {
   News: NEWS_CATEGORIES,
   Education: EDUCATION_CATEGORIES,
   Entertainment: ENTERTAINMENT_CATEGORIES,
+  Lifestyle: LIFESTYLE_CATEGORIES,
 }
 
 /** Categories available for a given Type, with 'Top' first as the "all" option. */
@@ -91,6 +107,7 @@ export function typeForCategory(category: string): ContentType {
   const canonical = canonicalizeCategory(category)
   if ((EDUCATION_CATEGORIES as readonly string[]).includes(canonical)) return 'Education'
   if ((ENTERTAINMENT_CATEGORIES as readonly string[]).includes(canonical)) return 'Entertainment'
+  if ((LIFESTYLE_CATEGORIES as readonly string[]).includes(canonical)) return 'Lifestyle'
   return 'News'
 }
 
@@ -129,6 +146,17 @@ export const CATEGORY_SUBTOPICS: Record<string, string[]> = {
   'Film & TV': ['New Releases', 'Classics', 'Streaming', 'Directors', 'Genre Deep Dives'],
   Music: ['New Albums', 'Artist Profiles', 'Genres', 'Production', 'Music History'],
   Gaming: ['New Releases', 'Indie Games', 'Esports', 'Game Design', 'Retro'],
+  // Home & Lifestyle
+  'Food & Cooking': ['Recipes', 'Baking', 'Meal Prep', 'World Cuisine', 'Kitchen Tips'],
+  Travel: ['Destinations', 'Budget Travel', 'Road Trips', 'Travel Tips', 'Adventure'],
+  'Home & Garden': ['Interior Design', 'DIY Projects', 'Gardening', 'Organization', 'Decor'],
+  'Health & Fitness': ['Workouts', 'Nutrition', 'Running', 'Strength Training', 'Yoga'],
+  Relationships: ['Dating', 'Marriage', 'Friendship', 'Communication', 'Family Ties'],
+  'Personal Finance': ['Budgeting', 'Saving', 'Investing', 'Debt Payoff', 'Retirement'],
+  'Parenting & Family': ['Newborns', 'Toddlers', 'Teens', 'Family Activities', 'Work-Life Balance'],
+  'Style & Fashion': ['Trends', 'Wardrobe Basics', 'Sustainable Fashion', 'Grooming', 'Accessories'],
+  'Mindfulness & Wellness': ['Meditation', 'Sleep', 'Stress Relief', 'Journaling', 'Self-Care'],
+  Pets: ['Dogs', 'Cats', 'Pet Health', 'Training', 'Adoption'],
 }
 
 /** Curated sub-topic chips for a category (empty when none are defined). */

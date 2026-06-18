@@ -549,6 +549,31 @@ Requirements:
     }
   }
 
+  if (contentType === 'Lifestyle') {
+    const scope = isTop
+      ? `Cover a diverse mix across these areas: ${cats.join(', ')}.
+${topFormat}`
+      : `Every topic must clearly belong to the area: ${category}.
+${specificFormat}`
+    return {
+      defaultCategory,
+      prompt: `You are programming a home & lifestyle podcast network. List exactly ${count} useful, inspiring topics in ${language} that would each make an engaging 5-10 minute practical episode (how-to, tips, or guides).
+
+Audience geography: ${geoFocus}
+${focusLine}
+
+${scope}
+
+Requirements:
+- Topics should be practical and actionable (great how-tos and guides), NOT breaking-news headlines
+- Favor evergreen, everyday subjects people genuinely want help with
+- Each topic must be real and grounded — no invented products, studies, or claims
+- Write every topic in ${language}; warm, helpful, non-sensational wording
+- One topic per line; no numbering, bullets, URLs, source names, or preamble
+- Do NOT include intro lines like "Here are the topics" — titles only`,
+    }
+  }
+
   // News (default): real, currently-trending headlines.
   const categoryLine = isTop
     ? `Return the ${count} most popular real news stories right now across these categories: ${cats.join(', ')}.

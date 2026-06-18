@@ -49,6 +49,8 @@ export interface GenerateStoryInput {
   geoLocal?: string
   generationId: string
   questions?: string[]
+  /** Creator's approved podcast description; treated as the core brief. */
+  description?: string
 }
 
 interface TruthLedgerResult {
@@ -393,6 +395,12 @@ function formatUserQuestionsBlock(questions?: string[]): string {
   return `\nUser-guided questions to address in this briefing:\n${trimmed.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`
 }
 
+function formatUserDescriptionBlock(description?: string): string {
+  const trimmed = description?.trim()
+  if (!trimmed) return ''
+  return `\nCreator's brief for this episode (honor this intent, angle, and scope):\n"""\n${trimmed}\n"""\n`
+}
+
 async function compileTruthLedgerMarkdown(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): Promise<TruthLedgerResult> {
@@ -400,6 +408,7 @@ async function compileTruthLedgerMarkdown(
   const briefingType = input.contentType ?? typeForCategory(input.category)
   const analysisBlock = formatBriefingAnalysisBlock(input.category, briefingType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const descriptionBlock = formatUserDescriptionBlock(input.description)
 
   const prompt = `Use current web search. Today is ${today}.
 
@@ -410,7 +419,7 @@ Category: ${input.category}. Geographic scope: ${input.geoScope}.${
       ? `\nGeographic focus: ${[input.geoLocal, input.geoState, input.geoCountry, input.geoRegion].filter(Boolean).join(', ')}. Ground developments, sources, and examples in this place where relevant; use locally credible outlets and culturally accurate specifics.`
       : ''
   }
-${questionsBlock}
+${descriptionBlock}${questionsBlock}
 CRITICAL RULES:
 - Cover developments from the last ~48 hours and the CURRENT state of this story as of ${today}.
 - Report what credible outlets ARE reporting, with attribution ("according to…", "reported by…").
@@ -504,6 +513,8 @@ function thumbnailStyleForType(type?: ContentType): string {
       return 'Style: clean, instructional editorial illustration — clear, explanatory, diagrammatic feel. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
     case 'Entertainment':
       return 'Style: cinematic, dramatic editorial illustration with strong mood and atmosphere. Rich, moody palette. No text, no logos, no watermarks. Square composition.'
+    case 'Lifestyle':
+      return 'Style: warm, inviting lifestyle editorial illustration — bright natural light, friendly and aspirational, clean modern palette. No text, no logos, no watermarks. Square composition.'
     default:
       return 'Style: clean, symbolic, professional news-magazine editorial illustration. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
   }
@@ -524,6 +535,7 @@ Category: ${category}${message ? `\n\nKey message to convey visually:\n${message
 
 Make the imagery specific and recognizable to this exact story — depict the concrete subjects, places, objects, settings, or symbolic scene at the heart of it, not a generic category symbol.
 IMPORTANT: Do NOT depict people, faces, portraits, or headshots. Use objects, environments, maps, symbolic motifs, and conceptual imagery instead.
+CRITICAL: ABSOLUTELY NO text, letters, words, numbers, captions, titles, headlines, labels, signage, logos, watermarks, or typography of any kind anywhere in the image. The image must be purely visual and completely wordless — this cover is reused across many languages, so any embedded text would be wrong.
 ${thumbnailStyleForType(contentType)}${localeContext ? `\n${localeContext}` : ''}`
 
   const buffer = await vertexGenerateImage(prompt, {
@@ -703,10 +715,11 @@ async function classifyPodcast(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): Promise<PodcastClassification> {
   const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const descriptionBlock = formatUserDescriptionBlock(input.description)
   const prompt = `Classify an on-demand podcast briefing for discovery and production.
 
 Topic: "${input.title}"
-${questionsBlock}
+${descriptionBlock}${questionsBlock}
 Pick the single best CATEGORY from this list (exact spelling):
 ${CONTENT_CATEGORIES.join(', ')}
 
@@ -785,6 +798,7 @@ async function generatePodcastScript(
   const co = coHost(show)
   const analysisBlock = formatPodcastAnalysisBlock(input.category, lead.name, scriptType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const descriptionBlock = formatUserDescriptionBlock(input.description)
   const localeContext = buildLocaleScriptContext(input)
   const structure = formatStructure(show)
 
@@ -814,7 +828,7 @@ ${lead.name}: [thoughtful] substantive response...
     : `- No third speaker; end with ${lead.name} delivering the forecast and key takeaway`
 
   const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" episode in ${input.language} about: "${input.title}".
-${questionsBlock}
+${descriptionBlock}${questionsBlock}
 ${editorialNotes ? `\nEditorial guidance to weave in (do not contradict the briefing):\n${editorialNotes}\n` : ''}
 ${BRAND_NAME} delivers substance NOT available in standard coverage — go beyond a recap. The energy is sharp, dynamic, and confident.
 
@@ -861,23 +875,28 @@ ${closingRule}`
  */
 async function generateEpisodeBookends(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
-  markdown: string
+  markdown: string,
+  show: Show
 ): Promise<EpisodeBookends | null> {
   const briefingExcerpt = markdown.slice(0, 2500)
   const region = geoFocusLabel(input)
 
-  const prompt = `You script the spoken "bookends" for a ${BRAND_NAME} intelligence podcast episode about "${input.title}".
-Write EVERYTHING in ${input.language}. Keep the brand name "${BRAND_NAME}" in Latin script.
+  const prompt = `You script the spoken "bookends" for an episode of the "${show.name}" podcast on ${BRAND_NAME}, about "${input.title}".
+Write EVERYTHING in ${input.language}. Keep the brand names "${BRAND_NAME}" and "${show.name}" in Latin script.
+
+Channel: "${show.name}" — ${show.description}
+Channel tone / direction: ${show.sceneDirectorNotes}
+Branded welcome to adapt for the INTRO (keep it in this show's voice): "${show.introTagline}"
 
 Briefing context (ground all claims here, invent nothing):
 ${briefingExcerpt}
 
-Produce exactly four labeled blocks, each 1-2 sentences, punchy and broadcast-grade:
+Produce exactly four labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
 
-HOOK: A TV-style cold-open. Lead with the single most startling fact, stakes, or controversy from the briefing. No greeting — drop the listener straight into the tension.
-INTRO: A branded welcome that follows this template, filled with the real topic and place: "Welcome to ${BRAND_NAME}, your unbiased deep-dive network. Today we're unpacking <the topic>, analyzing the data from a macro global lens down to local developments in ${region}." Adapt naturally into ${input.language}.
-SUMMARY: A rapid, objective 2-sentence recap of the core finding and the forecast.
-CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the briefing they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.
+HOOK: A cold-open in the show's voice. Lead with the single most startling fact, stakes, or hook from the briefing. No greeting — drop the listener straight into the tension.
+INTRO: A branded welcome based on the channel's welcome line above, naturally woven together with the real topic ("${input.title}") and, where it fits the tone, the relevant place (${region}). Stay in "${show.name}"'s voice — do NOT use a generic news-network template. Adapt naturally into ${input.language}.
+SUMMARY: A rapid, objective 2-sentence recap of the core finding (and forecast, if relevant), in the show's tone.
+CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.
 
 Rules:
 - Output ONLY the four lines, each beginning with its label (HOOK:, INTRO:, SUMMARY:, CTA:)
@@ -917,7 +936,6 @@ function assembleEpisode(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   show: Show
 ): PodcastScript {
-  const region = geoFocusLabel(input)
   // Bookend speakers: co-host opens (hook/summary), lead delivers (intro/cta).
   // For a solo show both resolve to the single host.
   const hookSpeaker = coHost(show).name
@@ -927,8 +945,9 @@ function assembleEpisode(
   // episodes — otherwise a failed bookends call would leak English narration
   // into a non-English podcast.
   const isEnglish = input.language.trim().toLowerCase() === 'english'
+  // On-brand fallback: lead with this show's branded welcome, then name the topic.
   const fallbackIntro = isEnglish
-    ? `Welcome to ${BRAND_NAME}, your unbiased deep-dive network. Today we're unpacking ${input.title}, analyzing the data from a macro global lens down to local developments in ${region}.`
+    ? `${show.introTagline} Today we're diving into ${input.title}.`
     : ''
   const fallbackCta = isEnglish
     ? `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
@@ -1396,7 +1415,7 @@ export async function compileAndCacheStory(
           buildLocaleVisualContext(input.language, geoFocusLabel(resolvedInput), input.geoCountry)
         ),
     generatePodcastScript(resolvedInput, markdownContent, show),
-    generateEpisodeBookends(resolvedInput, markdownContent),
+    generateEpisodeBookends(resolvedInput, markdownContent, show),
   ])
 
   report('podcast', 60)

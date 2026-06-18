@@ -38,11 +38,22 @@ interface ChannelBrowserProps {
   categories: Category[]
   /** Optional category to pre-select on first load. */
   initialCategory?: string
+  /** Channel context passed to the on-demand review/moderation step. */
+  showName?: string
+  showDescription?: string
+  showFocus?: string
 }
 
 const ALL = '__all__'
 
-export function ChannelBrowser({ contentType, categories, initialCategory }: ChannelBrowserProps) {
+export function ChannelBrowser({
+  contentType,
+  categories,
+  initialCategory,
+  showName,
+  showDescription,
+  showFocus,
+}: ChannelBrowserProps) {
   const { t, locale } = useI18n()
   const router = useRouter()
   const { plan } = useUser()
@@ -181,7 +192,13 @@ export function ChannelBrowser({ contentType, categories, initialCategory }: Cha
             </button>
           ) : null}
           {canGenerateOnDemand(plan) ? (
-            <AddTopicDialog filter={channelFilter} buttonLabel={t('channelGenerate')} />
+            <AddTopicDialog
+              filter={channelFilter}
+              buttonLabel={t('channelGenerate')}
+              showName={showName}
+              showDescription={showDescription}
+              showFocus={showFocus}
+            />
           ) : null}
         </div>
       </div>

@@ -5,15 +5,18 @@ import { PLAN_MONTHLY_CREDITS, type CreditPack, type Plan } from '@/lib/plans'
 export const DELINQUENT_RETENTION_DAYS = 60
 
 /**
- * Whether payment processing is bypassed for testing. When enabled, subscribing
- * and buying credits are auto-confirmed without contacting Whop.
- * Defaults to ON outside production; force with PAYMENT_BYPASS=true|false.
+ * Whether payment processing is bypassed (simulated). When enabled, subscribing
+ * and buying credits are auto-confirmed in-app without contacting Whop — the
+ * user is registered/logged in and immediately gets the selected plan.
+ *
+ * Defaults to ON (simulate) in every environment so plan selection never leaves
+ * the app. To route through Whop hosted checkout instead, set PAYMENT_BYPASS=false.
  */
 export function isPaymentBypassEnabled(): boolean {
   const flag = process.env.PAYMENT_BYPASS
-  if (flag === 'true') return true
   if (flag === 'false') return false
-  return process.env.NODE_ENV !== 'production'
+  if (flag === 'true') return true
+  return true
 }
 
 /**
