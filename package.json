@@ -16,7 +16,9 @@
     "db:seed": "prisma db seed",
     "db:setup": "node scripts/db-setup.mjs",
     "db:refresh-stories": "node scripts/refresh-stories.mjs",
+    "db:cleanup-delinquent": "node scripts/cleanup-delinquent.mjs",
     "generate:music": "node scripts/generate-music.mjs",
+    "generate:host-art": "node scripts/generate-host-art.mjs",
     "db:gcp": "node scripts/start-gcp-db.mjs",
     "db:push": "node -e \"import('./scripts/database-url.mjs').then(m=>m.resolveAndApplyDatabaseEnv()).then(()=>process.exit(0))\" && npx prisma db push"
   },

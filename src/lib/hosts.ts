@@ -22,6 +22,11 @@ export interface HostProfile {
   /** Cloud TTS speaking rate (1.0 = default; lower = slower). */
   speakingRate: number
   bio: string
+  /**
+   * One- to two-line character brief handed to the script LLM so the host's
+   * voice, expertise, and disposition stay consistent across episodes.
+   */
+  persona: string
   /** Lowercase tokens used to match a script speaker label back to this host. */
   aliases: string[]
   /** Default "speaking" portraits shown for this host's lines when no illustration is generated. */
@@ -44,6 +49,8 @@ export const HOST_SARAH: HostProfile = {
     'Bright, articulate investigative correspondent. Confident, clear, and naturally conversational at a normal broadcast pace.',
   speakingRate: 1.0,
   bio: 'Sharp, modern, and articulate. Sarah drives the deep dive — probing the data, pressing the counter-argument, and keeping the analysis honest.',
+  persona:
+    'Sharp, modern investigative correspondent — bright, articulate, and poised. Drives the deep dive with probing analytical questions and presses the counter-argument.',
   aliases: ['sarah', 'chen'],
   speakingImages: [
     'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_j04r89j04r89j04r.png',
@@ -65,6 +72,8 @@ export const HOST_ANDERSON: HostProfile = {
     'Seasoned anchor and lead analyst. Intelligent and thoughtful — grounded, calm, and authoritative, with a natural conversational broadcast delivery at a normal pace.',
   speakingRate: 1.0,
   bio: 'Grounded, calm, and deeply trustworthy. Dr. Anderson brings decades of seasoned journalistic authority, delivering the factor-by-factor analysis and forecast.',
+  persona:
+    'Seasoned anchor and lead analyst — grounded, calm, and authoritative. Delivers factor-by-factor breakdowns, comparisons, and the forecast.',
   aliases: ['anderson', 'benjamin'],
   speakingImages: [
     'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_b9h9skb9h9skb9h9.png',
@@ -73,16 +82,5 @@ export const HOST_ANDERSON: HostProfile = {
   ],
 }
 
+/** The original News pair, kept for backward compatibility. */
 export const HOSTS: HostProfile[] = [HOST_ANDERSON, HOST_SARAH]
-
-/**
- * Resolves the default "speaking" portraits for a script speaker label, matched
- * by host alias. Returns an empty array when the speaker is unknown.
- */
-export function speakingImagesForSpeaker(speaker?: string): string[] {
-  if (!speaker) return []
-  const lower = speaker.toLowerCase()
-  if (HOST_SARAH.aliases.some((alias) => lower.includes(alias))) return HOST_SARAH.speakingImages
-  if (HOST_ANDERSON.aliases.some((alias) => lower.includes(alias))) return HOST_ANDERSON.speakingImages
-  return []
-}

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
 import {
+  categoriesForType,
   CONTENT_CATEGORIES,
   isTopCategory,
   type Category,
   type ContentCategory,
+  type ContentType,
   type Language,
   type TaxonomyFilter,
 } from '@/lib/taxonomy'
@@ -57,20 +59,55 @@ const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
     'Financial fraud investigations and regulatory actions',
   ],
   // Education
-  'Science & Nature': [
+  Mathematics: [
+    'Why prime numbers underpin modern encryption',
+    'The surprising math behind everyday probability',
+    'How calculus describes a world in motion',
+  ],
+  'Science & Discovery': [
     'How ecosystems recover after major disturbances',
     'The physics behind everyday phenomena',
     'Recent discoveries reshaping our understanding of the universe',
+  ],
+  'Space & Astronomy': [
+    'What black holes reveal about the limits of physics',
+    'How astronomers detect planets around distant stars',
+    'The life cycle of a star, from nebula to supernova',
   ],
   History: [
     'Turning points that changed the modern world',
     'Everyday life in ancient civilizations',
     'The hidden history behind a famous landmark',
   ],
+  'Medicine & Health': [
+    'How vaccines train the immune system',
+    'What sleep actually does for the brain and body',
+    'The science of how chronic stress affects health',
+  ],
   'Technology & Coding': [
     'How large language models actually work',
     'The fundamentals of how the internet routes data',
     'A beginner-friendly tour of modern programming languages',
+  ],
+  'Money & Economics': [
+    'How inflation quietly reshapes everyday spending',
+    'What really drives interest rates',
+    'The economics behind why some cities boom and others fade',
+  ],
+  'Career & Job Market': [
+    'Skills that are rising in value as work changes',
+    'How automation is reshaping common career paths',
+    'Practical steps to pivot into a fast-growing field',
+  ],
+  'Arts & Culture': [
+    'How a single artwork can redefine a movement',
+    'The cultural forces behind a global music genre',
+    'Why certain stories endure across centuries',
+  ],
+  'Nature & Environment': [
+    'How keystone species hold ecosystems together',
+    'The hidden water cycle that sustains a continent',
+    'What coral reefs reveal about ocean health',
   ],
   // Entertainment
   'True Crime': [
@@ -88,6 +125,21 @@ const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
     'How a viral moment reshaped an industry',
     'The business behind a blockbuster franchise',
   ],
+  'Film & TV': [
+    'How a cult classic was almost never made',
+    'The craft behind an unforgettable plot twist',
+    'Why a long-running series defined a decade',
+  ],
+  Music: [
+    'The story behind a genre-defining album',
+    'How one producer reshaped a sound',
+    'The unlikely origins of a global music movement',
+  ],
+  Gaming: [
+    'How an indie game became a cultural phenomenon',
+    'The design secrets behind an addictive mechanic',
+    'The making of a landmark video game franchise',
+  ],
 }
 
 interface CacheEntry {
@@ -99,6 +151,7 @@ const suggestionCache = new Map<string, CacheEntry>()
 
 function cacheKey(filter: TaxonomyFilter): string {
   return [
+    filter.contentType,
     filter.languages.join(','),
     filter.categories.join(','),
     filter.geoScope,
@@ -120,6 +173,11 @@ function pickPrimaryLanguage(filter: TaxonomyFilter): Language {
 
 function pickPrimaryCategory(filter: TaxonomyFilter): Category {
   return filter.categories[0] ?? 'Top'
+}
+
+/** The selectable categories that belong to a content Type (excludes 'Top'). */
+function typeCategories(contentType: ContentType): ContentCategory[] {
+  return categoriesForType(contentType).filter((c) => c !== 'Top') as ContentCategory[]
 }
 
 function buildSuggestionCard(filter: TaxonomyFilter, suggestion: TopicSuggestion): StoryCard {
@@ -189,7 +247,7 @@ async function getCuratedSuggestions(
   const suggestions: TopicSuggestion[] = []
   const primary = pickPrimaryCategory(filter)
   const categoriesToUse: ContentCategory[] = isTopCategory(primary)
-    ? [...CONTENT_CATEGORIES]
+    ? typeCategories(filter.contentType)
     : [primary as ContentCategory]
 
   for (const category of categoriesToUse) {
@@ -368,23 +426,46 @@ function isValidHeadline(line: string): boolean {
   return true
 }
 
+/**
+ * Resolve a category for a discovered headline within the active content Type.
+ * News uses keyword inference (its headlines map cleanly to news domains); the
+ * other Types deterministically distribute across their own subjects so an
+ * Education "Top" never surfaces a News/Entertainment category.
+ */
+function inferTypeCategory(
+  title: string,
+  contentType: ContentType,
+  allowed: ContentCategory[]
+): ContentCategory {
+  if (contentType === 'News') return inferCategoryFromTitle(title)
+  if (allowed.length === 0) return inferCategoryFromTitle(title)
+  return allowed[Math.abs(hashTitle(title).charCodeAt(0)) % allowed.length]
+}
+
 function parseTopicSuggestions(
   text: string,
   count: number,
   defaultCategory: ContentCategory,
-  topCategory: boolean
+  topCategory: boolean,
+  contentType: ContentType,
+  allowed: ContentCategory[]
 ): TopicSuggestion[] {
   const suggestions: TopicSuggestion[] = []
+  const allowedSet = new Set<string>(allowed)
 
   for (const line of text.split('\n')) {
     const parsed = parseTopicLine(line, defaultCategory)
     if (!parsed) continue
 
-    const category = topCategory
-      ? parsed.explicitCategory
-        ? parsed.category
-        : inferCategoryFromTitle(parsed.title)
-      : defaultCategory
+    let category: ContentCategory
+    if (!topCategory) {
+      category = defaultCategory
+    } else if (parsed.explicitCategory && allowedSet.has(parsed.category)) {
+      // Honor an explicit label only when it belongs to the active Type.
+      category = parsed.category
+    } else {
+      category = inferTypeCategory(parsed.title, contentType, allowed)
+    }
 
     suggestions.push({ title: parsed.title, category })
     if (suggestions.length >= count) break
@@ -393,30 +474,99 @@ function parseTopicSuggestions(
   return suggestions
 }
 
-async function fetchVertexSuggestions(filter: TaxonomyFilter, count: number): Promise<TopicSuggestion[]> {
+/**
+ * Build the discovery prompt for the active content Type. News asks for real,
+ * currently-trending headlines (time-bound); Education asks for evergreen,
+ * explainer-worthy subjects; Entertainment asks for story-driven episode ideas.
+ * The generic "news" framing previously leaked into Education/Entertainment and
+ * Top results across all three Types, which this replaces.
+ */
+function buildDiscoveryPrompt(
+  filter: TaxonomyFilter,
+  count: number
+): { prompt: string; defaultCategory: ContentCategory } {
   const language = pickPrimaryLanguage(filter)
   const category = pickPrimaryCategory(filter)
   const isTop = isTopCategory(category)
   const geoFocus = resolveGeoFocus(filter)
-  const defaultCategory = isTop ? 'Politics' : (category as ContentCategory)
+  const contentType = filter.contentType
+  const cats = typeCategories(contentType)
+  const defaultCategory: ContentCategory = isTop ? cats[0] ?? 'Politics' : (category as ContentCategory)
 
+  const focusLine = filter.query ? `Additional search focus: ${filter.query}` : ''
+  const topFormat = `Format EVERY line EXACTLY as: CATEGORY|Title
+The CATEGORY label MUST be one of these exact English values: ${cats.join(', ')}.
+Always write the CATEGORY in English even though the Title is written in ${language}, and make sure the CATEGORY truly matches the subject.`
+  const specificFormat = `Format each line as a title only (no category prefix).`
+
+  if (contentType === 'Education') {
+    const scope = isTop
+      ? `Cover a diverse mix across these subjects: ${cats.join(', ')}.
+${topFormat}`
+      : `Every topic must clearly belong to the subject: ${category}.
+${specificFormat}`
+    return {
+      defaultCategory,
+      prompt: `You are programming an educational podcast network. List exactly ${count} compelling, explainer-worthy topics in ${language} that would each make an engaging 5-10 minute educational episode.
+
+Audience geography: ${geoFocus}
+${focusLine}
+
+${scope}
+
+Requirements:
+- Topics should be substantive and curiosity-driven (great explainers), NOT breaking-news headlines
+- Favor evergreen subjects, but timely angles are welcome when genuinely interesting
+- Each topic must be real and factually grounded — no invented claims
+- Write every topic in ${language}; neutral, non-sensational wording
+- One topic per line; no numbering, bullets, URLs, source names, or preamble
+- Do NOT include intro lines like "Here are the topics" — titles only`,
+    }
+  }
+
+  if (contentType === 'Entertainment') {
+    const scope = isTop
+      ? `Cover a diverse mix across these formats: ${cats.join(', ')}.
+${topFormat}`
+      : `Every idea must clearly fit the format: ${category}.
+${specificFormat}`
+    return {
+      defaultCategory,
+      prompt: `You are programming an entertainment podcast network (think shows like a true-crime casefile or an unexplained-mystery series). List exactly ${count} compelling episode ideas in ${language}, each with a story-driven hook.
+
+Audience geography: ${geoFocus}
+${focusLine}
+
+${scope}
+
+Requirements:
+- Each idea must center on a REAL, well-documented subject (a real case, event, work, artist, game, or phenomenon)
+- Lead with an intriguing, story-driven angle — but keep wording factual and non-defamatory
+- Favor subjects with rich, verifiable detail; avoid pure speculation or rumor
+- Write every title in ${language}; neutral wording, no sensational clickbait
+- One title per line; no numbering, bullets, URLs, source names, or preamble
+- Do NOT include intro lines like "Here are the ideas" — titles only`,
+    }
+  }
+
+  // News (default): real, currently-trending headlines.
   const categoryLine = isTop
-    ? `Return the ${count} most popular real news stories right now across ALL categories (politics, business, finance, technology, science, health, sports, entertainment, crime).
+    ? `Return the ${count} most popular real news stories right now across these categories: ${cats.join(', ')}.
 Rank them #1 (most popular) through #${count} (least popular among this list).
 Ensure category diversity — no more than one technology/AI headline.
-Format EVERY line EXACTLY as: CATEGORY|Headline
-The CATEGORY label MUST be one of these exact English values: ${CONTENT_CATEGORIES.join(', ')}.
-Always write the CATEGORY in English even though the Headline is written in ${language}, and make sure the CATEGORY truly matches the headline's subject.`
+${topFormat}`
     : `Return the ${count} most popular real news stories right now in category: ${category}.
 Rank them #1 (most popular) through #${count}.
 Every headline must genuinely belong to the ${category} category.
-Format each line as a headline only (no category prefix).`
+${specificFormat}`
 
-  const prompt = `Use current web search results. List exactly ${count} real, currently trending news headlines in ${language}.
+  return {
+    defaultCategory,
+    prompt: `Use current web search results. List exactly ${count} real, currently trending news headlines in ${language}.
 
 Audience geography: ${geoFocus}
 Geo scope setting: ${filter.geoScope}
-${filter.query ? `Additional search focus: ${filter.query}` : ''}
+${focusLine}
 
 ${categoryLine}
 
@@ -427,7 +577,15 @@ Requirements:
 - Neutral wording, no partisan framing
 - One headline per line, no numbering, bullets, URLs, source names, or preamble
 - Do NOT include intro lines like "Here are the headlines"
-- Headlines only — no commentary`
+- Headlines only — no commentary`,
+  }
+}
+
+async function fetchVertexSuggestions(filter: TaxonomyFilter, count: number): Promise<TopicSuggestion[]> {
+  const category = pickPrimaryCategory(filter)
+  const isTop = isTopCategory(category)
+  const cats = typeCategories(filter.contentType)
+  const { prompt, defaultCategory } = buildDiscoveryPrompt(filter, count)
 
   let text = await vertexGenerateText(prompt, {
     useSearchGrounding: true,
@@ -441,7 +599,9 @@ Requirements:
 
   if (!text) return []
 
-  return dedupeSuggestions(parseTopicSuggestions(text, count, defaultCategory, isTop))
+  return dedupeSuggestions(
+    parseTopicSuggestions(text, count, defaultCategory, isTop, filter.contentType, cats)
+  )
 }
 
 async function resolveSuggestions(filter: TaxonomyFilter, count: number): Promise<TopicSuggestion[]> {

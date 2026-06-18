@@ -2,12 +2,12 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { Check, ExternalLink, ShieldCheck, Mic, Languages } from 'lucide-react'
+import { Check, ShieldCheck, Mic, Languages } from 'lucide-react'
 import { ClearSightLogo } from '@/components/layout/ClearSightLogo'
 import { GlobalLanguagePicker } from '@/components/layout/GlobalLanguagePicker'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { CLEARSIGHT_HOSTS_STUDIO_URL } from '@/lib/brand-assets'
-import { PLAN_DETAILS, WHOP_LOGIN_URL, type Plan } from '@/lib/plans'
+import { PLAN_DETAILS, type Plan } from '@/lib/plans'
 import type { MessageKey } from '@/i18n/messages/en'
 
 const PLAN_ORDER: Plan[] = ['FREE', 'PREMIUM', 'CREATOR']
@@ -54,22 +54,12 @@ export default function WelcomePage() {
           </Link>
           <div className="flex items-center gap-2">
             <GlobalLanguagePicker />
-            <a
-              href={WHOP_LOGIN_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-ghost text-xs sm:text-sm"
-            >
+            <Link href="/login" className="btn-ghost text-xs sm:text-sm">
               {t('landingNavSignIn')}
-            </a>
-            <a
-              href={PLAN_DETAILS.FREE.checkoutUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-accent text-xs sm:text-sm"
-            >
+            </Link>
+            <Link href="/signup" className="btn-accent text-xs sm:text-sm">
               {t('landingNavGetStarted')}
-            </a>
+            </Link>
           </div>
         </div>
       </header>
@@ -86,15 +76,12 @@ export default function WelcomePage() {
             {t('landingHeroSubtitle')}
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <a
-              href={PLAN_DETAILS.PREMIUM.checkoutUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/signup"
               className="btn-accent w-full justify-center px-6 py-3 text-sm sm:w-auto"
             >
               {t('landingHeroPrimary')}
-              <ExternalLink className="h-4 w-4" />
-            </a>
+            </Link>
             <Link href="/" className="btn-ghost w-full justify-center px-6 py-3 text-sm sm:w-auto">
               {t('landingHeroSecondary')}
             </Link>
@@ -161,15 +148,12 @@ export default function WelcomePage() {
                       </li>
                     ))}
                   </ul>
-                  <a
-                    href={details.checkoutUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <Link
+                    href={`/signup?plan=${planId}`}
                     className={`mt-6 w-full ${featured ? 'btn-accent' : 'btn-ghost'}`}
                   >
                     {t(PLAN_CTA_KEYS[planId])}
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
+                  </Link>
                   <p className="mt-2 text-center text-[11px] text-[var(--muted-strong)]">
                     {t('planSecureCheckout')}
                   </p>
@@ -182,14 +166,9 @@ export default function WelcomePage() {
         <section className="border-t border-[var(--border)] pt-10 text-center">
           <p className="text-sm text-[var(--muted)]">
             {t('landingSignInPrompt')}{' '}
-            <a
-              href={WHOP_LOGIN_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-[var(--accent)] hover:underline"
-            >
+            <Link href="/login" className="font-semibold text-[var(--accent)] hover:underline">
               {t('landingNavSignIn')}
-            </a>
+            </Link>
           </p>
           <p className="mt-3 text-xs text-[var(--muted-strong)]">{t('landingFooter')}</p>
         </section>

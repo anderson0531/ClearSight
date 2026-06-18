@@ -9,7 +9,10 @@ export interface UserContextValue {
   coreTokens: number | null
   subscriptionActive: boolean
   email: string | null
+  name: string | null
+  authenticated: boolean
   demoMode: boolean
+  paymentBypass: boolean
   loading: boolean
   refresh: () => Promise<void>
 }
@@ -23,7 +26,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     coreTokens: null,
     subscriptionActive: false,
     email: null,
-    demoMode: true,
+    name: null,
+    authenticated: false,
+    demoMode: false,
+    paymentBypass: false,
     loading: true,
   })
 
@@ -36,7 +42,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         coreTokens?: number
         subscriptionActive?: boolean
         email?: string | null
+        name?: string | null
+        authenticated?: boolean
         demoMode?: boolean
+        paymentBypass?: boolean
       }
       setState({
         id: data.id ?? null,
@@ -44,7 +53,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         coreTokens: data.coreTokens ?? null,
         subscriptionActive: Boolean(data.subscriptionActive),
         email: data.email ?? null,
+        name: data.name ?? null,
+        authenticated: Boolean(data.authenticated),
         demoMode: Boolean(data.demoMode),
+        paymentBypass: Boolean(data.paymentBypass),
         loading: false,
       })
     } catch {

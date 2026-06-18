@@ -10,6 +10,8 @@ import { useTranslations } from '@/i18n/I18nProvider'
 
 interface AddTopicDialogProps {
   filter: TaxonomyFilter
+  /** Optional label for the trigger button (defaults to the on-demand label). */
+  buttonLabel?: string
 }
 
 function geoFocusSummary(filter: TaxonomyFilter): string {
@@ -32,11 +34,11 @@ function resolveCategory(filter: TaxonomyFilter): string {
   return primary
 }
 
-export function AddTopicDialog({ filter }: AddTopicDialogProps) {
+export function AddTopicDialog({ filter, buttonLabel }: AddTopicDialogProps) {
   const t = useTranslations()
   const router = useRouter()
   const [open, setOpen] = useState(false)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(filter.query ?? '')
   const [questions, setQuestions] = useState(['', '', ''])
   const [error, setError] = useState<string | null>(null)
 
@@ -82,9 +84,16 @@ export function AddTopicDialog({ filter }: AddTopicDialogProps) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn-accent mb-4">
+      <button
+        type="button"
+        onClick={() => {
+          setTitle(filter.query ?? '')
+          setOpen(true)
+        }}
+        className="btn-accent mb-4"
+      >
         <Mic className="h-4 w-4" />
-        {t('onDemandPodcastButton')}
+        {buttonLabel ?? t('onDemandPodcastButton')}
       </button>
 
       {open ? (

@@ -26,6 +26,7 @@ export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] |
       ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
       ...(segment.text ? { text: segment.text } : {}),
       ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
+      ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
     })
   }
 
@@ -40,6 +41,7 @@ export function serializeAudioSegments(segments: AudioSegment[]): Record<string,
     ...(segment.role ? { role: segment.role } : {}),
     ...(segment.text ? { text: segment.text } : {}),
     ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
+    ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
     ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
   }))
 }

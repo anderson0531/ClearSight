@@ -2,6 +2,21 @@ export type Plan = 'FREE' | 'PREMIUM' | 'CREATOR'
 
 export const PLANS: Plan[] = ['FREE', 'PREMIUM', 'CREATOR']
 
+/** Credit packs available as add-on purchases. */
+export const CREDIT_PACKS = [5, 15, 50] as const
+export type CreditPack = (typeof CREDIT_PACKS)[number]
+
+export function isCreditPack(value: unknown): value is CreditPack {
+  return typeof value === 'number' && (CREDIT_PACKS as readonly number[]).includes(value)
+}
+
+/** Core generation credits granted on each subscription cycle, by plan. */
+export const PLAN_MONTHLY_CREDITS: Record<Plan, number> = {
+  FREE: 0,
+  PREMIUM: 50,
+  CREATOR: 200,
+}
+
 export interface PlanDetails {
   id: Plan
   name: string
@@ -74,6 +89,15 @@ export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
 
 export function isPlan(value: string | null | undefined): value is Plan {
   return value === 'FREE' || value === 'PREMIUM' || value === 'CREATOR'
+}
+
+/** Map a Whop product/plan id to a ClearSight plan tier via env configuration. */
+export function mapWhopPlanId(planId: string | null | undefined): Plan | null {
+  if (!planId) return null
+  if (planId === process.env.WHOP_PLAN_CREATOR) return 'CREATOR'
+  if (planId === process.env.WHOP_PLAN_PREMIUM) return 'PREMIUM'
+  if (planId === process.env.WHOP_PLAN_FREE) return 'FREE'
+  return null
 }
 
 export function canGenerateOnDemand(plan: Plan): boolean {

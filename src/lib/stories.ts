@@ -122,7 +122,7 @@ async function padWithSuggestions(
   return dedupeStories([...dedupedGenerated, ...suggestions]).slice(0, TARGET_COUNT)
 }
 
-function buildWhereClause(filter: TaxonomyFilter, topCategory: boolean) {
+function buildWhereClause(filter: TaxonomyFilter, topCategory: boolean, sinceDays?: number) {
   return {
     language: { in: filter.languages },
     ...(topCategory ? {} : { category: { in: filter.categories } }),
@@ -134,16 +134,44 @@ function buildWhereClause(filter: TaxonomyFilter, topCategory: boolean) {
     ...(filter.query
       ? { title: { contains: filter.query, mode: 'insensitive' as const } }
       : {}),
+    ...(sinceDays && sinceDays > 0
+      ? { createdAt: { gte: new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000) } }
+      : {}),
   }
+}
+
+/**
+ * "Trending" blends recency with reliability: newer, higher-quality episodes
+ * float up. Half-life decay over ~14 days keeps the list fresh without ignoring
+ * a slightly older but strong episode.
+ */
+function trendingScore(story: StoryCard, now: number, createdAt: number): number {
+  const ageDays = Math.max(0, (now - createdAt) / (24 * 60 * 60 * 1000))
+  const recency = Math.exp(-ageDays / 14)
+  const reliability = (story.reliabilityIndex ?? 5) / 10
+  return recency * 0.7 + reliability * 0.3
 }
 
 export async function listStories(
   filter: TaxonomyFilter,
-  options: { playableOnly?: boolean; sort?: 'recent' | 'top'; onProgress?: StoriesFetchProgressFn } = {}
+  options: {
+    playableOnly?: boolean
+    sort?: 'recent' | 'top' | 'trending'
+    /** Restrict to episodes created within the last N days (0/undefined = all). */
+    sinceDays?: number
+    /**
+     * When true, pad thin catalog results with AI-discovered topic suggestions
+     * (the paid "topics search"). Browsing existing podcasts leaves this false
+     * so it only ever returns real, already-generated stories and never calls
+     * the model.
+     */
+    discover?: boolean
+    onProgress?: StoriesFetchProgressFn
+  } = {}
 ): Promise<StoryCard[]> {
-  const { playableOnly = false, sort = 'recent', onProgress } = options
-  // "Top" ranking only makes sense for finished, playable episodes.
-  const wantPlayable = playableOnly || sort === 'top'
+  const { playableOnly = false, sort = 'recent', sinceDays, discover = false, onProgress } = options
+  // "Top"/"trending" ranking only makes sense for finished, playable episodes.
+  const wantPlayable = playableOnly || sort === 'top' || sort === 'trending'
   const primaryCategory = filter.categories[0]
   const topCategory = primaryCategory ? isTopCategory(primaryCategory) : true
 
@@ -159,7 +187,7 @@ export async function listStories(
     report('catalog', 8)
 
     const where = {
-      ...buildWhereClause(filter, topCategory),
+      ...buildWhereClause(filter, topCategory, sinceDays),
       ...(wantPlayable ? { audioUrl: { not: null } } : {}),
     }
 
@@ -172,18 +200,30 @@ export async function listStories(
     report('catalog', 32)
 
     const dedupedRows = dedupeDbRows(rows)
-    const generated = dedupedRows.map(mapStory)
 
     if (wantPlayable) {
-      const ranked =
+      const now = Date.now()
+      const rankedRows =
         sort === 'top'
-          ? [...generated].sort((a, b) => (b.reliabilityIndex ?? 0) - (a.reliabilityIndex ?? 0))
-          : generated
+          ? [...dedupedRows].sort(
+              (a, b) => (b.reliabilityIndex ?? 0) - (a.reliabilityIndex ?? 0)
+            )
+          : sort === 'trending'
+            ? [...dedupedRows].sort(
+                (a, b) =>
+                  trendingScore(mapStory(b), now, b.createdAt.getTime()) -
+                  trendingScore(mapStory(a), now, a.createdAt.getTime())
+              )
+            : dedupedRows
       report('done', 100)
-      return ranked.slice(0, 50)
+      return rankedRows.slice(0, 50).map(mapStory)
     }
 
-    if (generated.length >= TARGET_COUNT) {
+    const generated = dedupedRows.map(mapStory)
+
+    // Browsing returns only real, already-generated podcasts. Topic discovery
+    // (AI padding) is a separate, paid action handled by the topics endpoint.
+    if (!discover || generated.length >= TARGET_COUNT) {
       report('discovery', 55)
       report('done', 100)
       return generated.slice(0, TARGET_COUNT)
@@ -193,7 +233,7 @@ export async function listStories(
     report('done', 100)
     return result
   } catch {
-    if (playableOnly) return []
+    if (playableOnly || !discover) return []
     report('discovery', 50)
     const fallback = await getTopicSuggestions(filter, TARGET_COUNT)
     report('done', 100)

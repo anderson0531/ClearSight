@@ -1,0 +1,412 @@
+#!/usr/bin/env node
+/**
+ * One-time placeholder artwork generation for the non-News podcast shows.
+ *
+ * For each show it renders a 16:9 studio frame, and for each host a couple of
+ * "speaking" portraits, uploads them to Vercel Blob, and writes the URLs into
+ * src/lib/host-art.ts. The show registry overlays these onto its definitions.
+ *
+ * Usage: npm run generate:host-art
+ *
+ * Requires BLOB_READ_WRITE_TOKEN and GOOGLE_APPLICATION_CREDENTIALS_JSON in .env.
+ */
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { GoogleAuth } from 'google-auth-library'
+import { put } from '@vercel/blob'
+
+const ROOT = process.cwd()
+const HOST_ART_PATH = join(ROOT, 'src/lib/host-art.ts')
+
+const PROJECT = process.env.VERTEX_PROJECT_ID ?? process.env.GCP_PROJECT_ID ?? 'sceneflowai-2d3e6'
+const IMAGE_LOCATION = process.env.VERTEX_IMAGE_LOCATION ?? 'us-central1'
+const IMAGE_MODEL = process.env.VERTEX_IMAGE_MODEL ?? 'imagen-4.0-generate-001'
+
+const PORTRAITS_PER_HOST = 2
+
+// A consistent studio look so every show feels like the same network.
+const STUDIO_BASE =
+  'Professional podcast studio interior, warm key lighting, soft bokeh background, broadcast microphones on desk, premium and modern. No text, no logos, no watermarks.'
+
+const SHOW_SPECS = [
+  {
+    id: 'clearsight-academy',
+    studioPrompt: `${STUDIO_BASE} Bright, friendly teaching studio with subtle chalkboard/diagram motifs.`,
+    hosts: ['Dr. Lena Okafor', 'Diego Santos'],
+  },
+  {
+    id: 'the-pivot',
+    studioPrompt: `${STUDIO_BASE} Clean, modern career-talk studio, optimistic and practical.`,
+    hosts: ['Priya Menon'],
+  },
+  {
+    id: 'the-casefile',
+    studioPrompt: `${STUDIO_BASE} Dim, somber case-review studio, noir atmosphere, restrained.`,
+    hosts: ['Vivian Cross', 'Frank Calderon'],
+  },
+  {
+    id: 'the-unexplained',
+    studioPrompt: `${STUDIO_BASE} Atmospheric, enigmatic studio with moody dramatic lighting.`,
+    hosts: ['Iris Lang', 'Dr. Hugo Reyes'],
+  },
+  {
+    id: 'the-green-room',
+    studioPrompt: `${STUDIO_BASE} Vibrant, glossy pop-culture green room, bold colorful lighting.`,
+    hosts: ['Zoe Tan', 'Andre Brooks'],
+  },
+  {
+    id: 'frame-by-frame',
+    studioPrompt: `${STUDIO_BASE} Cinephile studio with film-still aesthetic and dramatic lighting.`,
+    hosts: ['Nora Adeyemi', 'Sam Ortiz'],
+  },
+  {
+    id: 'liner-notes',
+    studioPrompt: `${STUDIO_BASE} Warm listening studio with musical motifs and rich texture.`,
+    hosts: ['Mia Solis', 'Theo Nakamura'],
+  },
+  {
+    id: 'player-two',
+    studioPrompt: `${STUDIO_BASE} High-energy gaming studio with dynamic, vivid neon lighting.`,
+    hosts: ['Kai Nguyen', 'Bree Sullivan'],
+  },
+]
+
+const PORTRAIT_BASE =
+  'Cinematic broadcast portrait, single person seated at a podcast microphone, looking toward camera, warm studio lighting, shallow depth of field, photorealistic, premium. No text, no logos, no watermarks.'
+
+// Host-populated "intro" frame for each show — the equivalent of the existing
+// Anderson + Chen news studio image, used as the show's home-page intro card.
+const INTRO_DUO_BASE =
+  'Cinematic wide podcast intro shot: two co-hosts seated together at the broadcast desk with microphones, mid-conversation, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. No text, no logos, no watermarks.'
+const INTRO_SOLO_BASE =
+  'Cinematic wide podcast intro shot: a single host seated at the broadcast desk with a microphone, looking toward camera, warm key lighting, soft bokeh, photorealistic, premium. No text, no logos, no watermarks.'
+
+// Fixed "cover" key-art for each channel's hero — a polished show poster, NOT a
+// mid-conversation frame: host(s) posed confidently for the camera.
+const COVER_DUO_BASE =
+  'Premium podcast cover key-art for a show poster: two co-hosts posed confidently side by side, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. No text, no logos, no watermarks.'
+const COVER_SOLO_BASE =
+  'Premium podcast cover key-art for a show poster: a single host posed confidently, looking directly at the camera, polished studio backdrop, dramatic cinematic lighting, high-end editorial portrait, sharp and aspirational, 16:9. No text, no logos, no watermarks.'
+
+const HOST_SPECS = [
+  { name: 'Dr. Lena Okafor', look: 'Warm, lucid female lead educator, 40s, approachable and confident.' },
+  { name: 'Diego Santos', look: 'Curious, friendly male co-host, 30s, bright and engaged.' },
+  { name: 'Priya Menon', look: 'Pragmatic female career strategist, late 30s, direct and motivating.' },
+  { name: 'Vivian Cross', look: 'Measured female investigative journalist, 40s, serious and humane.' },
+  { name: 'Frank Calderon', look: 'Seasoned male ex-detective, 50s, calm gravelly authority.' },
+  { name: 'Iris Lang', look: 'Open-minded female researcher, 30s, intrigued and thoughtful.' },
+  { name: 'Dr. Hugo Reyes', look: 'Rigorous male skeptic scientist, 40s, dry and precise.' },
+  { name: 'Zoe Tan', look: 'Witty female culture host, late 20s, playful and stylish.' },
+  { name: 'Andre Brooks', look: 'Charismatic male culture co-host, 30s, warm and funny.' },
+  { name: 'Nora Adeyemi', look: 'Eloquent female film critic, 30s, thoughtful and elegant.' },
+  { name: 'Sam Ortiz', look: 'Sharp male film co-host, 30s, enthusiastic and incisive.' },
+  { name: 'Mia Solis', look: 'Passionate female music host, late 20s, expressive and vibrant.' },
+  { name: 'Theo Nakamura', look: 'Knowledgeable male music co-host, 30s, cool and articulate.' },
+  { name: 'Kai Nguyen', look: 'Energetic male gaming host, late 20s, hyped and modern.' },
+  { name: 'Bree Sullivan', look: 'Savvy female gaming co-host, late 20s, warm and witty.' },
+]
+
+// Host looks for cover art, including the News pair (which is not part of
+// HOST_SPECS because its portraits/studio art already exist).
+const COVER_HOST_LOOKS = {
+  ...Object.fromEntries(HOST_SPECS.map((h) => [h.name, h.look])),
+  'Dr. Benjamin Anderson': 'Seasoned male news anchor and lead analyst, 50s, grounded, calm, authoritative.',
+  'Sarah Chen': 'Bright female investigative correspondent, 30s, articulate, confident, modern.',
+}
+
+// Every channel gets a fixed cover, including News. Reuses each show's studio
+// styling so the poster matches the show's world.
+const COVER_SPECS = [
+  {
+    id: 'clearsight-brief',
+    studioPrompt: `${STUDIO_BASE} Modern intelligence newsroom, muted slate and indigo palette, authoritative.`,
+    hosts: ['Dr. Benjamin Anderson', 'Sarah Chen'],
+  },
+  ...SHOW_SPECS.map((spec) => ({ id: spec.id, studioPrompt: spec.studioPrompt, hosts: spec.hosts })),
+]
+
+function loadDotEnv() {
+  const envPath = join(ROOT, '.env')
+  if (!existsSync(envPath)) return
+  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq <= 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    let value = trimmed.slice(eq + 1).trim()
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+    if (process.env[key] == null) process.env[key] = value
+  }
+}
+
+function parseCredentialsJson(raw) {
+  const trimmed = raw.trim()
+  const candidates = [trimmed]
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    candidates.unshift(trimmed.slice(1, -1))
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      /* try next */
+    }
+    try {
+      return JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'))
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+function loadCredentials() {
+  const fromEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  if (fromEnv) return parseCredentialsJson(fromEnv)
+  const envPath = join(ROOT, '.env')
+  if (!existsSync(envPath)) return null
+  const match = readFileSync(envPath, 'utf8').match(/^GOOGLE_APPLICATION_CREDENTIALS_JSON=(.*)$/m)
+  return match ? parseCredentialsJson(match[1]) : null
+}
+
+async function getAccessToken() {
+  const credentials = loadCredentials()
+  if (!credentials) throw new Error('Missing GOOGLE_APPLICATION_CREDENTIALS_JSON')
+  const auth = new GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  })
+  return auth.getAccessToken()
+}
+
+function imagenEndpoint() {
+  return `https://${IMAGE_LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${IMAGE_LOCATION}/publishers/google/models/${IMAGE_MODEL}:predict`
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function generateImage(prompt, aspectRatio = '16:9', attempt = 1) {
+  const token = await getAccessToken()
+  const res = await fetch(imagenEndpoint(), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      instances: [{ prompt }],
+      parameters: { sampleCount: 1, aspectRatio, personGeneration: 'allow_adult' },
+    }),
+  })
+
+  if ((res.status === 429 || res.status >= 500) && attempt < 5) {
+    const delay = attempt * 10000
+    console.warn(`[generate-host-art] rate limited; retrying in ${delay / 1000}s...`)
+    await sleep(delay)
+    return generateImage(prompt, aspectRatio, attempt + 1)
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Imagen predict failed (${res.status}): ${body.slice(0, 300)}`)
+  }
+
+  const data = await res.json()
+  const encoded = data.predictions?.[0]?.bytesBase64Encoded
+  if (!encoded) {
+    const reason = data.predictions?.[0]?.raiFilteredReason
+    throw new Error(`Imagen returned no image${reason ? ` (${reason})` : ''}`)
+  }
+  return Buffer.from(encoded, 'base64')
+}
+
+async function uploadImage(pathname, buffer) {
+  const blob = await put(pathname, buffer, {
+    access: 'public',
+    contentType: 'image/png',
+    addRandomSuffix: true,
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+  })
+  return blob.url
+}
+
+function slug(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function writeHostArtFile(hostArt, studioArt, introArt, coverArt) {
+  const hostEntries = Object.entries(hostArt)
+    .map(([name, urls]) => `  ${JSON.stringify(name)}: ${JSON.stringify(urls, null, 2).replace(/\n/g, '\n  ')},`)
+    .join('\n')
+  const recordEntries = (record) =>
+    Object.entries(record)
+      .map(([id, url]) => `  ${JSON.stringify(id)}: ${JSON.stringify(url)},`)
+      .join('\n')
+
+  const content = `/**
+ * Generated host + studio artwork URLs, keyed by host name and show id.
+ *
+ * This file is overwritten by \`npm run generate:host-art\`. The show registry
+ * (\`src/lib/shows.ts\`) overlays these URLs on top of its host/show definitions.
+ */
+
+/** Host name → speaking-portrait image URLs. */
+export const HOST_ART: Record<string, string[]> = {
+${hostEntries}
+}
+
+/** Show id → studio frame image URL. */
+export const SHOW_STUDIO_ART: Record<string, string> = {
+${recordEntries(studioArt)}
+}
+
+/** Show id → host-populated intro image URL (home-page show card). */
+export const SHOW_INTRO_ART: Record<string, string> = {
+${recordEntries(introArt)}
+}
+
+/** Show id → fixed cover key-art URL (channel hero + channel cards). */
+export const SHOW_COVER_ART: Record<string, string> = {
+${recordEntries(coverArt)}
+}
+`
+  writeFileSync(HOST_ART_PATH, content, 'utf8')
+  console.log(`[generate-host-art] Wrote ${HOST_ART_PATH}`)
+}
+
+/**
+ * Reads the URL maps already written into host-art.ts so a covers-only run can
+ * preserve the existing host/studio/intro art without regenerating it. The
+ * generated file uses a controlled JSON-like shape (double-quoted keys/values),
+ * so we capture each export block and JSON.parse it after stripping trailing
+ * commas.
+ */
+function readExistingArt() {
+  const empty = { hostArt: {}, studioArt: {}, introArt: {}, coverArt: {} }
+  if (!existsSync(HOST_ART_PATH)) return empty
+  const text = readFileSync(HOST_ART_PATH, 'utf8')
+  const grab = (name) => {
+    const match = text.match(new RegExp(`export const ${name}[^=]*=\\s*(\\{[\\s\\S]*?\\n\\})`, 'm'))
+    if (!match) return {}
+    try {
+      return JSON.parse(match[1].replace(/,(\s*[}\]])/g, '$1'))
+    } catch {
+      return {}
+    }
+  }
+  return {
+    hostArt: grab('HOST_ART'),
+    studioArt: grab('SHOW_STUDIO_ART'),
+    introArt: grab('SHOW_INTRO_ART'),
+    coverArt: grab('SHOW_COVER_ART'),
+  }
+}
+
+/** Build a poster-style cover prompt from a show's studio style + host looks. */
+function buildCoverPrompt(spec) {
+  const looks = (spec.hosts ?? []).map((name) => COVER_HOST_LOOKS[name]).filter(Boolean)
+  const base = looks.length <= 1 ? COVER_SOLO_BASE : COVER_DUO_BASE
+  const hostSentence = looks.length ? ` Featuring ${looks.join(' and ')}.` : ''
+  return `${spec.studioPrompt} ${base}${hostSentence}`
+}
+
+/** Build a host-populated intro prompt from a show's studio style + host looks. */
+function buildIntroPrompt(show) {
+  const looks = (show.hosts ?? [])
+    .map((name) => HOST_SPECS.find((h) => h.name === name)?.look)
+    .filter(Boolean)
+  const base = looks.length <= 1 ? INTRO_SOLO_BASE : INTRO_DUO_BASE
+  const hostSentence = looks.length
+    ? ` The host${looks.length > 1 ? 's' : ''}: ${looks.join('; ')}`
+    : ''
+  return `${show.studioPrompt} ${base}${hostSentence}`
+}
+
+async function main() {
+  loadDotEnv()
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error('BLOB_READ_WRITE_TOKEN is required in .env')
+  }
+
+  // By default this is a covers-only run: it preserves the already-generated
+  // host/studio/intro art and only produces the new fixed cover key-art. Set
+  // REGEN_ALL=1 to regenerate studio frames, intro frames, and host portraits.
+  const regenAll = process.env.REGEN_ALL === '1'
+  const existing = readExistingArt()
+  const studioArt = existing.studioArt
+  const introArt = existing.introArt
+  const hostArt = existing.hostArt
+  const coverArt = existing.coverArt
+
+  if (regenAll) {
+    for (const show of SHOW_SPECS) {
+      console.log(`[generate-host-art] Studio: ${show.id}...`)
+      try {
+        const buffer = await generateImage(show.studioPrompt, '16:9')
+        studioArt[show.id] = await uploadImage(`clearsight/shows/${show.id}-studio.png`, buffer)
+        console.log(`  -> ${studioArt[show.id]}`)
+      } catch (error) {
+        console.warn(`  [skip] ${show.id}: ${error instanceof Error ? error.message : error}`)
+      }
+      await sleep(2000)
+
+      console.log(`[generate-host-art] Intro: ${show.id}...`)
+      try {
+        const buffer = await generateImage(buildIntroPrompt(show), '16:9')
+        introArt[show.id] = await uploadImage(`clearsight/shows/${show.id}-intro.png`, buffer)
+        console.log(`  -> ${introArt[show.id]}`)
+      } catch (error) {
+        console.warn(`  [skip] ${show.id} intro: ${error instanceof Error ? error.message : error}`)
+      }
+      await sleep(2000)
+    }
+
+    for (const host of HOST_SPECS) {
+      const urls = []
+      for (let i = 0; i < PORTRAITS_PER_HOST; i += 1) {
+        console.log(`[generate-host-art] Portrait: ${host.name} (${i + 1}/${PORTRAITS_PER_HOST})...`)
+        try {
+          const buffer = await generateImage(`${PORTRAIT_BASE} ${host.look}`, '16:9')
+          const url = await uploadImage(`clearsight/hosts/${slug(host.name)}-${i + 1}.png`, buffer)
+          urls.push(url)
+          console.log(`  -> ${url}`)
+        } catch (error) {
+          console.warn(`  [skip] ${host.name} #${i + 1}: ${error instanceof Error ? error.message : error}`)
+        }
+        await sleep(2000)
+      }
+      if (urls.length > 0) hostArt[host.name] = urls
+    }
+  }
+
+  for (const spec of COVER_SPECS) {
+    console.log(`[generate-host-art] Cover: ${spec.id}...`)
+    try {
+      const buffer = await generateImage(buildCoverPrompt(spec), '16:9')
+      coverArt[spec.id] = await uploadImage(`clearsight/shows/${spec.id}-cover.png`, buffer)
+      console.log(`  -> ${coverArt[spec.id]}`)
+    } catch (error) {
+      console.warn(`  [skip] ${spec.id} cover: ${error instanceof Error ? error.message : error}`)
+    }
+    await sleep(2000)
+  }
+
+  writeHostArtFile(hostArt, studioArt, introArt, coverArt)
+  console.log('[generate-host-art] Done. Regenerate podcasts to use the new artwork.')
+}
+
+main().catch((error) => {
+  console.error('[generate-host-art] Failed:', error instanceof Error ? error.message : error)
+  process.exit(1)
+})

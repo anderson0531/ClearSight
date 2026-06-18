@@ -1,4 +1,5 @@
-import { HOSTS_IMAGE, speakingImagesForSpeaker } from '@/lib/hosts'
+import { HOSTS_IMAGE } from '@/lib/hosts'
+import { speakingImagesForSpeaker, studioImageForSpeaker } from '@/lib/shows'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
@@ -9,8 +10,16 @@ function roleNeedsImagePrompt(role?: AudioSegmentRole): boolean {
   return role !== 'intro' && role !== 'cta' && role !== 'music'
 }
 
+/** A line is illustrated with a custom scene unless explicitly marked 'host'. */
+export function segmentWantsScene(segment: AudioSegment): boolean {
+  if (!roleNeedsImagePrompt(segment.role)) return false
+  return segment.frameKind !== 'host'
+}
+
 export function segmentHasAnimaticMetadata(segment: AudioSegment): boolean {
   if (roleUsesHostsImage(segment.role)) return true
+  // Host-framed lines are valid without an image prompt.
+  if (segment.frameKind === 'host') return true
   return Boolean(segment.text?.trim() || segment.imagePrompt?.trim())
 }
 
@@ -43,9 +52,17 @@ export function segmentDisplayImage(
   index = 0,
   useIllustrations = true
 ): string {
-  if (segment && roleUsesHostsImage(segment.role)) return HOSTS_IMAGE
+  // Intro/outro use the show's studio frame (stored per-segment so non-News
+  // shows keep their own studio image), falling back to the canonical studio.
+  if (segment && roleUsesHostsImage(segment.role)) {
+    return segment.imageUrl || studioImageForSpeaker(segment.speaker) || HOSTS_IMAGE
+  }
+
+  // Lines explicitly framed on the host never show a (stale) illustration.
+  const wantsScene = !segment || segment.frameKind !== 'host'
 
   if (
+    wantsScene &&
     useIllustrations &&
     segment?.imageUrl &&
     !segment.imageUrl.startsWith('/hosts/')
@@ -58,5 +75,5 @@ export function segmentDisplayImage(
     return speakingImages[Math.abs(index) % speakingImages.length]!
   }
 
-  return HOSTS_IMAGE
+  return studioImageForSpeaker(segment?.speaker) || HOSTS_IMAGE
 }

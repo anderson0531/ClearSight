@@ -15,7 +15,8 @@ import {
   X,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE } from '@/lib/hosts'
+import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
+import { hostBySpeaker } from '@/lib/shows'
 import { BACKGROUND_MUSIC } from '@/lib/music-assets'
 import {
   segmentDisplayImage,
@@ -141,17 +142,42 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const frameSrc = segmentDisplayImage(currentSegment, segmentIndex, useIllustrations)
   const frameClass = frameAnimationClass(effect, segmentIndex)
 
+  // Resolve this episode's cast from the segments' speakers (so non-News shows
+  // and solo shows display the correct host names/roles) — falling back to the
+  // canonical News pair for legacy stories without recognizable speakers.
+  const cast = useMemo<HostProfile[]>(() => {
+    const seen = new Set<string>()
+    const hosts: HostProfile[] = []
+    for (const segment of segments ?? []) {
+      const host = hostBySpeaker(segment.speaker)
+      if (host && !seen.has(host.name)) {
+        seen.add(host.name)
+        hosts.push(host)
+      }
+    }
+    return hosts.length > 0 ? hosts : [HOST_ANDERSON, HOST_SARAH]
+  }, [segments])
+
+  // Studio poster: prefer a stored intro/outro studio frame, else the cast's
+  // show studio image, else the canonical studio.
+  const studioPoster = useMemo<string>(() => {
+    const studio = (segments ?? []).find(
+      (s) => (s.role === 'intro' || s.role === 'cta') && s.imageUrl
+    )?.imageUrl
+    return studio || segmentDisplayImage({ url: '', durationSeconds: 0, role: 'intro', speaker: cast[0]?.name }) || HOSTS_IMAGE
+  }, [segments, cast])
+
   // Every distinct frame the player might show in either mode, resolved up front
   // so we can warm the browser cache before playback (studio poster + each
   // segment's illustration AND host-portrait variant).
   const frameSources = useMemo(() => {
-    const urls = new Set<string>([HOSTS_IMAGE])
+    const urls = new Set<string>([studioPoster])
     ;(segments ?? []).forEach((segment, index) => {
       urls.add(segmentDisplayImage(segment, index, true))
       urls.add(segmentDisplayImage(segment, index, false))
     })
     return Array.from(urls)
-  }, [segments])
+  }, [segments, studioPoster])
 
   // Preload all frames once they're known. Decoding ahead of time removes the
   // visible delay on first display; subsequent loads hit the browser cache.
@@ -393,8 +419,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       >
         {showStatic ? (
           <Image
-            src={HOSTS_IMAGE}
-            alt="Dr. Benjamin Anderson and Sarah Chen in the ClearSight studio"
+            src={studioPoster}
+            alt={cast.map((h) => h.name).join(' and ') + ' in the ClearSight studio'}
             fill
             unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
@@ -431,22 +457,24 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
         {showStatic ? (
           <>
-            {/* Hosts banner overlay */}
+            {/* Hosts banner overlay — driven by the episode's resolved cast. */}
             <div className="absolute inset-x-0 bottom-0 p-3">
               <div className="relative flex items-end justify-between gap-3">
                 <div className="max-w-[45%] leading-tight">
-                  <p className="text-xs font-semibold text-white">{HOST_ANDERSON.name}</p>
-                  <p className="text-[10px] text-white/70">{HOST_ANDERSON.role}</p>
+                  <p className="text-xs font-semibold text-white">{cast[0]?.name}</p>
+                  <p className="text-[10px] text-white/70">{cast[0]?.role}</p>
                 </div>
 
                 <p className="pointer-events-none absolute inset-x-0 bottom-0 text-center text-[11px] font-semibold uppercase tracking-wider text-white/80">
                   {t('playerSubtitle')}
                 </p>
 
-                <div className="max-w-[45%] text-end leading-tight">
-                  <p className="text-xs font-semibold text-white">{HOST_SARAH.name}</p>
-                  <p className="text-[10px] text-white/70">{HOST_SARAH.role}</p>
-                </div>
+                {cast[1] ? (
+                  <div className="max-w-[45%] text-end leading-tight">
+                    <p className="text-xs font-semibold text-white">{cast[1].name}</p>
+                    <p className="text-[10px] text-white/70">{cast[1].role}</p>
+                  </div>
+                ) : null}
               </div>
             </div>
 

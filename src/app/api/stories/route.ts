@@ -28,7 +28,11 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const filter = parseFilter(searchParams)
   const playableOnly = searchParams.get('playable') === '1'
-  const sort = searchParams.get('sort') === 'top' ? 'top' : 'recent'
+  const sortParam = searchParams.get('sort')
+  const sort: 'recent' | 'top' | 'trending' =
+    sortParam === 'top' ? 'top' : sortParam === 'trending' ? 'trending' : 'recent'
+  const sinceParam = Number(searchParams.get('since'))
+  const sinceDays = Number.isFinite(sinceParam) && sinceParam > 0 ? sinceParam : undefined
   const stream = searchParams.get('stream') === '1'
 
   if (stream && !playableOnly) {
@@ -87,6 +91,6 @@ export async function GET(request: Request) {
     })
   }
 
-  const stories = await listStories(filter, { playableOnly, sort })
+  const stories = await listStories(filter, { playableOnly, sort, sinceDays })
   return NextResponse.json({ stories })
 }

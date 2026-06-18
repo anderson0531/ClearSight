@@ -23,15 +23,28 @@ export const NEWS_CATEGORIES = [
   'Crime',
 ] as const
 
-// Education subjects.
+// Education topics. Each topic carries its own analytical framework and
+// illustration style. "Career & Job Market" routes to the dedicated solo show
+// ("The Pivot") rather than the Academy pair.
 export const EDUCATION_CATEGORIES = [
-  'Science & Nature',
+  'Mathematics',
+  'Science & Discovery',
+  'Space & Astronomy',
   'History',
+  'Medicine & Health',
   'Technology & Coding',
   'Money & Economics',
-  'Health & Wellbeing',
+  'Career & Job Market',
   'Arts & Culture',
+  'Nature & Environment',
 ] as const
+
+// Legacy Education sub-categories → new topics, so stories generated before the
+// taxonomy change still resolve to a type, framework, and show.
+export const LEGACY_EDUCATION_CATEGORY_MAP: Record<string, string> = {
+  'Science & Nature': 'Science & Discovery',
+  'Health & Wellbeing': 'Medicine & Health',
+}
 
 // Entertainment formats (creator-style channels: True Crime, the "Why Files?"
 // unexplained/mystery lane, etc.).
@@ -68,15 +81,60 @@ export function categoriesForType(type: ContentType): Category[] {
   return ['Top', ...CATEGORIES_BY_TYPE[type]] as Category[]
 }
 
+/** Normalize a (possibly legacy) category string to its current canonical name. */
+export function canonicalizeCategory(category: string): string {
+  return LEGACY_EDUCATION_CATEGORY_MAP[category] ?? category
+}
+
 /** Reverse lookup: which Type owns a category. Defaults to News. */
 export function typeForCategory(category: string): ContentType {
-  if ((EDUCATION_CATEGORIES as readonly string[]).includes(category)) return 'Education'
-  if ((ENTERTAINMENT_CATEGORIES as readonly string[]).includes(category)) return 'Entertainment'
+  const canonical = canonicalizeCategory(category)
+  if ((EDUCATION_CATEGORIES as readonly string[]).includes(canonical)) return 'Education'
+  if ((ENTERTAINMENT_CATEGORIES as readonly string[]).includes(canonical)) return 'Entertainment'
   return 'News'
 }
 
 export function isContentType(value: unknown): value is ContentType {
   return typeof value === 'string' && (CONTENT_TYPES as readonly string[]).includes(value)
+}
+
+// Curated sub-topics per category. Selecting a chip narrows browse/search to
+// that angle and pre-seeds on-demand generation; it is plain text, so it needs
+// no schema or model changes. Brand/topic names stay untranslated.
+export const CATEGORY_SUBTOPICS: Record<string, string[]> = {
+  // News
+  Politics: ['Elections', 'Congress', 'Foreign Policy', 'Supreme Court', 'Campaigns'],
+  Business: ['Earnings', 'Startups', 'Markets', 'Mergers & Acquisitions', 'Big Tech'],
+  'Finance & Macroeconomics': ['Inflation', 'Interest Rates', 'Jobs Report', 'Crypto', 'Housing'],
+  Technology: ['AI', 'Cybersecurity', 'Gadgets', 'Space', 'Social Media'],
+  Science: ['Climate', 'Physics', 'Biology', 'Research', 'Environment'],
+  'Health & Medicine': ['Public Health', 'Mental Health', 'Nutrition', 'Drug Approvals', 'Pandemics'],
+  Sports: ['Football', 'Basketball', 'Soccer', 'Transfers', 'Playoffs'],
+  Crime: ['Investigations', 'Courts', 'Cybercrime', 'Policy', 'Cold Cases'],
+  // Education
+  Mathematics: ['Algebra', 'Geometry', 'Calculus', 'Statistics', 'Number Theory'],
+  'Science & Discovery': ['Physics', 'Chemistry', 'Biology', 'Earth Science', 'Genetics'],
+  'Space & Astronomy': ['Black Holes', 'Exoplanets', 'The Solar System', 'Cosmology', 'Space Missions'],
+  History: ['Ancient World', 'Medieval', 'Modern Era', 'World Wars', 'Revolutions'],
+  'Medicine & Health': ['Anatomy', 'Immunology', 'Nutrition', 'Mental Health', 'Genetics'],
+  'Technology & Coding': ['Programming', 'AI & ML', 'Web Development', 'Databases', 'Cybersecurity'],
+  'Money & Economics': ['Investing', 'Microeconomics', 'Macroeconomics', 'Personal Finance', 'Markets'],
+  'Career & Job Market': ['Resume & Interview', 'Remote Work', 'Salary Negotiation', 'Reskilling', 'Job Search'],
+  'Arts & Culture': ['Painting', 'Literature', 'Architecture', 'Photography', 'Design'],
+  'Nature & Environment': ['Ecosystems', 'Wildlife', 'Conservation', 'Oceans', 'Climate'],
+  // Entertainment
+  'True Crime': ['Cold Cases', 'Serial Cases', 'Heists', 'Forensics', 'Wrongful Convictions'],
+  'Unexplained & Mystery': ['UFOs', 'Cryptids', 'Hauntings', 'Ancient Mysteries', 'Conspiracies'],
+  'Pop Culture': ['Celebrity', 'Music Scene', 'TV Buzz', 'Internet Trends', 'Awards'],
+  'Film & TV': ['New Releases', 'Classics', 'Streaming', 'Directors', 'Genre Deep Dives'],
+  Music: ['New Albums', 'Artist Profiles', 'Genres', 'Production', 'Music History'],
+  Gaming: ['New Releases', 'Indie Games', 'Esports', 'Game Design', 'Retro'],
+}
+
+/** Curated sub-topic chips for a category (empty when none are defined). */
+export function subtopicsForCategory(category?: string): string[] {
+  if (!category) return []
+  return CATEGORY_SUBTOPICS[canonicalizeCategory(category)] ?? []
 }
 
 export interface TaxonomyFilter {

@@ -4,11 +4,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useTransit
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ListMusic, Bookmark, BookmarkCheck, Search, SlidersHorizontal, ChevronDown } from 'lucide-react'
 import { DiscoveryFilters } from '@/components/discovery/DiscoveryFilters'
-import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
 import { MediaGrid } from '@/components/discovery/MediaGrid'
-import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
 import { StageProgress } from '@/components/ui/StageProgress'
-import { useUser } from '@/components/providers/UserProvider'
 import {
   buildStoryParams,
   FETCH_STAGE_ANCHOR,
@@ -20,7 +17,6 @@ import {
   type FetchStage,
   type GeoDefaults,
 } from '@/lib/discovery-utils'
-import { canGenerateOnDemand } from '@/lib/plans'
 import { DEFAULT_TAXONOMY, isContentType, type Category, type TaxonomyFilter } from '@/lib/taxonomy'
 import {
   hasPersistedTaxonomyFilter,
@@ -28,7 +24,6 @@ import {
   persistTaxonomyFilter,
 } from '@/lib/taxonomy-persistence'
 import { inferRegionFromCountry } from '@/lib/geo-catalog'
-import { setPendingGeneration } from '@/lib/generation-session'
 import { isSearchSaved, saveSearch } from '@/lib/saved-searches'
 import { mergeUserTopicsWithStories } from '@/lib/user-topics'
 import { useI18n } from '@/i18n/I18nProvider'
@@ -40,7 +35,6 @@ function SearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { t, locale } = useI18n()
-  const { plan } = useUser()
   const playTrack = useAudioQueue((s) => s.playTrack)
   const setPlaylistContext = useAudioQueue((s) => s.setPlaylistContext)
 
@@ -382,26 +376,6 @@ function SearchPageContent() {
     }
   }
 
-  const handleGenerate = (story: StoryCard) => {
-    if (!canGenerateOnDemand(plan)) {
-      setErrorMessage(t('upgradeRequiredBody'))
-      return
-    }
-    setErrorMessage(null)
-    setPendingGeneration({
-      title: story.title,
-      language: story.language,
-      category: story.category,
-      contentType: filter.contentType,
-      geoScope: story.geoScope,
-      geoRegion: story.geoRegion,
-      geoCountry: story.geoCountry,
-      geoState: story.geoState,
-      geoLocal: story.geoLocal,
-    })
-    router.push('/story/create')
-  }
-
   const loading = !filtersReady || !hasLoaded || isPending
   const canPlayAll = playableCount > 0 && !startingStation
 
@@ -460,10 +434,10 @@ function SearchPageContent() {
 
       <div className="my-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="section-title">{t('topTopics')}</h2>
-          {!loading && playableCount === 0 ? (
-            <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('playAllHint')}</p>
-          ) : null}
+          <h2 className="section-title">{t('searchAvailablePodcasts')}</h2>
+          <p className="mt-1 text-xs text-[var(--muted-strong)]">
+            {!loading && playableCount === 0 ? t('playAllHint') : t('searchAvailableHint')}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {loading ? (
@@ -503,18 +477,11 @@ function SearchPageContent() {
         </div>
       </div>
 
-      {canGenerateOnDemand(plan) ? (
-        <AddTopicDialog filter={filter} />
-      ) : (
-        <UpgradeCTA compact className="mb-6" />
-      )}
-
       <MediaGrid
         stories={stories}
         loading={loading}
         loadingStage={fetchStage}
         loadingPercent={fetchPercent}
-        onGenerate={canGenerateOnDemand(plan) ? handleGenerate : undefined}
       />
     </main>
   )

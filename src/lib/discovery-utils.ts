@@ -18,6 +18,7 @@ export function filterMockStories(filter: TaxonomyFilter): StoryCard[] {
 
 export function buildStoryParams(filter: TaxonomyFilter, playable = false): URLSearchParams {
   const params = new URLSearchParams({
+    contentType: filter.contentType,
     languages: filter.languages.join(','),
     categories: filter.categories.join(','),
     geoScope: filter.geoScope,

@@ -9,6 +9,7 @@ import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS, type MessageKey } from '@/i18n/messages/en'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
 import { StageProgress } from '@/components/ui/StageProgress'
+import { EpisodeActions } from '@/components/discovery/EpisodeActions'
 import { useAudioQueue } from '@/store/useAudioQueue'
 
 interface MediaGridProps {
@@ -229,23 +230,36 @@ export function MediaGrid({
             </div>
 
             {story.audioUrl ? (
-              <button
-                type="button"
-                onClick={() =>
-                  addToQueue({
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    addToQueue({
+                      id: story.id,
+                      title: story.title,
+                      audioUrl: story.audioUrl!,
+                      audioSegments: story.audioSegments,
+                      thumbnailUrl: story.thumbnailUrl,
+                      durationSeconds: story.durationSeconds,
+                      storyId: story.id,
+                    })
+                  }
+                  className="min-h-10 text-start text-[10px] font-medium text-[var(--muted-strong)] transition-colors hover:text-[#c7cff0]"
+                >
+                  + {t('addToQueue')}
+                </button>
+                <EpisodeActions
+                  track={{
                     id: story.id,
                     title: story.title,
-                    audioUrl: story.audioUrl!,
+                    audioUrl: story.audioUrl,
                     audioSegments: story.audioSegments,
                     thumbnailUrl: story.thumbnailUrl,
                     durationSeconds: story.durationSeconds,
                     storyId: story.id,
-                  })
-                }
-                className="min-h-10 text-start text-[10px] font-medium text-[var(--muted-strong)] transition-colors hover:text-[#c7cff0]"
-              >
-                + {t('addToQueue')}
-              </button>
+                  }}
+                />
+              </div>
             ) : null}
           </article>
         )

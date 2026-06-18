@@ -1,9 +1,11 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
+import { useState } from 'react'
 import { Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { PLAN_DETAILS, type Plan } from '@/lib/plans'
+import { CREDIT_PACKS, PLAN_DETAILS, type Plan } from '@/lib/plans'
 import type { MessageKey } from '@/i18n/messages/en'
 
 const PLAN_CTA_KEYS: Record<Plan, MessageKey> = {
@@ -18,8 +20,51 @@ interface PlanCardsProps {
 
 export function PlanCards({ showCreditAddOns = true }: PlanCardsProps) {
   const t = useTranslations()
-  const { plan } = useUser()
+  const router = useRouter()
+  const { plan, authenticated, paymentBypass, refresh } = useUser()
   const plans: Plan[] = ['FREE', 'PREMIUM', 'CREATOR']
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const handleSubscribe = async (targetPlan: Plan) => {
+    if (!authenticated) {
+      router.push(`/login?next=/premium`)
+      return
+    }
+    setBusy(`plan:${targetPlan}`)
+    try {
+      const res = await fetch('/api/billing/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: targetPlan }),
+      })
+      const data = await res.json().catch(() => null)
+      if (data?.bypass === false && data?.checkoutUrl) {
+        window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer')
+      } else {
+        await refresh()
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleBuyCredits = async (pack: number) => {
+    if (!authenticated) {
+      router.push(`/login?next=/premium`)
+      return
+    }
+    setBusy(`pack:${pack}`)
+    try {
+      await fetch('/api/billing/credits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pack }),
+      })
+      await refresh()
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -69,6 +114,15 @@ export function PlanCards({ showCreditAddOns = true }: PlanCardsProps) {
                 <button type="button" disabled className="btn-ghost mt-6 w-full opacity-60">
                   {t('premiumCurrentPlan')}
                 </button>
+              ) : paymentBypass ? (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void handleSubscribe(planId)}
+                  className="btn-accent mt-6 w-full"
+                >
+                  {busy === `plan:${planId}` ? t('accountProcessing') : t(PLAN_CTA_KEYS[planId])}
+                </button>
               ) : (
                 <a
                   href={details.checkoutUrl}
@@ -81,7 +135,7 @@ export function PlanCards({ showCreditAddOns = true }: PlanCardsProps) {
                 </a>
               )}
               <p className="mt-2 text-center text-[11px] text-[var(--muted-strong)]">
-                {t('planSecureCheckout')}
+                {paymentBypass ? t('accountBypassNote') : t('planSecureCheckout')}
               </p>
             </div>
           )
@@ -93,13 +147,24 @@ export function PlanCards({ showCreditAddOns = true }: PlanCardsProps) {
           <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('premiumCreditAddOns')}</h3>
           <p className="mt-2 text-sm text-[var(--muted)]">{t('premiumCreditAddOnsHint')}</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            {[5, 15, 50].map((pack) => (
+            {CREDIT_PACKS.map((pack) => (
               <div key={pack} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-center">
                 <p className="text-2xl font-bold text-[var(--accent-credit)]">{pack}</p>
                 <p className="text-xs text-[var(--muted)]">{t('credits')}</p>
-                <button type="button" disabled className="btn-ghost mt-3 w-full text-xs">
-                  {t('premiumComingSoon')}
-                </button>
+                {paymentBypass ? (
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void handleBuyCredits(pack)}
+                    className="btn-ghost mt-3 w-full text-xs"
+                  >
+                    {busy === `pack:${pack}` ? t('accountProcessing') : t('accountBuyPack', { count: pack })}
+                  </button>
+                ) : (
+                  <button type="button" disabled className="btn-ghost mt-3 w-full text-xs">
+                    {t('premiumComingSoon')}
+                  </button>
+                )}
               </div>
             ))}
           </div>

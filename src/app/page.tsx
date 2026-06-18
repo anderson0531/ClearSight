@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { CategoryTiles } from '@/components/discovery/CategoryTiles'
+import { FeaturedShows } from '@/components/discovery/FeaturedShows'
 import { StoryRow } from '@/components/discovery/StoryRow'
 import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
 import { useUser } from '@/components/providers/UserProvider'
@@ -177,6 +178,8 @@ export default function HomePage() {
           <StoryRow stories={stories} title={t('homeDiscoverNew')} />
         </>
       )}
+
+      <FeaturedShows />
 
       <CategoryTiles />
     </main>

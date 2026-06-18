@@ -47,6 +47,10 @@ export interface PodcastReviewInput {
   script: PodcastScriptDraft
   hostA?: string
   hostB?: string
+  /** All host names for the show (overrides hostA/hostB when provided). */
+  hostNames?: string[]
+  /** 'solo' (single speaker) or 'dialogue' (two speakers). Defaults to dialogue. */
+  format?: 'solo' | 'dialogue'
   editorialNotes?: string | null
 }
 
@@ -284,8 +288,13 @@ export async function reviewPodcastScript(
   parseScript: (raw: string) => PodcastScriptDraft | null,
   trimScript: (script: PodcastScriptDraft) => PodcastScriptDraft
 ): Promise<PodcastReviewResult> {
-  const hostA = input.hostA ?? HOST_SARAH.name
-  const hostB = input.hostB ?? HOST_ANDERSON.name
+  const hostNames =
+    input.hostNames && input.hostNames.length > 0
+      ? input.hostNames
+      : [input.hostA ?? HOST_SARAH.name, input.hostB ?? HOST_ANDERSON.name]
+  const isSolo = input.format === 'solo' || hostNames.length === 1
+  const hostA = hostNames[0]!
+  const hostB = hostNames[hostNames.length - 1]!
   const category = input.category ?? 'Top'
   const analysisBlock = formatPodcastReviewAnalysisBlock(category)
 
@@ -294,35 +303,43 @@ export async function reviewPodcastScript(
     ...input.script.turns.map((turn) => `${turn.speaker}: ${turn.text}`),
   ].join('\n')
 
-  const prompt = `You are an executive intelligence podcast editor. Review and improve this script for analytical depth, accuracy, and broadcast quality.
-ClearSight podcasts deliver intelligence NOT available in standard news — causal breakdowns, comparative analysis, and forecasts. Eliminate all fluff.
+  const castRule = isSolo
+    ? `6. Preserve a SINGLE host only: ${hostA}. Do NOT add a second speaker or interview framing.`
+    : `6. Preserve two hosts only: ${hostA} (probing questioner) and ${hostB} (analytical expert)`
+  const lengthRule = isSolo
+    ? `7. Keep 8–14 single-speaker segments; end with ${hostA} delivering the key takeaway`
+    : `7. Keep 12–18 alternating turns; end with ${hostB} delivering the forecast and key takeaway`
+  const outputCast = isSolo
+    ? `${hostA}: [tag] segment...\n${hostA}: [tag] next segment...\n(single speaker ${hostA} only)`
+    : `${hostA}: [tag] line...\n${hostB}: [tag] line...\n(alternate ${hostA} and ${hostB})`
+
+  const prompt = `You are an executive podcast editor. Review and improve this script for depth, accuracy, and broadcast quality.
+ClearSight podcasts deliver substance NOT available in standard coverage — causal breakdowns, comparison, and forecasts. Eliminate all fluff.
 The entire script must remain in ${input.language}.
 Category: ${category}
 
 APPROVED BRIEFING (sole source of truth for facts — do not add factual claims beyond this):
 ${input.markdown.slice(0, 3800)}
 
-${input.editorialNotes ? `EDITORIAL NOTES (incorporate in dialogue — do not contradict the briefing):\n${input.editorialNotes}\n` : ''}
+${input.editorialNotes ? `EDITORIAL NOTES (incorporate — do not contradict the briefing):\n${input.editorialNotes}\n` : ''}
 CURRENT SCRIPT:
 ${scriptText}
 
 EDITORIAL CHECKLIST:
 1. Remove any factual claim not supported by the approved briefing
 2. Add attribution where missing ("according to", "reported by", "developing")
-3. Distinguish confirmed facts from analytical inference in dialogue
-4. Cut ALL fluff: filler reactions, recaps, hype, and turns that add no analytical substance
-5. Replace generic commentary with specific causal factors, comparisons, or projections from the briefing
-6. Preserve two hosts only: ${hostA} (probing questioner) and ${hostB} (analytical expert)
-7. Keep 12–18 alternating turns; end with ${hostB} delivering the forecast and key takeaway
+3. Distinguish confirmed facts from analytical inference
+4. Cut ALL fluff: filler reactions, recaps, hype, and turns that add no substance
+5. Replace generic commentary with specific factors, comparisons, or projections from the briefing
+${castRule}
+${lengthRule}
 8. Preserve audio tags sparingly: [curious], [thoughtful], [short pause], [concerned]
 
 ${analysisBlock}
 
 Output format (strict — no markdown, no commentary):
-DIRECTOR_NOTES: <one line scene + tone: analytical, dense; max 300 chars>
-${hostA}: [tag] line...
-${hostB}: [tag] line...
-(alternate ${hostA} and ${hostB})`
+DIRECTOR_NOTES: <one line scene + tone; max 300 chars>
+${outputCast}`
 
   const raw = await vertexGenerateText(prompt, {
     temperature: 0.35,

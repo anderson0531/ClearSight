@@ -14,11 +14,16 @@ import {
 import { TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
 import { reviewPodcastScript } from '@/lib/editorial-review'
 import { formatBriefingAnalysisBlock, formatPodcastAnalysisBlock } from '@/lib/analysis-frameworks'
-import { generateLineImagePrompts, illustrationStyleForType } from '@/lib/animatic'
+import {
+  buildLocaleVisualContext,
+  generateLineImagePrompts,
+  type FrameDecision,
+} from '@/lib/animatic'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
-import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE } from '@/lib/hosts'
-import type { AudioSegment, AudioSegmentRole } from '@/types/story'
+import { categoryVisualStyle, resolveShow, type Show } from '@/lib/shows'
+import type { HostProfile } from '@/lib/hosts'
+import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
 
 export type GenerationStage = 'analysis' | 'draft' | 'editorial' | 'podcast' | 'saving' | 'done'
 
@@ -57,14 +62,30 @@ interface TruthLedgerResult {
 // single-voice fallback (one host reading everything). Verified-working ids:
 // gemini-2.5-flash-tts (GA), gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts.
 const TTS_MODEL = process.env.VERTEX_TTS_MODEL ?? 'gemini-2.5-flash-tts'
-// HOST_A = investigative interviewer (drives questions); HOST_B = lead analyst (delivers breakdowns + forecast).
-const HOST_A = HOST_SARAH.name
-const HOST_B = HOST_ANDERSON.name
-const HOST_A_VOICE = HOST_SARAH.voiceId
-const HOST_B_VOICE = HOST_ANDERSON.voiceId
-const HOST_A_ALIASES = HOST_SARAH.aliases
-const HOST_B_ALIASES = HOST_ANDERSON.aliases
 const BRAND_NAME = 'ClearSight'
+
+/**
+ * The lead/analyst host of a show. For a dialogue show this is the second host
+ * (delivers breakdowns + forecast); for a solo show it's the only host.
+ */
+function leadHost(show: Show): HostProfile {
+  return show.hosts[show.hosts.length - 1]!
+}
+
+/** The questioning/co-host of a show. Falls back to the lead for solo shows. */
+function coHost(show: Show): HostProfile {
+  return show.hosts[0]!
+}
+
+/** Resolve a script speaker label to one of the show's hosts (defaults to first). */
+function resolveHost(show: Show, speaker: string): HostProfile {
+  const lower = speaker.toLowerCase()
+  return (
+    show.hosts.find((h) => lower === h.name.toLowerCase()) ??
+    show.hosts.find((h) => h.aliases.some((alias) => lower.includes(alias))) ??
+    show.hosts[0]!
+  )
+}
 
 const CATEGORY_THUMBNAILS: Record<string, string> = {
   Politics: 'https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?w=400&h=400&fit=crop',
@@ -105,6 +126,7 @@ interface PreparedLine {
   role: AudioSegmentRole
   imageUrl: string | null
   imagePrompt: string | null
+  frameKind: FrameKind | null
 }
 
 const TTS_CONCURRENCY = 3
@@ -181,22 +203,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function voiceForSpeaker(speaker: string): string {
-  if (speaker === HOST_A) return HOST_A_VOICE
-  if (speaker === HOST_B) return HOST_B_VOICE
-  const lower = speaker.toLowerCase()
-  if (HOST_A_ALIASES.some((alias) => lower.includes(alias))) return HOST_A_VOICE
-  if (HOST_B_ALIASES.some((alias) => lower.includes(alias))) return HOST_B_VOICE
-  return HOST_A_VOICE
+function voiceForSpeaker(show: Show, speaker: string): string {
+  return resolveHost(show, speaker).voiceId
 }
 
-function hostProfileForSpeaker(speaker: string) {
-  if (speaker === HOST_A) return HOST_SARAH
-  if (speaker === HOST_B) return HOST_ANDERSON
-  const lower = speaker.toLowerCase()
-  if (HOST_A_ALIASES.some((alias) => lower.includes(alias))) return HOST_SARAH
-  if (HOST_B_ALIASES.some((alias) => lower.includes(alias))) return HOST_ANDERSON
-  return HOST_SARAH
+function hostProfileForSpeaker(show: Show, speaker: string): HostProfile {
+  return resolveHost(show, speaker)
 }
 
 async function mapPool<T, R>(
@@ -220,12 +232,12 @@ async function mapPool<T, R>(
   return results
 }
 
-function prepareLines(turns: PodcastTurn[]): PreparedLine[] {
+function prepareLines(turns: PodcastTurn[], show: Show): PreparedLine[] {
   const lines: PreparedLine[] = []
 
   turns.forEach((turn) => {
     const role = turn.role ?? 'body'
-    const imageUrl = role === 'intro' || role === 'cta' ? HOSTS_IMAGE : null
+    const imageUrl = role === 'intro' || role === 'cta' ? show.studioImage : null
 
     for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
       lines.push({
@@ -234,6 +246,7 @@ function prepareLines(turns: PodcastTurn[]): PreparedLine[] {
         role,
         imageUrl,
         imagePrompt: null,
+        frameKind: null,
       })
     }
   })
@@ -243,13 +256,17 @@ function prepareLines(turns: PodcastTurn[]): PreparedLine[] {
 
 function attachImagePrompts(
   lines: PreparedLine[],
-  prompts: Map<number, string>
+  decisions: Map<number, FrameDecision>
 ): PreparedLine[] {
   return lines.map((line, index) => {
     if (line.role === 'intro' || line.role === 'cta') {
-      return { ...line, imagePrompt: null }
+      return { ...line, imagePrompt: null, frameKind: null }
     }
-    return { ...line, imagePrompt: prompts.get(index) ?? null }
+    const decision = decisions.get(index)
+    if (!decision || decision.kind === 'scene') {
+      return { ...line, imagePrompt: decision?.prompt ?? null, frameKind: 'scene' }
+    }
+    return { ...line, imagePrompt: null, frameKind: 'host' }
   })
 }
 
@@ -388,7 +405,11 @@ async function compileTruthLedgerMarkdown(
 
 Compile an unbiased Truth Ledger briefing for: "${input.title}".
 Write the entire briefing in ${input.language}.
-Category: ${input.category}. Geographic scope: ${input.geoScope}.
+Category: ${input.category}. Geographic scope: ${input.geoScope}.${
+    input.geoCountry || input.geoRegion
+      ? `\nGeographic focus: ${[input.geoLocal, input.geoState, input.geoCountry, input.geoRegion].filter(Boolean).join(', ')}. Ground developments, sources, and examples in this place where relevant; use locally credible outlets and culturally accurate specifics.`
+      : ''
+  }
 ${questionsBlock}
 CRITICAL RULES:
 - Cover developments from the last ~48 hours and the CURRENT state of this story as of ${today}.
@@ -492,7 +513,8 @@ async function generateStoryThumbnail(
   title: string,
   category: string,
   keyMessage?: string,
-  contentType?: ContentType
+  contentType?: ContentType,
+  localeContext?: string
 ): Promise<string> {
   const message = keyMessage?.trim()
   const prompt = `Create a single editorial cover illustration that effectively illustrates the topic and the key message of this briefing.
@@ -502,7 +524,7 @@ Category: ${category}${message ? `\n\nKey message to convey visually:\n${message
 
 Make the imagery specific and recognizable to this exact story — depict the concrete subjects, places, objects, settings, or symbolic scene at the heart of it, not a generic category symbol.
 IMPORTANT: Do NOT depict people, faces, portraits, or headshots. Use objects, environments, maps, symbolic motifs, and conceptual imagery instead.
-${thumbnailStyleForType(contentType)}`
+${thumbnailStyleForType(contentType)}${localeContext ? `\n${localeContext}` : ''}`
 
   const buffer = await vertexGenerateImage(prompt, {
     aspectRatio: '1:1',
@@ -580,10 +602,9 @@ async function findReusableThumbnail(
   return null
 }
 
-function parsePodcastScript(raw: string): PodcastScript | null {
+function parsePodcastScript(raw: string, show: Show): PodcastScript | null {
   const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
-  let directorNotes =
-    'Scene: modern news studio podcast. Tone: engaging, authoritative, conversational deep-dive. Pace: natural with thoughtful pauses.'
+  let directorNotes = show.sceneDirectorNotes
 
   const directorIdx = lines.findIndex((l) => l.toUpperCase().startsWith('DIRECTOR_NOTES:'))
   if (directorIdx >= 0) {
@@ -592,22 +613,47 @@ function parsePodcastScript(raw: string): PodcastScript | null {
   }
 
   const turns: PodcastTurn[] = []
-  // Match any "Label: text" line, then resolve the label to a canonical host by
-  // alias so first-name / title variants ("Sarah:", "Dr. Anderson:") still map.
+  // Match any "Label: text" line, then resolve the label to one of the show's
+  // hosts by alias so first-name / title variants ("Sarah:", "Dr. Anderson:",
+  // "Priya:") still map across every show.
   const speakerPattern = /^([^:]{1,48}):\s*(.+)$/
+
+  const matchHost = (label: string): HostProfile | null => {
+    const lower = label.toLowerCase()
+    return (
+      show.hosts.find((h) => h.aliases.some((alias) => lower.includes(alias))) ??
+      show.hosts.find((h) => lower.includes(h.name.toLowerCase())) ??
+      null
+    )
+  }
 
   for (const line of lines) {
     const match = line.match(speakerPattern)
     if (!match) continue
-    const label = match[1].toLowerCase()
-    let speaker: string | null = null
-    if (HOST_A_ALIASES.some((alias) => label.includes(alias))) speaker = HOST_A
-    else if (HOST_B_ALIASES.some((alias) => label.includes(alias))) speaker = HOST_B
-    if (!speaker) continue
-    turns.push({ speaker, text: match[2].trim() })
+    const host = matchHost(match[1])
+    if (!host) continue
+    turns.push({ speaker: host.name, text: match[2].trim() })
   }
 
-  if (turns.length < 4) return null
+  const minTurns = show.format === 'solo' ? 3 : 4
+
+  // Solo fallback: a single-speaker show may emit plain narration paragraphs
+  // without speaker labels. Treat each substantial line as a turn for the host.
+  if (turns.length < minTurns && show.format === 'solo') {
+    const host = show.hosts[0]!
+    const narration = lines
+      .map((line) => {
+        const match = line.match(speakerPattern)
+        return match ? match[2].trim() : line
+      })
+      .filter((text) => text.split(/\s+/).length >= 4)
+    if (narration.length >= minTurns) {
+      turns.length = 0
+      for (const text of narration) turns.push({ speaker: host.name, text })
+    }
+  }
+
+  if (turns.length < minTurns) return null
 
   directorNotes = directorNotes.slice(0, 380)
   return {
@@ -709,56 +755,79 @@ Return ONLY compact JSON: {"category":"<one category>","format":"<one format>"}`
   }
 }
 
-function formatGuidance(format: PodcastFormat): string {
-  switch (format) {
-    case 'debate':
-      return `FORMAT: DEBATE. ${HOST_A} and ${HOST_B} take genuinely opposing positions and argue them respectfully, each steel-manning their side before conceding strong points.`
-    case 'explainer':
-      return `FORMAT: EXPLAINER. ${HOST_A} asks the questions a smart newcomer would; ${HOST_B} unpacks the topic step by step, defining jargon and building intuition.`
-    case 'educational':
-      return `FORMAT: EDUCATIONAL. Teach the fundamentals first, then layer complexity. ${HOST_B} acts as the expert teacher; ${HOST_A} checks understanding and surfaces common misconceptions.`
-    case 'interview':
-      return `FORMAT: INTERVIEW. ${HOST_A} leads a probing Q&A; ${HOST_B} answers as the subject-matter authority with depth and candor.`
-    case 'investigative':
-      return `FORMAT: INVESTIGATIVE. Follow the evidence: motives, money, timeline, and unanswered questions. ${HOST_A} presses; ${HOST_B} weighs what the reporting does and does not support.`
-    case 'analysis':
-    default:
-      return `FORMAT: ANALYSIS. A data-driven breakdown — causal factors, comparisons, and forecasts. ${HOST_B} delivers the factor-by-factor analysis; ${HOST_A} pressure-tests it.`
-  }
+/** Numbered, topic-optimized beats for the show, used to drive the script. */
+function formatStructure(show: Show): string {
+  return show.scriptStructure.map((beat, i) => `${i + 1}. ${beat}`).join('\n')
+}
+
+/** Localization grounding so the dialogue itself carries local specifics. */
+function buildLocaleScriptContext(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): string {
+  const place = input.geoCountry?.trim() || input.geoState?.trim() || input.geoLocal?.trim()
+  const langNote =
+    input.language && input.language.trim().toLowerCase() !== 'english'
+      ? ` Write naturally and idiomatically in ${input.language}, using culturally appropriate phrasing and terms — not a literal translation.`
+      : ''
+  if (!place) return langNote.trim()
+  return `LOCALIZATION: Ground specifics (people, places, institutions, examples) in ${place} where relevant, and keep cultural references appropriate to that audience.${langNote}`.trim()
 }
 
 async function generatePodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
-  editorialNotes?: string | null,
-  format: PodcastFormat = 'analysis'
+  show: Show,
+  editorialNotes?: string | null
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
   const scriptType = input.contentType ?? typeForCategory(input.category)
-  const analysisBlock = formatPodcastAnalysisBlock(input.category, HOST_B, scriptType)
+  const lead = leadHost(show)
+  const co = coHost(show)
+  const analysisBlock = formatPodcastAnalysisBlock(input.category, lead.name, scriptType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const localeContext = buildLocaleScriptContext(input)
+  const structure = formatStructure(show)
 
-  const prompt = `Write the CORE BODY of a prestige intelligence podcast deep-dive in ${input.language} about: "${input.title}".
+  const isSolo = show.format === 'solo'
+
+  const castBlock = isSolo
+    ? `SINGLE HOST (this is a solo show — no second speaker, no interview framing):
+- ${lead.name} (${lead.role}) — ${lead.persona}`
+    : `TWO HOSTS (a duet that moves the analysis forward and keeps it balanced):
+- ${co.name} (${co.role}) — ${co.persona}
+- ${lead.name} (${lead.role}) — ${lead.persona}`
+
+  const outputBlock = isSolo
+    ? `Output format (strict):
+DIRECTOR_NOTES: <one line scene + tone; pacing guidance, max 300 chars>
+${lead.name}: [tag] first segment of the narration...
+${lead.name}: [tag] next segment...
+(8-14 segments total by ${lead.name} ONLY, flowing through the structure above)`
+    : `Output format (strict):
+DIRECTOR_NOTES: <one line scene + tone; pacing guidance, max 300 chars>
+${co.name}: [curious] opening line that launches the first beat...
+${lead.name}: [thoughtful] substantive response...
+(alternate ${co.name} and ${lead.name} for 12-18 turns total, flowing through the structure above)`
+
+  const closingRule = isSolo
+    ? `- End with ${lead.name} delivering the key takeaway / concrete next step`
+    : `- No third speaker; end with ${lead.name} delivering the forecast and key takeaway`
+
+  const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" episode in ${input.language} about: "${input.title}".
 ${questionsBlock}
-${editorialNotes ? `\nEditorial guidance to weave into dialogue (do not contradict the briefing):\n${editorialNotes}\n` : ''}
-${BRAND_NAME} delivers analytical intelligence NOT available in standard news — causal breakdowns, comparative analysis, and forecasts. This is NOT a recap show. The energy is sharp, dynamic, and confident.
+${editorialNotes ? `\nEditorial guidance to weave in (do not contradict the briefing):\n${editorialNotes}\n` : ''}
+${BRAND_NAME} delivers substance NOT available in standard coverage — go beyond a recap. The energy is sharp, dynamic, and confident.
 
-${formatGuidance(format)}
+${castBlock}
 
-Two hosts (a "duet" that bounces opposing viewpoints back and forth so the analysis feels balanced and unbiased):
-- ${HOST_A} (sharp, modern investigative correspondent — bright, articulate, poised): drives the deep dive with probing analytical questions and presses the counter-argument
-- ${HOST_B} (seasoned anchor and lead analyst — grounded, calm, deeply trustworthy authority): delivers factor-by-factor breakdowns, comparisons, and forecasts
+Follow this topic-optimized structure, moving the listener forward:
+${structure}
 
+${localeContext ? `${localeContext}\n` : ''}
 Ground factual claims ONLY in this briefing:
 ${briefingExcerpt}
 
 ${analysisBlock}
-
-Adapt the chapter structure to the chosen FORMAT, generally moving the listener forward, e.g.:
-1. The Context (how we got here)
-2. The Catalyst (what just changed)
-3. The Opposing Perspectives (steel-man both sides)
-4. The Implications & Forecast (what happens next)
 
 INTERPRETATION RULES:
 - Analytical reasoning and forecasts are encouraged when built on briefing facts
@@ -766,24 +835,20 @@ INTERPRETATION RULES:
 - Do NOT re-litigate whether the story is real — assume the briefing reflects current reporting
 - Label inference vs. confirmed fact ("based on the reporting…", "if this holds…")
 
-Output format (strict):
-DIRECTOR_NOTES: <one line scene + tone: analytical, dense, energetic, no fluff; pacing guidance, max 300 chars>
-${HOST_A}: [curious] opening analytical question that launches Chapter 1...
-${HOST_B}: [thoughtful] factor-by-factor response...
-(alternate ${HOST_A} and ${HOST_B} for 12-18 turns total, flowing through the chapters)
+${outputBlock}
 
 Rules:
 - Entire script in ${input.language}
 - Do NOT write a greeting, intro, welcome, or sign-off — this is the MIDDLE of the show only
-- Every line must carry analytical substance; no filler reactions
+- Every line must carry substance; no filler reactions
 - Use Gemini audio tags sparingly: [curious], [thoughtful], [short pause], [concerned]
-- No stage directions beyond tags; no markdown; no third speaker
-- End with ${HOST_B} delivering the forecast and key analytical takeaway`
+- No stage directions beyond tags; no markdown
+${closingRule}`
 
   const raw = await vertexGenerateText(prompt, { temperature: 0.6, maxOutputTokens: 4096 })
   if (!raw) return null
 
-  const parsed = parsePodcastScript(raw)
+  const parsed = parsePodcastScript(raw, show)
   if (!parsed) return null
 
   return trimScriptToLimits(parsed)
@@ -849,9 +914,14 @@ Rules:
 function assembleEpisode(
   core: PodcastScript,
   bookends: EpisodeBookends | null,
-  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  show: Show
 ): PodcastScript {
   const region = geoFocusLabel(input)
+  // Bookend speakers: co-host opens (hook/summary), lead delivers (intro/cta).
+  // For a solo show both resolve to the single host.
+  const hookSpeaker = coHost(show).name
+  const leadSpeaker = leadHost(show).name
   // Bookends come from the model already written in the target language. The
   // canned fallbacks below are English, so they may ONLY be used for English
   // episodes — otherwise a failed bookends call would leak English narration
@@ -873,7 +943,7 @@ function assembleEpisode(
 
   if (hook) {
     turns.push({
-      speaker: HOST_A,
+      speaker: hookSpeaker,
       text: truncateToBytes(`[serious] ${hook}`, TTS_MAX_TURN_BYTES),
       role: 'hook',
     })
@@ -881,7 +951,7 @@ function assembleEpisode(
 
   if (intro) {
     turns.push({
-      speaker: HOST_B,
+      speaker: leadSpeaker,
       text: truncateToBytes(`[warm] ${intro}`, TTS_MAX_TURN_BYTES),
       chapterBreak: true,
       role: 'intro',
@@ -902,7 +972,7 @@ function assembleEpisode(
 
   if (summary) {
     turns.push({
-      speaker: HOST_A,
+      speaker: hookSpeaker,
       text: truncateToBytes(`[thoughtful] ${summary}`, TTS_MAX_TURN_BYTES),
       chapterBreak: true,
       role: 'summary',
@@ -911,7 +981,7 @@ function assembleEpisode(
 
   if (cta) {
     turns.push({
-      speaker: HOST_B,
+      speaker: leadSpeaker,
       text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
       role: 'cta',
     })
@@ -1022,9 +1092,10 @@ function buildVoiceStylePrompt(directorNotes: string, hostStyle: string): string
 function buildSingleSpeakerTtsBody(
   directorNotes: string,
   line: PreparedLine,
-  locale: ReturnType<typeof getVoiceForLanguage>
+  locale: ReturnType<typeof getVoiceForLanguage>,
+  show: Show
 ): Record<string, unknown> {
-  const host = hostProfileForSpeaker(line.speaker)
+  const host = hostProfileForSpeaker(show, line.speaker)
   const stylePrompt = buildVoiceStylePrompt(directorNotes, host.ttsStylePrompt)
 
   return {
@@ -1035,7 +1106,7 @@ function buildSingleSpeakerTtsBody(
     voice: {
       languageCode: locale.languageCode,
       modelName: TTS_MODEL,
-      name: voiceForSpeaker(line.speaker),
+      name: voiceForSpeaker(show, line.speaker),
     },
     audioConfig: {
       audioEncoding: 'MP3',
@@ -1048,7 +1119,8 @@ function buildSingleSpeakerTtsBody(
 async function synthesizeSingleVoiceFallback(
   token: string,
   script: PodcastScript,
-  locale: ReturnType<typeof getVoiceForLanguage>
+  locale: ReturnType<typeof getVoiceForLanguage>,
+  show: Show
 ): Promise<Buffer[]> {
   const joinedText = script.turns.map((turn) => sanitizeSpokenText(turn.text)).join(' ')
   const chunks = splitTextIntoByteChunks(joinedText, 3900)
@@ -1063,7 +1135,7 @@ async function synthesizeSingleVoiceFallback(
         voice: {
           languageCode: locale.languageCode,
           modelName: TTS_MODEL,
-          name: HOST_A_VOICE,
+          name: show.hosts[0]!.voiceId,
         },
         audioConfig: {
           audioEncoding: 'MP3',
@@ -1099,7 +1171,7 @@ async function uploadAudioSegment(
   title: string,
   index: number,
   fallbackDuration: number,
-  meta: Pick<PreparedLine, 'speaker' | 'role' | 'imageUrl' | 'text' | 'imagePrompt'>
+  meta: Pick<PreparedLine, 'speaker' | 'role' | 'imageUrl' | 'text' | 'imagePrompt' | 'frameKind'>
 ): Promise<AudioSegment> {
   const slug = title.slice(0, 32).replace(/\W/g, '-')
   const blob = await put(
@@ -1118,6 +1190,7 @@ async function uploadAudioSegment(
     imageUrl: meta.imageUrl,
     text: meta.text,
     ...(meta.imagePrompt ? { imagePrompt: meta.imagePrompt } : {}),
+    ...(meta.frameKind ? { frameKind: meta.frameKind } : {}),
   }
 }
 
@@ -1127,15 +1200,15 @@ async function uploadAudioSegment(
  */
 async function synthesizePodcastAudio(
   script: PodcastScript,
-  language: string,
-  title: string,
-  contentType?: ContentType
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  show: Show
 ): Promise<{ url: string; durationSeconds: number; segments: AudioSegment[] } | null> {
   const token = await getVertexAccessToken()
   if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
 
+  const { language, title } = input
   const locale = getVoiceForLanguage(language)
-  const rawLines = prepareLines(script.turns)
+  const rawLines = prepareLines(script.turns, show)
   if (rawLines.length === 0) return null
 
   const promptInputs = rawLines.map((line, index) => ({
@@ -1144,11 +1217,16 @@ async function synthesizePodcastAudio(
     text: line.text,
     role: line.role,
   }))
-  const imagePrompts = await generateLineImagePrompts(promptInputs, illustrationStyleForType(contentType))
+  const localeContext = buildLocaleVisualContext(language, geoFocusLabel(input), input.geoCountry)
+  const style = [show.visualStyle, categoryVisualStyle(input.category)].filter(Boolean).join(' ')
+  const imagePrompts = await generateLineImagePrompts(promptInputs, {
+    style,
+    localeContext,
+  })
   const lines = attachImagePrompts(rawLines, imagePrompts)
 
   const lineBuffers = await mapPool(lines, TTS_CONCURRENCY, async (line) =>
-    callGeminiTts(token, buildSingleSpeakerTtsBody(script.directorNotes, line, locale))
+    callGeminiTts(token, buildSingleSpeakerTtsBody(script.directorNotes, line, locale, show))
   )
 
   let segments: AudioSegment[] = []
@@ -1168,17 +1246,18 @@ async function synthesizePodcastAudio(
   }
 
   if (segments.length === 0) {
-    const fallbackBuffers = await synthesizeSingleVoiceFallback(token, script, locale)
+    const fallbackBuffers = await synthesizeSingleVoiceFallback(token, script, locale, show)
     if (fallbackBuffers.length === 0) return null
 
     segments = await Promise.all(
       fallbackBuffers.map((buffer, index) =>
         uploadAudioSegment(buffer, title, index, fallbackPerLine, {
-          speaker: HOST_A,
+          speaker: show.hosts[0]!.name,
           role: 'body',
           imageUrl: null,
           text: script.turns.map((turn) => turn.text).join(' ').slice(0, 900),
           imagePrompt: null,
+          frameKind: null,
         })
       )
     )
@@ -1233,6 +1312,19 @@ export async function compileAndCacheStory(
         : classification.format
   const resolvedInput = { ...input, category: resolvedCategory, contentType: podcastType }
 
+  // Resolve the show (cast, visual style, script structure) for this generation.
+  const show = resolveShow({ contentType: podcastType, category: resolvedCategory })
+  const showMeta = {
+    showId: show.id,
+    showName: show.name,
+    showFormat: show.format,
+    hosts: show.hosts.map((h) => ({
+      name: h.name,
+      shortName: h.shortName,
+      role: h.role,
+    })),
+  }
+
   const taxonomyKey = buildTaxonomyKey({
     language: resolvedInput.language,
     category: resolvedCategory,
@@ -1272,6 +1364,7 @@ export async function compileAndCacheStory(
         generating: true,
         contentType: podcastType,
         podcastFormat,
+        ...showMeta,
         sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
         sourceCount: sources.length,
         domainCount: uniqueDomains(sources),
@@ -1295,8 +1388,14 @@ export async function compileAndCacheStory(
   const [thumbnailUrl, draftScript, bookends] = await Promise.all([
     reusedThumbnail
       ? Promise.resolve(reusedThumbnail)
-      : generateStoryThumbnail(input.title, resolvedCategory, extractBriefKeyMessage(markdownContent), podcastType),
-    generatePodcastScript(resolvedInput, markdownContent, null, podcastFormat),
+      : generateStoryThumbnail(
+          input.title,
+          resolvedCategory,
+          extractBriefKeyMessage(markdownContent),
+          podcastType,
+          buildLocaleVisualContext(input.language, geoFocusLabel(resolvedInput), input.geoCountry)
+        ),
+    generatePodcastScript(resolvedInput, markdownContent, show),
     generateEpisodeBookends(resolvedInput, markdownContent),
   ])
 
@@ -1313,18 +1412,20 @@ export async function compileAndCacheStory(
         category: resolvedCategory,
         markdown: markdownContent,
         script: draftScript,
-        hostA: HOST_A,
-        hostB: HOST_B,
+        hostA: coHost(show).name,
+        hostB: leadHost(show).name,
+        hostNames: show.hosts.map((h) => h.name),
+        format: show.format,
         editorialNotes: null,
       },
-      parsePodcastScript,
+      (raw) => parsePodcastScript(raw, show),
       trimScriptToLimits
     )
     podcastScript = scriptReview.script
     scriptRevised = scriptReview.revised
   }
 
-  const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, resolvedInput) : null
+  const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, resolvedInput, show) : null
 
   report('podcast', 72)
   // Audio is best-effort: a TTS/upload failure must not strand the story as an
@@ -1333,7 +1434,7 @@ export async function compileAndCacheStory(
   let audio: Awaited<ReturnType<typeof synthesizePodcastAudio>> = null
   try {
     audio = episodeScript
-      ? await synthesizePodcastAudio(episodeScript, input.language, input.title, podcastType)
+      ? await synthesizePodcastAudio(episodeScript, resolvedInput, show)
       : null
     if (episodeScript && !audio) {
       console.error('[generate-story] audio synthesis returned no segments for', draftStory.id)
@@ -1358,6 +1459,8 @@ export async function compileAndCacheStory(
         topicKey,
         compiledAt,
         contentType: podcastType,
+        podcastFormat,
+        ...showMeta,
         sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
         sourceCount: sources.length,
         domainCount: uniqueDomains(sources),

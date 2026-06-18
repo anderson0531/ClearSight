@@ -1,5 +1,6 @@
 import {
   CONTENT_CATEGORIES,
+  canonicalizeCategory,
   typeForCategory,
   type ContentCategory,
   type ContentType,
@@ -106,6 +107,111 @@ const TYPE_FRAMEWORKS: Record<ContentType, AnalysisFramework> = {
   News: DEFAULT_FRAMEWORK,
   Education: EDUCATION_FRAMEWORK,
   Entertainment: ENTERTAINMENT_FRAMEWORK,
+}
+
+/**
+ * Builds a topic-specialized Education framework on the shared explainer base,
+ * focusing the directives/arc on one subject. Keeps the educational tone while
+ * giving each topic its own analytical lens.
+ */
+function eduFramework(label: string, focus: string, arc: string): AnalysisFramework {
+  return {
+    label,
+    briefingDirectives: [
+      `Teach the core idea of ${focus} from first principles — assume curiosity, not expertise`,
+      'Define every key term plainly the first time it appears',
+      `Ground the idea with concrete, picturable examples drawn from ${focus}`,
+      'Surface and correct the most common misconception about it',
+    ],
+    podcastDirectives: [
+      `Build understanding of ${focus} step by step — each turn adds one teachable idea`,
+      'Translate jargon into plain language with a quick analogy',
+      'Use a worked example or vivid scenario the listener can picture',
+      'Connect each new idea back to what was just established',
+    ],
+    analyticalArc: arc,
+    forecastMandate:
+      'MANDATORY: Close with a concrete recap of the key takeaways the listener should remember.',
+    antiFluffRules: [
+      'Ban unexplained jargon and acronyms',
+      'Ban skipping foundational steps the explanation depends on',
+      'Every turn must teach a discrete idea, example, or correction',
+      'No filler reactions or hype — clarity over excitement',
+    ],
+  }
+}
+
+const EDUCATION_TOPIC_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
+  Mathematics: eduFramework(
+    'Mathematics explainer',
+    'a mathematical concept',
+    'Structure: (1) the question it answers → (2) the concept from first principles → (3) a worked example → (4) where it shows up in the world → (5) recap'
+  ),
+  'Science & Discovery': eduFramework(
+    'Science explainer',
+    'a scientific concept or discovery',
+    'Structure: (1) the phenomenon → (2) the mechanism → (3) the evidence/experiment → (4) why it matters → (5) recap'
+  ),
+  'Space & Astronomy': eduFramework(
+    'Space & astronomy explainer',
+    'an astronomical idea',
+    'Structure: (1) the cosmic question → (2) what we observe → (3) the explanation → (4) open frontiers → (5) recap'
+  ),
+  History: eduFramework(
+    'History explainer',
+    'a historical event or era',
+    'Structure: (1) the moment that matters → (2) the context that led to it → (3) what happened → (4) consequences and legacy → (5) recap'
+  ),
+  'Medicine & Health': eduFramework(
+    'Medicine & health explainer',
+    'a medical or health topic',
+    'Structure: (1) the condition/process → (2) how the body is involved → (3) what the evidence shows → (4) practical implications → (5) recap'
+  ),
+  'Money & Economics': eduFramework(
+    'Money & economics explainer',
+    'an economic concept',
+    'Structure: (1) the everyday question → (2) the underlying mechanism → (3) a concrete example → (4) the bigger-picture effects → (5) recap'
+  ),
+  'Arts & Culture': eduFramework(
+    'Arts & culture explainer',
+    'an artistic movement, work, or cultural idea',
+    'Structure: (1) the hook → (2) context and influences → (3) what makes it distinctive → (4) lasting impact → (5) recap'
+  ),
+  'Nature & Environment': eduFramework(
+    'Nature & environment explainer',
+    'a natural-world or environmental topic',
+    'Structure: (1) the system → (2) how it works → (3) what is changing → (4) why it matters → (5) recap'
+  ),
+  'Technology & Coding': eduFramework(
+    'Technology & coding explainer',
+    'a technology or programming concept',
+    'Structure: (1) the problem it solves → (2) how it works under the hood → (3) a concrete example → (4) where it is used → (5) recap'
+  ),
+  'Career & Job Market': {
+    label: 'Career & job-market guidance',
+    briefingDirectives: [
+      'Identify the concrete labor-market shift and the data behind it',
+      'Explain the forces driving the change (technology, demographics, policy, economics)',
+      'Specify which roles, industries, and regions are most affected',
+      'Lay out the skills that are rising in value and how to build them',
+    ],
+    podcastDirectives: [
+      'Open with the trend and the evidence — not vague optimism or doom',
+      'Explain the drivers behind the shift in plain terms',
+      'Name who is affected and how, with specifics',
+      'Give concrete, actionable next steps the listener can start now',
+    ],
+    analyticalArc:
+      'Structure: (1) trend snapshot → (2) what is driving it → (3) who is affected → (4) skills that matter now → (5) concrete next steps',
+    forecastMandate:
+      'MANDATORY: Close with a short, actionable plan — the first steps the listener should take.',
+    antiFluffRules: [
+      'Ban generic motivation without specifics',
+      'Ban buzzwords with no concrete meaning',
+      'Every segment must add a driver, an affected group, a skill, or a step',
+      'No hype — practical, grounded guidance only',
+    ],
+  },
 }
 
 const FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
@@ -304,6 +410,12 @@ const FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
   },
 }
 
+// Combined category → framework lookup (News + Education topics).
+const ALL_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
+  ...FRAMEWORKS,
+  ...EDUCATION_TOPIC_FRAMEWORKS,
+}
+
 function isContentCategory(value: string): value is ContentCategory {
   return (CONTENT_CATEGORIES as readonly string[]).includes(value)
 }
@@ -313,10 +425,11 @@ function isContentCategory(value: string): value is ContentCategory {
  * Falls back to generic intelligence analysis for Top/unknown categories.
  */
 export function getAnalysisFramework(category: string, type?: ContentType): AnalysisFramework {
-  if (isContentCategory(category) && FRAMEWORKS[category]) {
-    return FRAMEWORKS[category] as AnalysisFramework
+  const canonical = canonicalizeCategory(category)
+  if (isContentCategory(canonical) && ALL_FRAMEWORKS[canonical]) {
+    return ALL_FRAMEWORKS[canonical] as AnalysisFramework
   }
-  const resolvedType = type ?? typeForCategory(category)
+  const resolvedType = type ?? typeForCategory(canonical)
   return TYPE_FRAMEWORKS[resolvedType] ?? DEFAULT_FRAMEWORK
 }
 

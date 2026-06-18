@@ -6,6 +6,7 @@ import {
   categoriesForType,
   CONTENT_TYPES,
   GEO_SCOPES,
+  subtopicsForCategory,
   type Category,
   type ContentType,
   type GeoScope,
@@ -55,11 +56,23 @@ export function DiscoveryFilters({
   }, [query]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedCategory = value.categories[0] ?? 'Top'
+  const subtopics = subtopicsForCategory(selectedCategory)
   const currentArea = activeLocationLabel(value)
 
   const selectCategory = useCallback(
     (cat: Category) => {
-      onChange({ ...value, categories: [cat] })
+      // Changing category resets any active sub-topic so the chips below always
+      // belong to the newly selected category.
+      onChange({ ...value, categories: [cat], query: undefined })
+    },
+    [value, onChange]
+  )
+
+  const selectSubtopic = useCallback(
+    (subtopic: string) => {
+      // Toggling a chip sets/clears the query, which narrows browse results and
+      // pre-seeds on-demand generation for the resolved channel.
+      onChange({ ...value, query: value.query === subtopic ? undefined : subtopic })
     },
     [value, onChange]
   )
@@ -226,6 +239,24 @@ export function DiscoveryFilters({
           ))}
         </div>
       </div>
+
+      {subtopics.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <span className="filter-label">{t('subtopicsLabel')}</span>
+          <div className="flex flex-wrap gap-1.5">
+            {subtopics.map((subtopic) => (
+              <button
+                key={subtopic}
+                type="button"
+                onClick={() => selectSubtopic(subtopic)}
+                className={`subtopic-chip ${value.query === subtopic ? 'subtopic-chip-active' : ''}`}
+              >
+                {subtopic}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -1,20 +1,13 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
 import { extractAudioSegments, serializeAudioSegments } from '@/lib/audio-segments'
-import { segmentHasAnimaticMetadata } from '@/lib/animatic-utils'
+import { segmentHasAnimaticMetadata, segmentWantsScene } from '@/lib/animatic-utils'
 import { HOSTS_IMAGE } from '@/lib/hosts'
-import { vertexGenerateImage } from '@/lib/vertex'
-import type { AudioSegment, AudioSegmentRole } from '@/types/story'
+import { vertexGenerateImage, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
+import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
+import type { ContentType } from '@/lib/taxonomy'
 
 const RENDER_CONCURRENCY = 3
-
-/**
- * Direct, high-yield illustration prompt. We feed the dialogue line straight to
- * Imagen (the format that was validated to produce strong illustrations) rather
- * than wrapping it in heavy style/safety constraints, which previously caused
- * many frames to be filtered out and silently fall back to the hosts image.
- */
-import type { ContentType } from '@/lib/taxonomy'
 
 /** Per-Type visual direction so illustrations match the podcast's mode. */
 export function illustrationStyleForType(type?: ContentType): string {
@@ -28,10 +21,70 @@ export function illustrationStyleForType(type?: ContentType): string {
   }
 }
 
-export function buildAnimaticPrompt(lineText: string, style?: string): string {
+// Lightweight country → visual-hint map for the most common locales, used to
+// counter the model's tendency to default to US/Western imagery. Keep this
+// small (top locales) with a generic fallback to avoid a maintenance burden.
+const COUNTRY_VISUAL_HINTS: Record<string, string> = {
+  thailand: 'Thai people, Thai-language signage, tropical urban/temple architecture, tuk-tuks and motorbikes.',
+  japan: 'Japanese people, Japanese signage, dense modern cityscapes or traditional architecture.',
+  china: 'Chinese people, Chinese-character signage, modern Chinese urban environments.',
+  india: 'Indian people, Devanagari/regional signage, vibrant South Asian streetscapes.',
+  indonesia: 'Indonesian people, Bahasa signage, tropical Southeast Asian settings.',
+  vietnam: 'Vietnamese people, Vietnamese signage, motorbike-dense streets.',
+  mexico: 'Mexican people, Spanish-language signage, Latin American urban or colonial architecture.',
+  brazil: 'Brazilian people, Portuguese signage, vibrant Brazilian streetscapes.',
+  nigeria: 'Nigerian people, West African dress and signage, bustling urban markets.',
+  france: 'French people, French signage, Haussmann/European architecture.',
+  germany: 'German people, German signage, Central European architecture.',
+  spain: 'Spanish people, Spanish signage, Iberian architecture.',
+  italy: 'Italian people, Italian signage, Mediterranean architecture.',
+  'south korea': 'Korean people, Hangul signage, modern Korean cityscapes.',
+  korea: 'Korean people, Hangul signage, modern Korean cityscapes.',
+  'saudi arabia': 'Gulf Arab people in regional dress, Arabic signage, Gulf architecture.',
+  'united arab emirates': 'Gulf Arab people in regional dress, Arabic signage, modern Gulf skylines.',
+  egypt: 'Egyptian people, Arabic signage, North African urban settings.',
+  turkey: 'Turkish people, Turkish signage, Anatolian/Istanbul architecture.',
+  russia: 'Russian people, Cyrillic signage, Eastern European/Russian architecture.',
+}
+
+/**
+ * Explicit localization instruction block for image generation. Counters the
+ * model's US/Western default so scenes depict people, dress, signage, and
+ * architecture authentic to the story's place.
+ */
+export function buildLocaleVisualContext(
+  language?: string,
+  geoLabel?: string,
+  geoCountry?: string
+): string {
+  const place = (geoCountry?.trim() || geoLabel?.trim() || '').trim()
+  if (!place || place.toLowerCase() === 'worldwide') {
+    return 'Localization: unless the subject is explicitly tied to one country, depict a globally representative setting and people — do NOT default to US/Western characters or settings.'
+  }
+  const hint = COUNTRY_VISUAL_HINTS[place.toLowerCase()]
+  const langNote =
+    language && language.trim().toLowerCase() !== 'english'
+      ? ` Audience language: ${language}.`
+      : ''
+  return `Localization (critical): depict people, clothing, signage, vehicles, architecture, and environment authentic to ${place}.${langNote} Any visible text or signage should suit ${place}. Do NOT default to US/Western characters or settings unless the story is specifically about the US/West.${hint ? ` ${hint}` : ''}`
+}
+
+export interface AnimaticPromptOptions {
+  style?: string
+  localeContext?: string
+}
+
+/**
+ * Direct, high-yield illustration prompt. We feed the dialogue (or a scene
+ * description) straight to Imagen with the show's visual style and a locale
+ * context block so frames render localized rather than US-default.
+ */
+export function buildAnimaticPrompt(lineText: string, options?: AnimaticPromptOptions): string {
   const dialogue = lineText.replace(/\[[^\]]+\]/g, '').trim().slice(0, 900)
-  const styleLine = style?.trim() ? `\n\n${style.trim()}` : ''
-  return `Create an image that effectively illustrates the following dialogue:\n\n${dialogue}${styleLine}`
+  const parts = [`Create an image that effectively illustrates the following:\n\n${dialogue}`]
+  if (options?.style?.trim()) parts.push(options.style.trim())
+  if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
+  return parts.join('\n\n')
 }
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
@@ -49,21 +102,108 @@ interface LineForPrompt {
   role: AudioSegmentRole
 }
 
+/** Per-line framing decision: a custom scene illustration or the host frame. */
+export interface FrameDecision {
+  kind: FrameKind
+  /** Full localized Imagen prompt — present only when kind === 'scene'. */
+  prompt?: string
+}
+
+function extractJsonArray(raw: string): unknown[] | null {
+  const match = raw.match(/\[[\s\S]*\]/)
+  if (!match) return null
+  try {
+    const parsed = JSON.parse(match[0])
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * Builds a per-line image prompt for every illustratable dialogue line (all
- * roles except intro/cta/music). Uses the dialogue directly — no separate LLM
- * rewriting pass — so the prompt that renders matches what was validated.
+ * Decides, per illustratable line, whether a custom scene illustration adds
+ * value (significant event/place/action/data) or whether the host speaking
+ * frame is enough. One cheap LLM call covers all lines; for scene lines the
+ * model also writes the localized scene description. On any failure we fall
+ * back to illustrating every line directly (the previous behavior), so framing
+ * is best-effort and never blocks generation.
  */
 export async function generateLineImagePrompts(
   lines: LineForPrompt[],
-  style?: string
-): Promise<Map<number, string>> {
-  const map = new Map<number, string>()
-  for (const line of lines) {
-    if (!roleNeedsImagePrompt(line.role)) continue
-    if (!line.text?.trim()) continue
-    map.set(line.index, buildAnimaticPrompt(line.text, style))
+  options?: AnimaticPromptOptions
+): Promise<Map<number, FrameDecision>> {
+  const map = new Map<number, FrameDecision>()
+
+  const illustratable = lines.filter(
+    (line) => roleNeedsImagePrompt(line.role) && Boolean(line.text?.trim())
+  )
+  if (illustratable.length === 0) return map
+
+  const fallbackAllScenes = () => {
+    for (const line of illustratable) {
+      map.set(line.index, {
+        kind: 'scene',
+        prompt: buildAnimaticPrompt(line.text, options),
+      })
+    }
+    return map
   }
+
+  const numbered = illustratable
+    .map((line, i) => `${i + 1}. ${line.text.replace(/\[[^\]]+\]/g, '').trim().slice(0, 240)}`)
+    .join('\n')
+
+  const localeBlock = options?.localeContext?.trim()
+    ? `\nWhen you write a scene description, honor this localization:\n${options.localeContext.trim()}\n`
+    : ''
+
+  const prompt = `You are the visual director for an illustrated podcast. For EACH numbered line, decide whether a custom full-scene illustration genuinely adds value, or whether the shot should simply show the host speaking.
+
+Illustrate (illustrate=true) ONLY when the line describes a concrete event, place, action, scene, object, or notable data point worth depicting. Use the host frame (illustrate=false) for abstract, reactive, transitional, opinion, or meta lines. Aim for a balanced mix — not every line needs a scene.
+
+For illustrate=true lines, write "scene": one vivid, concrete sentence describing the IMAGE to render (subjects, setting, action), not the dialogue itself.${localeBlock}
+Lines:
+${numbered}
+
+Return ONLY a JSON array, one object per line, in order, e.g.:
+[{"i":1,"illustrate":true,"scene":"..."},{"i":2,"illustrate":false}]`
+
+  let raw: string | null = null
+  try {
+    raw = await vertexGenerateText(prompt, {
+      temperature: 0.2,
+      maxOutputTokens: 2048,
+      model: VERTEX_FAST_MODEL,
+      useSearchGrounding: false,
+    })
+  } catch {
+    raw = null
+  }
+
+  if (!raw) return fallbackAllScenes()
+
+  const parsed = extractJsonArray(raw)
+  if (!parsed) return fallbackAllScenes()
+
+  const byPosition = new Map<number, { illustrate?: boolean; scene?: string }>()
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue
+    const obj = item as { i?: number; illustrate?: boolean; scene?: string }
+    if (typeof obj.i === 'number') byPosition.set(obj.i, obj)
+  }
+
+  illustratable.forEach((line, i) => {
+    const decision = byPosition.get(i + 1)
+    const illustrate = decision?.illustrate
+    if (illustrate === false) {
+      map.set(line.index, { kind: 'host' })
+      return
+    }
+    // Default to a scene when the model omitted/affirmed the line.
+    const sceneText = decision?.scene?.trim() || line.text
+    map.set(line.index, { kind: 'scene', prompt: buildAnimaticPrompt(sceneText, options) })
+  })
+
   return map
 }
 
@@ -105,7 +245,15 @@ async function renderSegmentImage(
     return segment.imageUrl ?? null
   }
 
-  const prompt = segment.text ? buildAnimaticPrompt(segment.text) : segment.imagePrompt?.trim() || null
+  // Host-framed lines never render a custom illustration.
+  if (segment.frameKind === 'host') {
+    return segment.imageUrl ?? null
+  }
+
+  // Use the stored, style- and locale-aware prompt built at compile time. Only
+  // rebuild from the raw text (without locale context) as a last resort so we
+  // never lose localization the way the old render path did.
+  const prompt = segment.imagePrompt?.trim() || (segment.text ? buildAnimaticPrompt(segment.text) : null)
 
   if (!prompt) return null
 
@@ -173,7 +321,7 @@ export async function renderStoryAnimatic(
 
   const toRender = segments
     .map((segment, index) => ({ segment, index }))
-    .filter(({ segment }) => !roleUsesHostsImage(segment.role) && roleNeedsImagePrompt(segment.role))
+    .filter(({ segment }) => !roleUsesHostsImage(segment.role) && segmentWantsScene(segment))
 
   // Frames that don't yet have a real (non-hosts) illustration are the only ones
   // that incur generation cost. If there are none, this is a no-op re-open.

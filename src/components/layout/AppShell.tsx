@@ -7,7 +7,7 @@ import { TopBar } from '@/components/layout/TopBar'
 
 // Routes that render full-bleed without the app chrome (sidebar / top bar /
 // mobile nav) — e.g. the public marketing landing page.
-const BARE_ROUTES = ['/welcome']
+const BARE_ROUTES = ['/welcome', '/login', '/signup', '/forgot-password', '/reset-password']
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()

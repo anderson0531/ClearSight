@@ -14,18 +14,70 @@ enum Plan {
   CREATOR
 }
 
+enum CreditTxnType {
+  SUBSCRIPTION
+  PURCHASE
+  GENERATION
+  REFUND
+  ADJUSTMENT
+}
+
 model User {
   id                   String       @id @default(cuid())
   whopUserId           String?      @unique
-  email                String?
+  email                String?      @unique
+  name                 String?
+  passwordHash         String?
   affiliateCode        String?
   plan                 Plan         @default(FREE)
   coreTokens           Int          @default(0)
   subscriptionActive   Boolean      @default(false)
   subscriptionCycleStart DateTime?
+  // Set when a subscription lapses. Delinquent account data is retained for 60
+  // days from this timestamp and then purged by the cleanup job.
+  delinquentSince      DateTime?
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
   generations          Generation[]
+  sessions             Session[]
+  passwordResets       PasswordResetToken[]
+  creditTransactions   CreditTransaction[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model CreditTransaction {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount       Int
+  balanceAfter Int
+  type         CreditTxnType
+  description  String?
+  createdAt    DateTime      @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Story {
