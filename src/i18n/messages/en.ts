@@ -149,6 +149,8 @@ export const enMessages = {
   audioFailedBody:
     'The written briefing is ready, but audio generation didn’t complete — this is usually a temporary capacity limit. You can read it now and try generating again later.',
   playerSubtitle: 'ClearSight briefing',
+  playerCollapse: 'Hide player',
+  playerExpand: 'Show player',
   backToDiscover: 'Back to Discover',
   reliability: 'Reliability',
   verifiedSources: '{count} verified source',
@@ -326,6 +328,7 @@ export const enMessages = {
     'Describe the episode you want to create: the subject, angle, and what listeners should take away…',
   addTopicDescriptionError: 'Enter a description between 10 and 1000 characters.',
   topicReviewButton: 'Review',
+  topicReviewRetry: 'Try again',
   topicReviewing: 'Reviewing…',
   topicReviewBlockedTitle: 'This description needs changes',
   topicReviewClarifyTitle: 'A few clarifying questions',
@@ -333,6 +336,12 @@ export const enMessages = {
   topicReviewRecommendedLabel: 'Recommended description (edit or approve)',
   topicReviewApproveCreate: 'Create podcast',
   topicReviewError: 'Could not review the description. Please try again.',
+  topicReviewTransientError:
+    'We couldn’t check this description just now — this is usually a temporary hiccup. Please try again in a moment.',
+  topicReviewPlanRequired:
+    'On-demand podcasts require a Premium or Creator plan. Upgrade to create your own episodes.',
+  topicReviewExpectations:
+    'For best results, describe one specific episode that fits this channel’s focus: name the subject, your angle, and what listeners should take away. Keep it on-topic and within community guidelines.',
   topicReviewEditReReview: 'You edited the description — review again before creating.',
   animaticGenerate: 'Animatic',
   viewBriefing: 'View',

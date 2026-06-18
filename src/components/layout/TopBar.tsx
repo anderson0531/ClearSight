@@ -18,17 +18,17 @@ export function TopBar() {
 
   return (
     <header className="top-bar">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <Link href="/" className="group flex shrink-0 items-center">
-          <ClearSightLogo className="!h-[7.5rem] !w-auto !max-w-none transition-transform duration-300 group-hover:scale-[1.02] sm:!h-[9rem]" />
-        </Link>
-      </div>
+      <Link href="/" className="top-bar-logo group" aria-label="ClearSight home">
+        <ClearSightLogo className="!h-14 !w-auto transition-transform duration-300 group-hover:scale-[1.02] sm:!h-20 lg:!h-28" />
+      </Link>
 
-      <div className="flex items-center gap-2">
-        <GlobalLanguagePicker className="hidden sm:block" />
+      <div className="top-bar-controls">
+        {/* Language, credits and Studio also live in the desktop sidebar, so they
+            are hidden here at lg to free space for the logo. */}
+        <GlobalLanguagePicker className="hidden sm:block lg:hidden" />
 
         {coreTokens != null ? (
-          <Link href="/premium" className="credits-pill hidden sm:inline-flex">
+          <Link href="/premium" className="credits-pill hidden sm:inline-flex lg:hidden">
             {t('creditsCount', { count: coreTokens })}
           </Link>
         ) : null}
@@ -41,7 +41,7 @@ export function TopBar() {
         ) : null}
 
         {canAccessCreatorStudio(plan) ? (
-          <Link href="/studio" className="btn-ghost hidden md:inline-flex text-xs">
+          <Link href="/studio" className="btn-ghost hidden md:inline-flex lg:hidden text-xs">
             {t('navStudio')}
           </Link>
         ) : null}

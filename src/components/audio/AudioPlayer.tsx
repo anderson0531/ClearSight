@@ -11,6 +11,8 @@ import {
   Repeat,
   Volume2,
   Timer,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { BACKGROUND_MUSIC } from '@/lib/music-assets'
@@ -57,6 +59,7 @@ export function AudioPlayer() {
   const [measuredDuration, setMeasuredDuration] = useState(0)
   const [bufferedEnd, setBufferedEnd] = useState(0)
   const [sleepMenuOpen, setSleepMenuOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   const currentTrack = useAudioQueue((s) => s.currentTrack)
   const isPlaying = useAudioQueue((s) => s.isPlaying)
@@ -77,6 +80,31 @@ export function AudioPlayer() {
   const pause = useAudioQueue((s) => s.pause)
   const resume = useAudioQueue((s) => s.resume)
   const setCurrentSegmentIndex = useAudioQueue((s) => s.setCurrentSegmentIndex)
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('clearsight:player-collapsed') === '1') setCollapsed(true)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.body.dataset.playerCollapsed = collapsed ? '1' : '0'
+  }, [collapsed])
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('clearsight:player-collapsed', next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
 
   const segments = useMemo(() => getTrackSegments(currentTrack), [currentTrack])
 
@@ -332,6 +360,37 @@ export function AudioPlayer() {
       />
 
       <div className="mx-auto max-w-7xl px-3 py-2 sm:px-4">
+        {collapsed ? (
+          <div className="flex items-center gap-2">
+            {currentTrack.thumbnailUrl ? (
+              <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded">
+                <Image src={currentTrack.thumbnailUrl} alt="" fill sizes="32px" className="object-cover" />
+              </div>
+            ) : (
+              <div className="h-8 w-8 shrink-0 rounded bg-white/8" />
+            )}
+            <p className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]">
+              {currentTrack.title}
+            </p>
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="play-btn min-h-9 min-w-9"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ms-0.5 h-4 w-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              className="shrink-0 rounded p-1.5 text-[var(--muted)] hover:text-[var(--foreground)] min-h-9 min-w-9"
+              aria-label={t('playerExpand')}
+            >
+              <ChevronUp className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+        <>
         <div className="group/progress relative mb-2 h-1 w-full cursor-pointer rounded-full bg-white/8">
           <div
             className="absolute inset-y-0 start-0 rounded-full bg-white/15"
@@ -492,7 +551,18 @@ export function AudioPlayer() {
               aria-label="Volume"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className="shrink-0 rounded p-1.5 text-[var(--muted)] hover:text-[var(--foreground)] min-h-10 min-w-10"
+            aria-label={t('playerCollapse')}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
         </div>
+        </>
+        )}
       </div>
     </footer>
   )

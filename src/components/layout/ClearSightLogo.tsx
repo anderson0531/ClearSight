@@ -1,9 +1,9 @@
 import Image from 'next/image'
 import { CLEARSIGHT_LOGO_URL } from '@/lib/brand-assets'
 
-/** Header logo at 300% of the original h-10 / h-12 sizing (7.5rem / 9rem). */
+/** Responsive header logo: phone-sized on mobile, scaling up at sm/lg. */
 export function ClearSightLogo({
-  className = '!h-[7.5rem] !w-auto !max-w-none sm:!h-[9rem]',
+  className = '!h-12 !w-auto sm:!h-20 lg:!h-[7.5rem]',
 }: {
   className?: string
 }) {

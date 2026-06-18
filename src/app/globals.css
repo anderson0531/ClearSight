@@ -515,6 +515,7 @@ input[type='search']::-webkit-search-cancel-button {
 .app-shell {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-sidebar {
@@ -527,6 +528,7 @@ input[type='search']::-webkit-search-cancel-button {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
 }
 
@@ -540,10 +542,11 @@ input[type='search']::-webkit-search-cancel-button {
 .top-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.75rem;
   padding: 0.5rem 1rem;
-  min-height: 10rem;
+  min-height: 5rem;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
   background: rgba(12, 14, 20, 0.92);
   backdrop-filter: blur(16px);
@@ -552,21 +555,61 @@ input[type='search']::-webkit-search-cancel-button {
   z-index: 30;
 }
 
+@media (min-width: 640px) {
+  .top-bar {
+    min-height: 7rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .top-bar {
+    min-height: 9rem;
+  }
+}
+
+/* Logo sits as a layered backdrop pinned to the left, out of the flex flow, so
+   it can be large without ever pushing or overlapping the right-side controls.
+   The max-width + overflow:hidden guarantee it never reaches the controls. */
+.top-bar-logo {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 1rem;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  max-width: 68%;
+  overflow: hidden;
+}
+
+/* Tablet/sm: full controls live in the top bar (no sidebar yet), so keep the
+   logo clear of them. */
+@media (min-width: 640px) {
+  .top-bar-logo {
+    max-width: 50%;
+  }
+}
+
+/* Desktop: sidebar takes most controls; only the Upgrade CTA remains, so the
+   logo can breathe again. */
+@media (min-width: 1024px) {
+  .top-bar-logo {
+    max-width: 60%;
+  }
+}
+
+.top-bar-controls {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .clearsight-logo {
   filter: brightness(1.05) contrast(1.2);
   width: auto !important;
   max-width: none !important;
-}
-
-.top-bar .clearsight-logo {
-  flex-shrink: 0;
-  height: 7.5rem !important;
-}
-
-@media (min-width: 640px) {
-  .top-bar .clearsight-logo {
-    height: 9rem !important;
-  }
 }
 
 .app-content {
@@ -636,11 +679,19 @@ input[type='search']::-webkit-search-cancel-button {
   .app-content {
     padding-bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
   }
+
+  body[data-player-collapsed='1'] .app-content {
+    padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 @media (min-width: 1024px) {
   .app-content {
     padding-bottom: 5.5rem;
+  }
+
+  body[data-player-collapsed='1'] .app-content {
+    padding-bottom: 3.5rem;
   }
 }
 

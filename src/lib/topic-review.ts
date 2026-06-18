@@ -30,10 +30,16 @@ export interface TopicReviewResult {
   recommendedDescription: string
   /** Short episode title derived from the description. */
   suggestedTitle: string
+  /**
+   * True when the review could not run (model/parse failure) rather than the
+   * content being rejected on its merits. The client shows a retry prompt
+   * instead of an editorial-block panel.
+   */
+  transient?: boolean
 }
 
 /** Conservative fallback used whenever the model output cannot be trusted. */
-function blockedFallback(issue: string): TopicReviewResult {
+function blockedFallback(issue: string, transient = false): TopicReviewResult {
   return {
     verdict: 'block',
     fitsChannel: false,
@@ -43,6 +49,7 @@ function blockedFallback(issue: string): TopicReviewResult {
     clarifyingQuestions: [],
     recommendedDescription: '',
     suggestedTitle: '',
+    transient,
   }
 }
 
@@ -114,19 +121,19 @@ export async function reviewTopic(input: TopicReviewInput): Promise<TopicReviewR
   })
 
   if (!raw) {
-    return blockedFallback('Could not review this description right now. Please try again.')
+    return blockedFallback('Could not review this description right now. Please try again.', true)
   }
 
   const jsonText = extractJsonObject(raw)
   if (!jsonText) {
-    return blockedFallback('Could not review this description right now. Please try again.')
+    return blockedFallback('Could not review this description right now. Please try again.', true)
   }
 
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(jsonText) as Record<string, unknown>
   } catch {
-    return blockedFallback('Could not review this description right now. Please try again.')
+    return blockedFallback('Could not review this description right now. Please try again.', true)
   }
 
   const fitsChannel = parsed.fitsChannel === true

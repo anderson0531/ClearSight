@@ -424,7 +424,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             fill
             unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
-            className="object-cover object-top"
+            className={isFullscreen ? 'object-contain' : 'object-cover object-top'}
           />
         ) : (
           <Image
@@ -435,7 +435,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             priority
             unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
-            className={`object-cover ${frameClass}`}
+            className={`${isFullscreen ? 'object-contain' : 'object-cover'} ${frameClass}`}
             style={{ animationDuration: fxDuration }}
           />
         )}

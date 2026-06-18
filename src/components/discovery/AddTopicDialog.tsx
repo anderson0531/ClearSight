@@ -57,6 +57,7 @@ export function AddTopicDialog({
   const [review, setReview] = useState<TopicReviewResult | null>(null)
   const [recommended, setRecommended] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [reReviewNote, setReReviewNote] = useState(false)
 
   const resetForm = () => {
     setDescription('')
@@ -64,6 +65,7 @@ export function AddTopicDialog({
     setReview(null)
     setRecommended('')
     setError(null)
+    setReReviewNote(false)
   }
 
   const handleClose = () => {
@@ -78,11 +80,13 @@ export function AddTopicDialog({
     if (review) {
       setReview(null)
       setRecommended('')
+      setReReviewNote(true)
     }
   }
 
   const handleReview = async () => {
     setError(null)
+    setReReviewNote(false)
     const trimmed = description.trim()
     if (trimmed.length < MIN_DESCRIPTION || trimmed.length > MAX_DESCRIPTION) {
       setError(t('addTopicDescriptionError'))
@@ -105,14 +109,27 @@ export function AddTopicDialog({
         }),
       })
       if (!res.ok) {
-        setError(t('topicReviewError'))
+        const body = (await res.json().catch(() => null)) as { code?: string } | null
+        if (res.status === 403 || body?.code === 'PLAN_REQUIRED') {
+          setError(t('topicReviewPlanRequired'))
+        } else if (res.status === 400) {
+          setError(t('addTopicDescriptionError'))
+        } else {
+          setError(t('topicReviewTransientError'))
+        }
         return
       }
       const result = (await res.json()) as TopicReviewResult
+      // A transient failure (model/parse error) is not an editorial rejection —
+      // show a retry prompt instead of the "needs changes" block panel.
+      if (result.transient) {
+        setError(t('topicReviewTransientError'))
+        return
+      }
       setReview(result)
       setRecommended(result.recommendedDescription ?? '')
     } catch {
-      setError(t('topicReviewError'))
+      setError(t('topicReviewTransientError'))
     } finally {
       setReviewing(false)
     }
@@ -203,9 +220,16 @@ export function AddTopicDialog({
                 autoFocus
                 className="dialog-textarea w-full resize-y"
               />
+              <span className="mt-1.5 block text-xs text-[var(--muted-strong)]">
+                {t('topicReviewExpectations')}
+              </span>
             </label>
 
             {error ? <p className="mb-3 text-xs text-amber-300">{error}</p> : null}
+
+            {reReviewNote && !review && !error ? (
+              <p className="mb-3 text-xs text-[var(--muted-strong)]">{t('topicReviewEditReReview')}</p>
+            ) : null}
 
             {review && review.verdict === 'block' ? (
               <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
@@ -285,7 +309,7 @@ export function AddTopicDialog({
                   disabled={!canReview}
                 >
                   <Sparkles className="h-4 w-4" />
-                  {reviewing ? t('topicReviewing') : t('topicReviewButton')}
+                  {reviewing ? t('topicReviewing') : error ? t('topicReviewRetry') : t('topicReviewButton')}
                 </button>
               )}
             </div>
