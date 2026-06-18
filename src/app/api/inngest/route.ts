@@ -1,0 +1,13 @@
+import { serve } from 'inngest/next'
+import { inngest } from '@/inngest/client'
+import { generatePodcast } from '@/inngest/functions/generate-podcast'
+
+// Long-running generation. 300s is the Vercel Hobby cap; raise toward 800 on
+// Pro. Inngest's step decomposition is what makes long generations reliable
+// regardless of this ceiling — each step is its own invocation.
+export const maxDuration = 300
+
+export const { GET, POST, PUT } = serve({
+  client: inngest,
+  functions: [generatePodcast],
+})

@@ -6,7 +6,6 @@ import { getLocaleByEnglishName } from '@/i18n/locales'
 import {
   getVertexAccessToken,
   vertexGenerateGrounded,
-  vertexGenerateImage,
   vertexGenerateText,
   VERTEX_FAST_MODEL,
   type GroundedSource,
@@ -17,6 +16,7 @@ import { formatBriefingAnalysisBlock, formatPodcastAnalysisBlock } from '@/lib/a
 import {
   buildLocaleVisualContext,
   generateLineImagePrompts,
+  illustratesGenerously,
   type FrameDecision,
 } from '@/lib/animatic'
 import { serializeAudioSegments } from '@/lib/audio-segments'
@@ -131,7 +131,10 @@ interface PreparedLine {
   frameKind: FrameKind | null
 }
 
-const TTS_CONCURRENCY = 3
+// Kept deliberately low: TTS shares a per-minute, per-project quota
+// (gemini-2.5-flash-tts). Fewer simultaneous requests means we burst less and
+// trip RESOURCE_EXHAUSTED (429) far less often, at a small cost to wall time.
+const TTS_CONCURRENCY = 2
 
 function geoFocusLabel(input: Omit<GenerateStoryInput, 'userId' | 'generationId'>): string {
   return (
@@ -203,6 +206,33 @@ function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[]
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Exponential backoff with full jitter. Jitter is essential here: many TTS
+ * lines retry inside a concurrent pool, so deterministic delays would have them
+ * all wake and re-fire in lockstep, instantly re-tripping the per-minute quota.
+ * Full jitter spreads the retries across the window. `capMs` bounds the wait so
+ * a generation never stalls indefinitely.
+ */
+function backoffWithJitter(attempt: number, baseMs: number, capMs: number): number {
+  const exp = Math.min(capMs, baseMs * 2 ** (attempt - 1))
+  return Math.floor(Math.random() * exp)
+}
+
+/**
+ * Honors a server `Retry-After` header (seconds, or an HTTP date) when present,
+ * clamped to `capMs`. Returns null when absent/unparseable so the caller falls
+ * back to jittered exponential backoff.
+ */
+function retryAfterMs(res: Response, capMs: number): number | null {
+  const header = res.headers.get('retry-after')
+  if (!header) return null
+  const seconds = Number(header)
+  if (Number.isFinite(seconds)) return Math.min(capMs, Math.max(0, seconds * 1000))
+  const dateMs = Date.parse(header)
+  if (Number.isFinite(dateMs)) return Math.min(capMs, Math.max(0, dateMs - Date.now()))
+  return null
 }
 
 function voiceForSpeaker(show: Show, speaker: string): string {
@@ -494,72 +524,6 @@ LANGUAGE & LOCALIZATION (critical):
   markdown = applyReliabilityToMarkdown(markdown, reliabilityIndex)
 
   return { markdown, sources, reliabilityIndex }
-}
-
-/**
- * Pulls the most illustration-worthy substance out of the briefing — the
- * Objective Brief summary — so the cover art reflects the actual topic and key
- * message rather than a generic category stock photo.
- */
-function extractBriefKeyMessage(markdown: string): string {
-  const brief = markdown.match(/\*\*The Objective Brief:\*\*\s*([\s\S]*?)(?=\n###|\n\*\*|$)/i)
-  const text = (brief?.[1] ?? markdown).replace(/[#*>`_\[\]]/g, ' ').replace(/\s+/g, ' ').trim()
-  return text.slice(0, 600)
-}
-
-function thumbnailStyleForType(type?: ContentType): string {
-  switch (type) {
-    case 'Education':
-      return 'Style: clean, instructional editorial illustration — clear, explanatory, diagrammatic feel. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
-    case 'Entertainment':
-      return 'Style: cinematic, dramatic editorial illustration with strong mood and atmosphere. Rich, moody palette. No text, no logos, no watermarks. Square composition.'
-    case 'Lifestyle':
-      return 'Style: warm, inviting lifestyle editorial illustration — bright natural light, friendly and aspirational, clean modern palette. No text, no logos, no watermarks. Square composition.'
-    default:
-      return 'Style: clean, symbolic, professional news-magazine editorial illustration. Muted slate and indigo palette. No text, no logos, no watermarks. Square composition.'
-  }
-}
-
-async function generateStoryThumbnail(
-  title: string,
-  category: string,
-  keyMessage?: string,
-  contentType?: ContentType,
-  localeContext?: string
-): Promise<string> {
-  const message = keyMessage?.trim()
-  const prompt = `Create a single editorial cover illustration that effectively illustrates the topic and the key message of this briefing.
-
-Topic: "${title.slice(0, 160)}"
-Category: ${category}${message ? `\n\nKey message to convey visually:\n${message}` : ''}
-
-Make the imagery specific and recognizable to this exact story — depict the concrete subjects, places, objects, settings, or symbolic scene at the heart of it, not a generic category symbol.
-IMPORTANT: Do NOT depict people, faces, portraits, or headshots. Use objects, environments, maps, symbolic motifs, and conceptual imagery instead.
-CRITICAL: ABSOLUTELY NO text, letters, words, numbers, captions, titles, headlines, labels, signage, logos, watermarks, or typography of any kind anywhere in the image. The image must be purely visual and completely wordless — this cover is reused across many languages, so any embedded text would be wrong.
-${thumbnailStyleForType(contentType)}${localeContext ? `\n${localeContext}` : ''}`
-
-  const buffer = await vertexGenerateImage(prompt, {
-    aspectRatio: '1:1',
-    personGeneration: 'dont_allow',
-  })
-  if (!buffer || !process.env.BLOB_READ_WRITE_TOKEN) {
-    return getThumbnailForCategory(category)
-  }
-
-  try {
-    const blob = await put(
-      `clearsight/thumbnails/${Date.now()}-${title.slice(0, 32).replace(/\W/g, '-')}.png`,
-      buffer,
-      {
-        access: 'public',
-        contentType: 'image/png',
-      }
-    )
-    return blob.url
-  } catch (error) {
-    console.error('[generate-story] thumbnail upload failed:', error)
-    return getThumbnailForCategory(category)
-  }
 }
 
 /**
@@ -1010,7 +974,17 @@ function assembleEpisode(
   return { directorNotes: core.directorNotes, turns, wordCount }
 }
 
-const TTS_MAX_ATTEMPTS = 4
+// More attempts than before: the dominant failure is the per-minute TTS quota
+// (429), which clears once the rolling window resets, so it's worth waiting it
+// out rather than dropping a line's audio.
+const TTS_MAX_ATTEMPTS = 6
+// 429 is a per-minute quota — back off on the order of the quota window so the
+// retry lands after capacity frees up (not after a few seconds, which just
+// re-trips it). 5xx/network blips recover much faster, so they back off less.
+const TTS_RATE_LIMIT_BASE_MS = 12_000
+const TTS_RATE_LIMIT_CAP_MS = 60_000
+const TTS_TRANSIENT_BASE_MS = 2_000
+const TTS_TRANSIENT_CAP_MS = 15_000
 
 /**
  * Synthesizes one line. Retries transient failures (rate limits, 5xx, network
@@ -1035,9 +1009,16 @@ async function callGeminiTts(
       body: JSON.stringify(body),
     })
 
-    // Rate limits and server errors are transient — back off and retry.
+    // Rate limits and server errors are transient — back off and retry. 429
+    // (quota) waits roughly a quota window; 5xx recovers faster. Both jitter so
+    // the concurrent pool doesn't retry in lockstep and re-trip the limit.
     if ((res.status === 429 || res.status >= 500) && attempt < TTS_MAX_ATTEMPTS) {
-      await sleep(attempt * 4000)
+      const isRateLimit = res.status === 429
+      const cap = isRateLimit ? TTS_RATE_LIMIT_CAP_MS : TTS_TRANSIENT_CAP_MS
+      const delay =
+        (isRateLimit ? retryAfterMs(res, cap) : null) ??
+        backoffWithJitter(attempt, isRateLimit ? TTS_RATE_LIMIT_BASE_MS : TTS_TRANSIENT_BASE_MS, cap)
+      await sleep(delay)
       return callGeminiTts(token, body, attempt + 1)
     }
 
@@ -1054,7 +1035,7 @@ async function callGeminiTts(
     const data = (await res.json()) as { audioContent?: string }
     if (!data.audioContent) {
       if (attempt < TTS_MAX_ATTEMPTS) {
-        await sleep(attempt * 2000)
+        await sleep(backoffWithJitter(attempt, TTS_TRANSIENT_BASE_MS, TTS_TRANSIENT_CAP_MS))
         return callGeminiTts(token, body, attempt + 1)
       }
       console.error('[tts] empty audioContent for', `voice=${voice?.name}`)
@@ -1063,7 +1044,7 @@ async function callGeminiTts(
     return Buffer.from(data.audioContent, 'base64')
   } catch (err) {
     if (attempt < TTS_MAX_ATTEMPTS) {
-      await sleep(attempt * 3000)
+      await sleep(backoffWithJitter(attempt, TTS_TRANSIENT_BASE_MS, TTS_TRANSIENT_CAP_MS))
       return callGeminiTts(token, body, attempt + 1)
     }
     console.error('[tts] network error for', `voice=${voice?.name}`, err)
@@ -1241,6 +1222,7 @@ async function synthesizePodcastAudio(
   const imagePrompts = await generateLineImagePrompts(promptInputs, {
     style,
     localeContext,
+    illustrateGenerously: illustratesGenerously(show.contentType),
   })
   const lines = attachImagePrompts(rawLines, imagePrompts)
 
@@ -1291,10 +1273,48 @@ async function synthesizePodcastAudio(
 
 export { extractAudioSegments } from '@/lib/audio-segments'
 
-export async function compileAndCacheStory(
+/**
+ * Everything the audio/finalize phase needs that was derived during the brief
+ * phase. Kept plain/JSON-serializable so it can cross an Inngest `step.run`
+ * boundary (the brief and audio phases run as separate durable steps).
+ */
+export interface BriefFinalizeContext {
+  markdownContent: string
+  taxonomyKey: string
+  topicKey: string
+  compiledAt: string
+  podcastType: ContentType
+  podcastFormat: PodcastFormat
+  showMeta: {
+    showId: string
+    showName: string
+    showFormat: Show['format']
+    hosts: { name: string; shortName: string; role: string }[]
+  }
+  sources: { title: string; uri: string; domain: string }[]
+  reliabilityIndex: number
+  thumbnailUrl: string
+  scriptRevised: boolean
+  resolvedInput: GenerateStoryInput
+}
+
+export interface CompiledBrief {
+  storyId: string
+  episodeScript: PodcastScript | null
+  context: BriefFinalizeContext
+}
+
+/**
+ * Phase 1 of generation: research → brief → script → bookends → assembled
+ * episode script. Persists a draft `Story` (and links it to the Generation),
+ * but does NOT synthesize audio. Imagen is never called here — the cover reuses
+ * the channel's preexisting key-art. Returns the assembled episode script plus a
+ * serializable context the finalize phase consumes.
+ */
+export async function compileBriefAndScript(
   input: GenerateStoryInput,
   onProgress?: GenerationProgressFn
-) {
+): Promise<CompiledBrief> {
   const report = (stage: GenerationStage, percent: number, extra?: Partial<GenerationProgress>) => {
     try {
       onProgress?.({ stage, percent, ...extra })
@@ -1400,20 +1420,18 @@ export async function compileAndCacheStory(
 
   report('editorial', 44)
 
+  // Podcast generation never calls Imagen: the episode cover reuses the
+  // channel's preexisting key-art (falling back to a static category image),
+  // so generation depends only on text + audio. Per-episode scene
+  // illustrations are rendered separately, on demand, by the animatic step.
+  const thumbnailUrl =
+    reusedThumbnail ?? show.coverImage ?? getThumbnailForCategory(resolvedCategory)
+
   // The editorial checklist is now folded into the first-pass briefing prompt,
   // so the briefing ships without a separate (slow, blocking) review. The
   // podcast script and episode bookends only depend on the briefing markdown,
-  // so they run in parallel with the cover art instead of in a serial chain.
-  const [thumbnailUrl, draftScript, bookends] = await Promise.all([
-    reusedThumbnail
-      ? Promise.resolve(reusedThumbnail)
-      : generateStoryThumbnail(
-          input.title,
-          resolvedCategory,
-          extractBriefKeyMessage(markdownContent),
-          podcastType,
-          buildLocaleVisualContext(input.language, geoFocusLabel(resolvedInput), input.geoCountry)
-        ),
+  // so they run in parallel instead of in a serial chain.
+  const [draftScript, bookends] = await Promise.all([
     generatePodcastScript(resolvedInput, markdownContent, show),
     generateEpisodeBookends(resolvedInput, markdownContent, show),
   ])
@@ -1447,25 +1465,82 @@ export async function compileAndCacheStory(
   const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, resolvedInput, show) : null
 
   report('podcast', 72)
-  // Audio is best-effort: a TTS/upload failure must not strand the story as an
-  // unfinalized draft. We always finalize with the brief; audio fills in when it
-  // succeeds, and the story stays readable (and retryable) when it doesn't.
+
+  return {
+    storyId: draftStory.id,
+    episodeScript,
+    context: {
+      markdownContent,
+      taxonomyKey,
+      topicKey,
+      compiledAt,
+      podcastType,
+      podcastFormat,
+      showMeta,
+      sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
+      reliabilityIndex,
+      thumbnailUrl,
+      scriptRevised,
+      resolvedInput,
+    },
+  }
+}
+
+/**
+ * Phase 2 of generation: synthesize the episode audio and finalize the draft
+ * `Story`. Audio is best-effort — a TTS/upload failure must not strand the story
+ * as an unfinalized draft. We always finalize with the brief; audio fills in
+ * when it succeeds, and the story stays readable (and retryable) when it
+ * doesn't. The `show` is re-resolved deterministically from the context so the
+ * brief and audio phases can run as independent (serializable) Inngest steps.
+ */
+export async function synthesizeAndFinalize(
+  brief: CompiledBrief,
+  onProgress?: GenerationProgressFn
+) {
+  const report = (stage: GenerationStage, percent: number, extra?: Partial<GenerationProgress>) => {
+    try {
+      onProgress?.({ stage, percent, ...extra })
+    } catch {
+      /* progress is best-effort */
+    }
+  }
+
+  const { storyId, episodeScript, context } = brief
+  const {
+    markdownContent,
+    taxonomyKey,
+    topicKey,
+    compiledAt,
+    podcastType,
+    podcastFormat,
+    showMeta,
+    sources,
+    reliabilityIndex,
+    thumbnailUrl,
+    scriptRevised,
+    resolvedInput,
+  } = context
+
+  const show = resolveShow({ contentType: podcastType, category: resolvedInput.category })
+
   let audio: Awaited<ReturnType<typeof synthesizePodcastAudio>> = null
   try {
     audio = episodeScript
       ? await synthesizePodcastAudio(episodeScript, resolvedInput, show)
       : null
     if (episodeScript && !audio) {
-      console.error('[generate-story] audio synthesis returned no segments for', draftStory.id)
+      console.error('[generate-story] audio synthesis returned no segments for', storyId)
     }
   } catch (err) {
-    console.error('[generate-story] audio synthesis threw for', draftStory.id, err)
+    console.error('[generate-story] audio synthesis threw for', storyId, err)
     audio = null
   }
 
   report('saving', 94)
+  const domainCount = new Set(sources.map((s) => s.domain)).size
   const story = await prisma.story.update({
-    where: { id: draftStory.id },
+    where: { id: storyId },
     data: {
       markdownContent,
       audioUrl: audio?.url ?? null,
@@ -1480,9 +1555,9 @@ export async function compileAndCacheStory(
         contentType: podcastType,
         podcastFormat,
         ...showMeta,
-        sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
+        sources,
         sourceCount: sources.length,
-        domainCount: uniqueDomains(sources),
+        domainCount,
         audioSegments: audio?.segments ? (serializeAudioSegments(audio.segments) as object[]) : null,
         editorialReview: {
           editorialFoldedIntoDraft: true,
@@ -1494,4 +1569,17 @@ export async function compileAndCacheStory(
 
   report('done', 100)
   return { ...story, audioSegments: audio?.segments ?? null }
+}
+
+/**
+ * Convenience wrapper that runs both generation phases back-to-back. Retained
+ * for any synchronous caller; the background path runs the phases as separate
+ * durable Inngest steps instead.
+ */
+export async function compileAndCacheStory(
+  input: GenerateStoryInput,
+  onProgress?: GenerationProgressFn
+) {
+  const brief = await compileBriefAndScript(input, onProgress)
+  return synthesizeAndFinalize(brief, onProgress)
 }

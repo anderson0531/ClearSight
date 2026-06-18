@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import { AudioPlayer } from '@/components/audio/AudioPlayer'
 import { AppShell } from '@/components/layout/AppShell'
 import { AffiliateTrackerProvider } from '@/components/providers/AffiliateTrackerProvider'
+import { PushRegistrar } from '@/components/push/PushRegistrar'
 import { UserProvider } from '@/components/providers/UserProvider'
 import { I18nProvider } from '@/i18n/I18nProvider'
 import { DEFAULT_LOCALE_CODE, getLocaleByCode } from '@/i18n/locales'
@@ -67,6 +68,7 @@ export default async function RootLayout({
         <I18nProvider initialLocaleCode={locale.code}>
           <UserProvider>
             <AffiliateTrackerProvider />
+            <PushRegistrar />
             <AppShell>
               <div className="flex-1">{children}</div>
             </AppShell>

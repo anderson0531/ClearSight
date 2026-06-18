@@ -14,6 +14,9 @@ import {
   BarChart3,
   Radio,
   X,
+  Loader2,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react'
 import Image from 'next/image'
 import { PageShell } from '@/components/layout/PageShell'
@@ -45,6 +48,14 @@ import {
 import { getShowById } from '@/lib/shows'
 import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
 import { useAudioQueue } from '@/store/useAudioQueue'
+
+interface GenerationJob {
+  id: string
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+  storyId: string | null
+  errorMessage: string | null
+  title: string | null
+}
 
 function LibrarySection({
   title,
@@ -88,6 +99,7 @@ export default function LibraryPage() {
   const [liked, setLiked] = useState<LikedEpisode[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [following, setFollowing] = useState<FollowedChannel[]>([])
+  const [generations, setGenerations] = useState<GenerationJob[]>([])
 
   useEffect(() => {
     const sync = () => setSavedSearches(loadSavedSearches())
@@ -125,6 +137,38 @@ export default function LibraryPage() {
     }
   }, [])
 
+  // Poll background generation jobs. Polls frequently while a job is QUEUED or
+  // RUNNING (the user is likely waiting), then backs off once everything has
+  // settled. This is the in-app fallback for users who declined push.
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const poll = async () => {
+      let nextDelay = 20000
+      try {
+        const res = await fetch('/api/generations')
+        if (res.ok && active) {
+          const data = (await res.json()) as { generations?: GenerationJob[] }
+          const jobs = data.generations ?? []
+          setGenerations(jobs)
+          if (jobs.some((g) => g.status === 'QUEUED' || g.status === 'RUNNING')) {
+            nextDelay = 5000
+          }
+        }
+      } catch {
+        /* transient — keep polling */
+      }
+      if (active) timer = setTimeout(poll, nextDelay)
+    }
+
+    void poll()
+    return () => {
+      active = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
   const upNext = queue.filter((track) => track.id !== currentTrack?.id)
 
   const openSavedSearch = (search: SavedSearch) => {
@@ -147,6 +191,60 @@ export default function LibraryPage() {
 
   return (
     <PageShell title={t('libraryTitle')}>
+      {generations.length > 0 ? (
+        <LibrarySection title={t('libraryInProgress')} icon={Mic}>
+          <ul className="space-y-2">
+            {generations.map((job) => {
+              const isActive = job.status === 'QUEUED' || job.status === 'RUNNING'
+              const statusLabel =
+                job.status === 'QUEUED'
+                  ? t('libraryGenQueued')
+                  : job.status === 'RUNNING'
+                    ? t('libraryGenRunning')
+                    : job.status === 'COMPLETED'
+                      ? t('libraryGenCompleted')
+                      : t('libraryGenFailed')
+              return (
+                <li
+                  key={job.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-white/[0.03] px-4 py-3"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    {isActive ? (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--accent)]" />
+                    ) : job.status === 'COMPLETED' ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-[var(--foreground)]">
+                        {job.title ?? t('libraryInProgress')}
+                      </p>
+                      <p className="truncate text-xs text-[var(--muted-strong)]">
+                        {job.status === 'FAILED' && job.errorMessage ? job.errorMessage : statusLabel}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {job.status === 'COMPLETED' && job.storyId ? (
+                      <Link href={`/story/${job.storyId}`} className="btn-secondary">
+                        {t('libraryGenOpen')}
+                      </Link>
+                    ) : null}
+                    {job.status === 'FAILED' ? (
+                      <Link href="/" className="btn-ghost">
+                        {t('libraryGenRetry')}
+                      </Link>
+                    ) : null}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </LibrarySection>
+      ) : null}
+
       <LibrarySection title={t('libraryQueue')} icon={ListMusic}>
         {upNext.length === 0 ? (
           <div className="glass-panel rounded-xl p-8 text-center">

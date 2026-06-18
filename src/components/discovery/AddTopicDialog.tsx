@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mic, X, Sparkles, AlertTriangle, HelpCircle } from 'lucide-react'
+import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon } from 'lucide-react'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
-import { setPendingGeneration } from '@/lib/generation-session'
+import { ensurePushSubscription } from '@/lib/push-client'
 import { isTopCategory, type Category } from '@/lib/taxonomy'
 import type { TopicReviewResult } from '@/lib/topic-review'
 import { useTranslations } from '@/i18n/I18nProvider'
@@ -58,6 +58,9 @@ export function AddTopicDialog({
   const [recommended, setRecommended] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [reReviewNote, setReReviewNote] = useState(false)
+  const [includeIllustrations, setIncludeIllustrations] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [queued, setQueued] = useState(false)
 
   const resetForm = () => {
     setDescription('')
@@ -66,6 +69,9 @@ export function AddTopicDialog({
     setRecommended('')
     setError(null)
     setReReviewNote(false)
+    setIncludeIllustrations(false)
+    setSubmitting(false)
+    setQueued(false)
   }
 
   const handleClose = () => {
@@ -135,28 +141,61 @@ export function AddTopicDialog({
     }
   }
 
-  const handleCreate = (event: React.FormEvent) => {
+  const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!review || review.verdict !== 'pass') return
+    if (!review || review.verdict !== 'pass' || submitting) return
 
     const approved = recommended.trim() || description.trim()
     const title = (review.suggestedTitle || approved).slice(0, 200)
 
-    setPendingGeneration({
-      title,
-      description: approved,
-      language: filter.languages[0] ?? 'English',
-      category: resolveCategory(filter),
-      contentType: filter.contentType,
-      geoScope: filter.geoScope,
-      geoRegion: filter.geoRegion,
-      geoCountry: filter.geoCountry,
-      geoState: filter.geoState,
-      geoLocal: filter.geoLocal,
-    })
+    setError(null)
+    setSubmitting(true)
+    // Now that the user is committing, contextually request notification
+    // permission and register a push subscription (best-effort).
+    void ensurePushSubscription()
 
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          description: approved,
+          language: filter.languages[0] ?? 'English',
+          category: resolveCategory(filter),
+          contentType: filter.contentType,
+          geoScope: filter.geoScope,
+          geoRegion: filter.geoRegion,
+          geoCountry: filter.geoCountry,
+          geoState: filter.geoState,
+          geoLocal: filter.geoLocal,
+          includeIllustrations,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { code?: string } | null
+        if (res.status === 402 || data?.code === 'INSUFFICIENT_TOKENS') {
+          setError(t('onDemandInsufficientCredits'))
+        } else if (res.status === 403 || data?.code === 'PLAN_REQUIRED') {
+          setError(t('topicReviewPlanRequired'))
+        } else {
+          setError(t('onDemandEnqueueError'))
+        }
+        return
+      }
+
+      setQueued(true)
+    } catch {
+      setError(t('onDemandEnqueueError'))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const goToLibrary = () => {
     handleClose()
-    router.push('/story/create')
+    router.push('/library')
   }
 
   const canReview = description.trim().length >= MIN_DESCRIPTION && !reviewing
@@ -189,6 +228,25 @@ export function AddTopicDialog({
             onSubmit={handleCreate}
             className="fade-in relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] p-5 shadow-2xl sm:p-6"
           >
+            {queued ? (
+              <div className="py-4 text-center">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-muted)]">
+                  <CheckCircle2 className="h-6 w-6 text-[var(--accent)]" />
+                </div>
+                <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('onDemandQueuedTitle')}</h3>
+                <p className="mt-2 text-sm text-[var(--muted-strong)]">{t('onDemandQueuedBody')}</p>
+                <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('onDemandNotifyHint')}</p>
+                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-center">
+                  <button type="button" onClick={handleClose} className="geo-action-btn-muted justify-center">
+                    {t('close')}
+                  </button>
+                  <button type="button" onClick={goToLibrary} className="btn-accent justify-center">
+                    {t('onDemandViewLibrary')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('onDemandPodcastTitle')}</h3>
@@ -285,6 +343,24 @@ export function AddTopicDialog({
                     className="dialog-textarea w-full resize-y"
                   />
                 </label>
+
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--border)] bg-white/[0.03] p-3">
+                  <input
+                    type="checkbox"
+                    checked={includeIllustrations}
+                    onChange={(event) => setIncludeIllustrations(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-[var(--foreground)]">
+                      <ImageIcon className="h-3.5 w-3.5 text-[var(--accent)]" />
+                      {t('topicIllustrationsLabel')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-[var(--muted-strong)]">
+                      {t('topicIllustrationsHint')}
+                    </span>
+                  </span>
+                </label>
               </div>
             ) : null}
 
@@ -296,10 +372,10 @@ export function AddTopicDialog({
                 <button
                   type="submit"
                   className="btn-accent justify-center"
-                  disabled={recommended.trim().length < MIN_DESCRIPTION}
+                  disabled={recommended.trim().length < MIN_DESCRIPTION || submitting}
                 >
                   <Mic className="h-4 w-4" />
-                  {t('topicReviewApproveCreate')}
+                  {submitting ? t('onDemandSubmitting') : t('topicReviewApproveCreate')}
                 </button>
               ) : (
                 <button
@@ -313,6 +389,8 @@ export function AddTopicDialog({
                 </button>
               )}
             </div>
+              </>
+            )}
           </form>
         </div>
       ) : null}

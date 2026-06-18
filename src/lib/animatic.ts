@@ -74,6 +74,18 @@ export function buildLocaleVisualContext(
 export interface AnimaticPromptOptions {
   style?: string
   localeContext?: string
+  /**
+   * When true, the visual director illustrates generously — every concrete
+   * step, ingredient, tool, technique, place, or object gets its own scene.
+   * Used for instructional/how-to content (Education, Lifestyle) where step-by-
+   * step visuals materially help the listener.
+   */
+  illustrateGenerously?: boolean
+}
+
+/** Instructional content benefits from a scene on (almost) every concrete step. */
+export function illustratesGenerously(type?: ContentType): boolean {
+  return type === 'Education' || type === 'Lifestyle'
 }
 
 /**
@@ -159,11 +171,15 @@ export async function generateLineImagePrompts(
     ? `\nWhen you write a scene description, honor this localization:\n${options.localeContext.trim()}\n`
     : ''
 
+  const guidance = options?.illustrateGenerously
+    ? `Illustrate (illustrate=true) GENEROUSLY: this is instructional, step-by-step content, so depict every concrete step, ingredient, tool, technique, place, object, or result. Most lines that describe something the listener should picture SHOULD get their own scene. Use the host frame (illustrate=false) only for purely conversational, reactive, or transitional lines. Favor a rich sequence of distinct scenes over repetition.`
+    : `Illustrate (illustrate=true) ONLY when the line describes a concrete event, place, action, scene, object, or notable data point worth depicting. Use the host frame (illustrate=false) for abstract, reactive, transitional, opinion, or meta lines. Aim for a balanced mix — not every line needs a scene.`
+
   const prompt = `You are the visual director for an illustrated podcast. For EACH numbered line, decide whether a custom full-scene illustration genuinely adds value, or whether the shot should simply show the host speaking.
 
-Illustrate (illustrate=true) ONLY when the line describes a concrete event, place, action, scene, object, or notable data point worth depicting. Use the host frame (illustrate=false) for abstract, reactive, transitional, opinion, or meta lines. Aim for a balanced mix — not every line needs a scene.
+${guidance}
 
-For illustrate=true lines, write "scene": one vivid, concrete sentence describing the IMAGE to render (subjects, setting, action), not the dialogue itself.${localeBlock}
+For illustrate=true lines, write "scene": one vivid, concrete sentence describing the IMAGE to render (subjects, setting, action), not the dialogue itself. When the lines form a sequence of steps, make each scene visually distinct so the progression is clear.${localeBlock}
 Lines:
 ${numbered}
 

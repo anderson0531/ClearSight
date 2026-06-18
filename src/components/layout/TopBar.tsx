@@ -1,49 +1,117 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Sparkles } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { Sparkles, User, LogIn, LogOut, Menu, X } from 'lucide-react'
 import { ClearSightLogo } from '@/components/layout/ClearSightLogo'
 import { GlobalLanguagePicker } from '@/components/layout/GlobalLanguagePicker'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { canAccessCreatorStudio, type Plan } from '@/lib/plans'
+import type { Plan } from '@/lib/plans'
 
 function showUpgradeButton(plan: Plan): boolean {
   return plan === 'FREE' || plan === 'PREMIUM'
 }
 
 export function TopBar() {
+  const pathname = usePathname()
+  const router = useRouter()
   const t = useTranslations()
-  const { plan, coreTokens } = useUser()
+  const { plan, coreTokens, authenticated, refresh } = useUser()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const handleLogout = async () => {
+    setMenuOpen(false)
+    await fetch('/api/auth/logout', { method: 'POST' })
+    await refresh()
+    router.push('/')
+    router.refresh()
+  }
+
+  // Close the accordion when navigating or clicking outside it.
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [pathname])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function handleClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
 
   return (
     <header className="top-bar">
       <Link href="/" className="top-bar-logo group" aria-label="ClearSight home">
-        <ClearSightLogo className="!h-14 !w-auto transition-transform duration-300 group-hover:scale-[1.02] sm:!h-20 lg:!h-28" />
+        <ClearSightLogo className="!h-16 !w-auto transition-transform duration-300 group-hover:scale-[1.02] sm:!h-24 lg:!h-28" />
       </Link>
 
-      <div className="top-bar-controls">
-        {/* Language, credits and Studio also live in the desktop sidebar, so they
-            are hidden here at lg to free space for the logo. */}
-        <GlobalLanguagePicker className="hidden sm:block lg:hidden" />
+      <div className="top-bar-menu" ref={menuRef}>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          className="top-bar-menu-btn"
+          aria-label={menuOpen ? t('closeMenu') : t('openMenu')}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
 
-        {coreTokens != null ? (
-          <Link href="/premium" className="credits-pill hidden sm:inline-flex lg:hidden">
-            {t('creditsCount', { count: coreTokens })}
-          </Link>
-        ) : null}
+        {menuOpen ? (
+          <div className="dropdown-panel top-bar-menu-panel">
+            <div className="px-3 pt-3 pb-2">
+              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                {t('selectLanguage')}
+              </span>
+              <GlobalLanguagePicker className="w-full" />
+            </div>
 
-        {showUpgradeButton(plan) ? (
-          <Link href="/premium" className="btn-accent text-xs sm:text-sm">
-            <Sparkles className="h-4 w-4" />
-            {plan === 'FREE' ? t('navUpgrade') : t('premiumUpgrade')}
-          </Link>
-        ) : null}
+            <div className="border-t border-white/10 py-1">
+              {coreTokens != null ? (
+                <Link href="/premium" className="top-bar-menu-item">
+                  <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+                  {t('creditsCount', { count: coreTokens })}
+                </Link>
+              ) : null}
 
-        {canAccessCreatorStudio(plan) ? (
-          <Link href="/studio" className="btn-ghost hidden md:inline-flex lg:hidden text-xs">
-            {t('navStudio')}
-          </Link>
+              {authenticated ? (
+                <>
+                  <Link href="/account" className="top-bar-menu-item">
+                    <User className="h-4 w-4" />
+                    {t('navAccount')}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout()}
+                    className="top-bar-menu-item"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    {t('accountLogout')}
+                  </button>
+                </>
+              ) : (
+                <Link href="/login" className="top-bar-menu-item">
+                  <LogIn className="h-4 w-4" />
+                  {t('authSignIn')}
+                </Link>
+              )}
+            </div>
+
+            {showUpgradeButton(plan) ? (
+              <div className="border-t border-white/10 p-3">
+                <Link href="/premium" className="btn-accent w-full justify-center">
+                  <Sparkles className="h-4 w-4" />
+                  {plan === 'FREE' ? t('navUpgrade') : t('premiumUpgrade')}
+                </Link>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </header>

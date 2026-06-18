@@ -331,7 +331,12 @@ export const HOST_CALEB = host({
 function makeShow(
   show: Omit<Show, 'format' | 'introImage' | 'coverImage' | 'introAudio'> & { introImage?: string }
 ): Show {
-  const studioImage = SHOW_STUDIO_ART[show.id] ?? show.studioImage
+  // Studio/host-fallback frame: prefer a bespoke studio render, then the
+  // channel's own cover key-art (which depicts this channel's hosts), and only
+  // then the passed-in placeholder. This keeps per-category channels that reuse
+  // a house cast (e.g. Lifestyle's Maya + Caleb) from falling back to the
+  // canonical News studio image when they have no bespoke studio/portraits yet.
+  const studioImage = SHOW_STUDIO_ART[show.id] ?? SHOW_COVER_ART[show.id] ?? show.studioImage
   // Prefer generated intro art; fall back to an explicit intro (News uses the
   // existing Anderson + Chen image) and finally to the show's studio frame.
   const introImage = SHOW_INTRO_ART[show.id] ?? show.introImage ?? studioImage

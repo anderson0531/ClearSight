@@ -9,7 +9,7 @@ import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
-import { setPendingGeneration } from '@/lib/generation-session'
+import { ensurePushSubscription } from '@/lib/push-client'
 import { toAudioTrack } from '@/lib/discovery-utils'
 import { subtopicsForCategory, type Category, type ContentType, type TaxonomyFilter } from '@/lib/taxonomy'
 import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
@@ -159,18 +159,25 @@ export function ChannelBrowser({
   const handleGenerate = useCallback(
     (story: StoryCard) => {
       if (!canGenerateOnDemand(plan)) return
-      setPendingGeneration({
-        title: story.title,
-        language,
-        category: story.category,
-        contentType,
-        geoScope: story.geoScope,
-        geoRegion: story.geoRegion,
-        geoCountry: story.geoCountry,
-        geoState: story.geoState,
-        geoLocal: story.geoLocal,
-      })
-      router.push('/story/create')
+      // Contextually request push permission, enqueue the background job, and
+      // hand the user to the library where in-progress jobs are tracked.
+      void ensurePushSubscription()
+      void fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: story.title,
+          language,
+          category: story.category,
+          contentType,
+          geoScope: story.geoScope,
+          geoRegion: story.geoRegion,
+          geoCountry: story.geoCountry,
+          geoState: story.geoState,
+          geoLocal: story.geoLocal,
+        }),
+      }).catch(() => {})
+      router.push('/library')
     },
     [plan, language, contentType, router]
   )

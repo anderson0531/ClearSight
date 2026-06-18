@@ -22,6 +22,13 @@ enum CreditTxnType {
   ADJUSTMENT
 }
 
+enum GenerationStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id                   String       @id @default(cuid())
   whopUserId           String?      @unique
@@ -42,6 +49,7 @@ model User {
   sessions             Session[]
   passwordResets       PasswordResetToken[]
   creditTransactions   CreditTransaction[]
+  pushSubscriptions    PushSubscription[]
 }
 
 model Session {
@@ -105,13 +113,36 @@ model Story {
 }
 
 model Generation {
-  id            String   @id @default(cuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storyId       String?
-  taxonomyKey   String
-  tokenConsumed Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id                   String           @id @default(cuid())
+  userId               String
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyId              String?
+  taxonomyKey          String
+  tokenConsumed        Boolean          @default(true)
+  // Background-job lifecycle. Generation now runs asynchronously via Inngest;
+  // these fields track its state so the client can poll and the worker can
+  // resume/refund on failure.
+  status               GenerationStatus @default(QUEUED)
+  params               Json?
+  includeIllustrations Boolean          @default(false)
+  creditsCharged       Int              @default(1)
+  errorMessage         String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model AffiliateReferral {

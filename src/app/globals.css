@@ -542,11 +542,10 @@ input[type='search']::-webkit-search-cancel-button {
 .top-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.5rem 1rem;
   min-height: 5rem;
-  overflow: hidden;
   border-bottom: 1px solid var(--border);
   background: rgba(12, 14, 20, 0.92);
   backdrop-filter: blur(16px);
@@ -563,47 +562,69 @@ input[type='search']::-webkit-search-cancel-button {
 
 @media (min-width: 1024px) {
   .top-bar {
-    min-height: 9rem;
+    min-height: 8rem;
   }
 }
 
-/* Logo sits as a layered backdrop pinned to the left, out of the flex flow, so
-   it can be large without ever pushing or overlapping the right-side controls.
-   The max-width + overflow:hidden guarantee it never reaches the controls. */
+/* Logo takes the available width on the left and clips if needed, so it can be
+   large while the menu button on the right always stays visible. */
 .top-bar-logo {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 1rem;
-  z-index: 0;
   display: flex;
   align-items: center;
-  max-width: 68%;
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
 }
 
-/* Tablet/sm: full controls live in the top bar (no sidebar yet), so keep the
-   logo clear of them. */
-@media (min-width: 640px) {
-  .top-bar-logo {
-    max-width: 50%;
-  }
-}
-
-/* Desktop: sidebar takes most controls; only the Upgrade CTA remains, so the
-   logo can breathe again. */
-@media (min-width: 1024px) {
-  .top-bar-logo {
-    max-width: 60%;
-  }
-}
-
-.top-bar-controls {
+/* Single accordion menu holding every header control. */
+.top-bar-menu {
   position: relative;
-  z-index: 10;
-  display: flex;
   flex-shrink: 0;
+}
+
+.top-bar-menu-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
+  height: 2.75rem;
+  width: 2.75rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground);
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.top-bar-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.top-bar-menu-panel {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 50;
+  width: 16rem;
+}
+
+.top-bar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: start;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.top-bar-menu-item:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .clearsight-logo {
