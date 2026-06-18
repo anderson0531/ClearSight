@@ -7,7 +7,10 @@ import { AffiliateTrackerProvider } from '@/components/providers/AffiliateTracke
 import { UserProvider } from '@/components/providers/UserProvider'
 import { I18nProvider } from '@/i18n/I18nProvider'
 import { DEFAULT_LOCALE_CODE, getLocaleByCode } from '@/i18n/locales'
-import { CLEARSIGHT_LOGO_URL } from '@/lib/brand-assets'
+import {
+  CLEARSIGHT_APP_ICON_192_URL,
+  CLEARSIGHT_APP_ICON_512_URL,
+} from '@/lib/brand-assets'
 import './globals.css'
 
 const geistSans = Geist({
@@ -25,8 +28,11 @@ export const metadata: Metadata = {
   description: 'Discover verified news briefings with sources you can trust. Listen on demand.',
   applicationName: 'ClearSight',
   icons: {
-    icon: CLEARSIGHT_LOGO_URL,
-    apple: CLEARSIGHT_LOGO_URL,
+    icon: [
+      { url: CLEARSIGHT_APP_ICON_192_URL, sizes: '192x192', type: 'image/png' },
+      { url: CLEARSIGHT_APP_ICON_512_URL, sizes: '512x512', type: 'image/png' },
+    ],
+    apple: CLEARSIGHT_APP_ICON_512_URL,
   },
   appleWebApp: {
     capable: true,

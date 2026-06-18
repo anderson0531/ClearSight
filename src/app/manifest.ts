@@ -1,5 +1,9 @@
 import type { MetadataRoute } from 'next'
-import { CLEARSIGHT_LOGO_URL } from '@/lib/brand-assets'
+import {
+  CLEARSIGHT_APP_ICON_192_URL,
+  CLEARSIGHT_APP_ICON_512_URL,
+  CLEARSIGHT_APP_ICON_MASKABLE_512_URL,
+} from '@/lib/brand-assets'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -15,13 +19,19 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ['news', 'education'],
     icons: [
       {
-        src: CLEARSIGHT_LOGO_URL,
+        src: CLEARSIGHT_APP_ICON_192_URL,
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: CLEARSIGHT_APP_ICON_512_URL,
         sizes: '512x512',
         type: 'image/png',
         purpose: 'any',
       },
       {
-        src: CLEARSIGHT_LOGO_URL,
+        src: CLEARSIGHT_APP_ICON_MASKABLE_512_URL,
         sizes: '512x512',
         type: 'image/png',
         purpose: 'maskable',
