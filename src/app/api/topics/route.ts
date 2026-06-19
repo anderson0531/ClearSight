@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { consumeCredits, CreditError } from '@/lib/credits'
+import { TOPIC_SEARCH_UNITS } from '@/lib/credit-units'
 import { getTopicSuggestions } from '@/lib/topic-suggestions'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
@@ -11,7 +12,6 @@ import {
   type TaxonomyFilter,
 } from '@/lib/taxonomy'
 
-const TOPIC_SEARCH_COST = 1
 const DEFAULT_COUNT = 8
 const MAX_COUNT = 12
 
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     }
 
     // Charge before discovery so the credit reflects the search action itself.
-    await consumeCredits(userId, TOPIC_SEARCH_COST, `Topics search: ${filter.contentType}`)
+    await consumeCredits(userId, TOPIC_SEARCH_UNITS, `Topics search: ${filter.contentType}`)
   } catch (err) {
     if (err instanceof CreditError) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: 402 })

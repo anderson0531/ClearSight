@@ -2,7 +2,7 @@ import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
 import { extractAudioSegments, serializeAudioSegments } from '@/lib/audio-segments'
 import { segmentHasAnimaticMetadata, segmentWantsScene } from '@/lib/animatic-utils'
-import { HOSTS_IMAGE } from '@/lib/hosts'
+import { resolveShow, showById } from '@/lib/shows'
 import { vertexGenerateImage, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
 import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
 import type { ContentType } from '@/lib/taxonomy'
@@ -102,11 +102,16 @@ export function buildAnimaticPrompt(lineText: string, options?: AnimaticPromptOp
 }
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
-  return role === 'intro' || role === 'cta'
+  return role === 'intro' || role === 'cta' || role === 'disclaimer'
 }
 
 function roleNeedsImagePrompt(role?: AudioSegmentRole): boolean {
-  return role !== 'intro' && role !== 'cta' && role !== 'music'
+  return (
+    role !== 'intro' &&
+    role !== 'cta' &&
+    role !== 'disclaimer' &&
+    role !== 'music'
+  )
 }
 
 interface LineForPrompt {
@@ -253,10 +258,11 @@ async function renderSegmentImage(
   segment: AudioSegment,
   title: string,
   index: number,
+  studioImage: string,
   attempt = 1
 ): Promise<string | null> {
   if (roleUsesHostsImage(segment.role)) {
-    return HOSTS_IMAGE
+    return studioImage
   }
 
   if (!roleNeedsImagePrompt(segment.role)) {
@@ -282,7 +288,7 @@ async function renderSegmentImage(
   if (!buffer) {
     if (attempt < 3) {
       await sleep(attempt * 5000)
-      return renderSegmentImage(segment, title, index, attempt + 1)
+      return renderSegmentImage(segment, title, index, studioImage, attempt + 1)
     }
     return null
   }
@@ -333,6 +339,14 @@ export async function renderStoryAnimatic(
     throw new Error('No audio segments on this briefing')
   }
 
+  // Intro/CTA frames use THIS episode's channel studio image — never the
+  // canonical News studio — so a non-News episode never shows the Anderson +
+  // Chen frame against a different show's hosts.
+  const meta = (story.sourcesVerified ?? {}) as { showId?: string; contentType?: ContentType }
+  const show =
+    showById(meta.showId) ?? resolveShow({ category: story.category, contentType: meta.contentType })
+  const studioImage = show.studioImage
+
   if (!segments.every(segmentHasAnimaticMetadata)) {
     throw new Error('ANIMATIC_UNAVAILABLE')
   }
@@ -356,7 +370,7 @@ export async function renderStoryAnimatic(
     if (existing && !existing.startsWith('/hosts/')) {
       return { index, url: existing, fresh: false }
     }
-    const url = await renderSegmentImage(segment, story.title, index)
+    const url = await renderSegmentImage(segment, story.title, index, studioImage)
     return { index, url, fresh: true }
   })
 
@@ -367,7 +381,7 @@ export async function renderStoryAnimatic(
   const updated = segments.map((segment, index) => {
     if (roleUsesHostsImage(segment.role)) {
       rendered += 1
-      return { ...segment, imageUrl: HOSTS_IMAGE }
+      return { ...segment, imageUrl: studioImage }
     }
 
     const match = renderedUrls.find((item) => item.index === index)

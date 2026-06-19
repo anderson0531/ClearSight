@@ -1,5 +1,6 @@
 import { isPaymentBypassEnabled } from '@/lib/payments'
 import { DEMO_USER_ID } from '@/lib/session'
+import { fromUnits } from '@/lib/credit-units'
 import type { Plan } from '@/lib/plans'
 
 export interface SerializableUser {
@@ -29,7 +30,8 @@ export function serializeUser(user: SerializableUser, authenticated: boolean): P
     email: user.email ?? null,
     name: user.name ?? null,
     plan: user.plan,
-    coreTokens: user.coreTokens,
+    // DB stores credit units; expose human credits (may be fractional) to clients.
+    coreTokens: fromUnits(user.coreTokens),
     subscriptionActive: user.subscriptionActive,
     authenticated,
     demoMode: user.id === DEMO_USER_ID,

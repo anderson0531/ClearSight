@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { verifyWhopSignature, parseWhopEvent, WHOP_EVENTS } from '@/lib/whop'
 import { provisionSubscriptionCycle, addCoreTokens } from '@/lib/credits'
+import { toUnits } from '@/lib/credit-units'
 import { mapWhopPlanId, PLAN_MONTHLY_CREDITS } from '@/lib/plans'
 
 export async function POST(request: Request) {
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
       if (mappedPlan) {
         await prisma.user.update({ where: { id: user.id }, data: { plan: mappedPlan } })
       }
-      const grant = mappedPlan ? PLAN_MONTHLY_CREDITS[mappedPlan] : 1
+      const grant = toUnits(mappedPlan ? PLAN_MONTHLY_CREDITS[mappedPlan] : 1)
       await provisionSubscriptionCycle(user.id, grant)
       break
     }
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
       const tokenPack = event.data.metadata?.token_pack
       if (tokenPack) {
         const count = parseInt(tokenPack, 10)
-        if (count > 0) await addCoreTokens(user.id, count)
+        if (count > 0) await addCoreTokens(user.id, toUnits(count))
       }
 
       if (affiliateCode && event.data.id) {

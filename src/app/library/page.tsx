@@ -186,6 +186,18 @@ export default function LibraryPage() {
     setSavedSearches(removeSavedSearch(id))
   }
 
+  const handleDeleteGeneration = async (id: string) => {
+    // Optimistically drop it from the list; restore on failure.
+    const previous = generations
+    setGenerations((jobs) => jobs.filter((job) => job.id !== id))
+    try {
+      const res = await fetch(`/api/generations/${id}`, { method: 'DELETE' })
+      if (!res.ok) setGenerations(previous)
+    } catch {
+      setGenerations(previous)
+    }
+  }
+
   const isPremium = plan === 'PREMIUM' || plan === 'CREATOR'
   const isCreator = plan === 'CREATOR'
 
@@ -236,6 +248,17 @@ export default function LibraryPage() {
                       <Link href="/" className="btn-ghost">
                         {t('libraryGenRetry')}
                       </Link>
+                    ) : null}
+                    {job.status === 'QUEUED' || job.status === 'FAILED' ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteGeneration(job.id)}
+                        className="rounded p-2 text-[var(--muted)] hover:text-red-400 min-h-10 min-w-10"
+                        aria-label={t('libraryGenDelete')}
+                        title={t('libraryGenDelete')}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     ) : null}
                   </div>
                 </li>

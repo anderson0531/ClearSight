@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { BASE_GENERATION_UNITS } from '@/lib/credit-units'
 
 export class CreditError extends Error {
   constructor(
@@ -71,13 +72,13 @@ export async function verifyAndConsumeCredits(
       throw new CreditError('Active subscription required', 'SUBSCRIPTION_INACTIVE')
     }
 
-    if (user.coreTokens < 1) {
+    if (user.coreTokens < BASE_GENERATION_UNITS) {
       throw new CreditError('Insufficient core generation tokens', 'INSUFFICIENT_TOKENS')
     }
 
     const updated = await tx.user.update({
-      where: { id: userId, coreTokens: { gte: 1 } },
-      data: { coreTokens: { decrement: 1 } },
+      where: { id: userId, coreTokens: { gte: BASE_GENERATION_UNITS } },
+      data: { coreTokens: { decrement: BASE_GENERATION_UNITS } },
     })
 
     if (updated.coreTokens < 0) {
@@ -89,13 +90,14 @@ export async function verifyAndConsumeCredits(
         userId,
         taxonomyKey,
         tokenConsumed: true,
+        creditsCharged: BASE_GENERATION_UNITS,
       },
     })
 
     await tx.creditTransaction.create({
       data: {
         userId,
-        amount: -1,
+        amount: -BASE_GENERATION_UNITS,
         balanceAfter: updated.coreTokens,
         type: 'GENERATION',
         description: `Briefing: ${taxonomyKey}`,

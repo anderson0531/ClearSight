@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
-import { hostBySpeaker } from '@/lib/shows'
+import { hostBySpeaker, showById } from '@/lib/shows'
 import { BACKGROUND_MUSIC } from '@/lib/music-assets'
 import {
   segmentDisplayImage,
@@ -40,6 +40,8 @@ interface AnimaticStageProps {
   title: string
   audioUrl: string | null
   audioSegments?: AudioSegment[] | null
+  /** The episode's resolved channel id — drives cast names and the studio frame. */
+  showId?: string | null
   hideInlineControls?: boolean
   /** Reports player capability/state up to the header so it can drive controls. */
   onStateChange?: (state: AnimaticStageState) => void
@@ -88,7 +90,7 @@ function frameAnimationClass(effect: TransitionEffect, index: number): string {
  * effects, synced audio, captions, and volume + effect controls.
  */
 export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>(function AnimaticStage(
-  { storyId, title, audioUrl, audioSegments, hideInlineControls = false, onStateChange },
+  { storyId, title, audioUrl, audioSegments, showId, hideInlineControls = false, onStateChange },
   ref
 ) {
   const t = useTranslations()
@@ -128,6 +130,13 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     [segments]
   )
 
+  // Episodes synthesized with a baked outro-music segment carry their own
+  // closing music, so we skip the legacy synthetic outro tail for them.
+  const hasBakedOutro = useMemo(
+    () => (segments ?? []).some((s) => s.role === 'music'),
+    [segments]
+  )
+
   const { offsets, totalDuration } = useMemo(() => {
     const off: number[] = []
     let acc = 0
@@ -135,17 +144,21 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       off.push(acc)
       acc += segment.durationSeconds || 0
     }
-    return { offsets: off, totalDuration: acc + OUTRO_TAIL_SECONDS }
-  }, [segments])
+    return { offsets: off, totalDuration: acc + (hasBakedOutro ? 0 : OUTRO_TAIL_SECONDS) }
+  }, [segments, hasBakedOutro])
 
   const currentSegment = segments?.[segmentIndex]
-  const frameSrc = segmentDisplayImage(currentSegment, segmentIndex, useIllustrations)
+  const frameSrc = segmentDisplayImage(currentSegment, segmentIndex, useIllustrations, showId)
   const frameClass = frameAnimationClass(effect, segmentIndex)
 
-  // Resolve this episode's cast from the segments' speakers (so non-News shows
-  // and solo shows display the correct host names/roles) — falling back to the
-  // canonical News pair for legacy stories without recognizable speakers.
+  // The episode's resolved channel is the source of truth for host identity.
+  const show = useMemo(() => showById(showId), [showId])
+
+  // Resolve this episode's cast: prefer the resolved show's hosts (correct
+  // names/roles even for shared casts), else derive from the segments' speakers,
+  // and finally fall back to the canonical News pair for legacy stories.
   const cast = useMemo<HostProfile[]>(() => {
+    if (show?.hosts?.length) return show.hosts
     const seen = new Set<string>()
     const hosts: HostProfile[] = []
     for (const segment of segments ?? []) {
@@ -156,16 +169,26 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       }
     }
     return hosts.length > 0 ? hosts : [HOST_ANDERSON, HOST_SARAH]
-  }, [segments])
+  }, [show, segments])
 
-  // Studio poster: prefer a stored intro/outro studio frame, else the cast's
-  // show studio image, else the canonical studio.
+  // Studio poster: prefer a stored intro/outro studio frame, else the resolved
+  // show's studio image, else the cast's show studio, else the canonical studio.
   const studioPoster = useMemo<string>(() => {
     const studio = (segments ?? []).find(
       (s) => (s.role === 'intro' || s.role === 'cta') && s.imageUrl
     )?.imageUrl
-    return studio || segmentDisplayImage({ url: '', durationSeconds: 0, role: 'intro', speaker: cast[0]?.name }) || HOSTS_IMAGE
-  }, [segments, cast])
+    return (
+      studio ||
+      show?.studioImage ||
+      segmentDisplayImage(
+        { url: '', durationSeconds: 0, role: 'intro', speaker: cast[0]?.name },
+        0,
+        true,
+        showId
+      ) ||
+      HOSTS_IMAGE
+    )
+  }, [segments, show, cast, showId])
 
   // Every distinct frame the player might show in either mode, resolved up front
   // so we can warm the browser cache before playback (studio poster + each
@@ -173,11 +196,11 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const frameSources = useMemo(() => {
     const urls = new Set<string>([studioPoster])
     ;(segments ?? []).forEach((segment, index) => {
-      urls.add(segmentDisplayImage(segment, index, true))
-      urls.add(segmentDisplayImage(segment, index, false))
+      urls.add(segmentDisplayImage(segment, index, true, showId))
+      urls.add(segmentDisplayImage(segment, index, false, showId))
     })
     return Array.from(urls)
-  }, [segments, studioPoster])
+  }, [segments, studioPoster, showId])
 
   // Preload all frames once they're known. Decoding ahead of time removes the
   // visible delay on first display; subsequent loads hit the browser cache.
@@ -399,7 +422,13 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       audioRef.current?.pause()
       syncBackgroundMusic(undefined, false)
       setCurrentTime((offsets[segmentIndex] ?? 0) + (segments[segmentIndex]?.durationSeconds ?? 0))
-      playOutroTail()
+      // The baked music segment IS the closing music — don't layer the legacy
+      // synthetic outro tail on top of it.
+      if (hasBakedOutro) {
+        setIsPlaying(false)
+      } else {
+        playOutroTail()
+      }
       return
     }
     setSegmentIndex((index) => index + 1)
@@ -450,7 +479,15 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
           onEnded={handleEnded}
           onTimeUpdate={(event) => {
             if (outroPlaying) return
-            setCurrentTime((offsets[segmentIndex] ?? 0) + event.currentTarget.currentTime)
+            const local = event.currentTarget.currentTime
+            const seg = segments?.[segmentIndex]
+            // Cap the baked outro-music segment at its declared 30s length.
+            if (seg?.role === 'music' && seg.durationSeconds > 0 && local >= seg.durationSeconds) {
+              event.currentTarget.pause()
+              handleEnded()
+              return
+            }
+            setCurrentTime((offsets[segmentIndex] ?? 0) + local)
           }}
         />
         <audio ref={musicRef} preload="auto" className="hidden" />

@@ -37,6 +37,7 @@ model User {
   passwordHash         String?
   affiliateCode        String?
   plan                 Plan         @default(FREE)
+  // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.
   coreTokens           Int          @default(0)
   subscriptionActive   Boolean      @default(false)
   subscriptionCycleStart DateTime?
@@ -79,6 +80,7 @@ model CreditTransaction {
   id           String        @id @default(cuid())
   userId       String
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.
   amount       Int
   balanceAfter Int
   type         CreditTxnType
@@ -105,11 +107,64 @@ model Story {
   reliabilityIndex Float?
   sourcesVerified  Json?
   isCached         Boolean  @default(true)
+  // Shared engagement counters (YouTube-style). likeCount/dislikeCount are
+  // denormalized and kept in sync with StoryReaction rows transactionally.
+  viewCount        Int      @default(0)
+  likeCount        Int      @default(0)
+  dislikeCount     Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  reactions        StoryReaction[]
+  questions        StoryQuestion[]
 
   @@index([language, category, geoScope])
   @@index([language, category, geoScope, geoCountry])
+}
+
+model StoryReaction {
+  id        String   @id @default(cuid())
+  storyId   String
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  userId    String
+  // 1 = thumbs up, -1 = thumbs down. A user has at most one reaction per story.
+  value     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storyId, userId])
+  @@index([storyId])
+}
+
+model StoryQuestion {
+  id                 String   @id @default(cuid())
+  storyId            String
+  story              Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  // The user who asked. Not a FK so a Q&A survives if the asker is purged.
+  userId             String
+  // Answer language (English name, e.g. "Spanish").
+  language           String
+  // Original user text and the moderated/reframed question that was answered.
+  rawQuestion        String   @db.Text
+  question           String   @db.Text
+  answerText         String   @db.Text
+  // Which host answered (for attribution in the UI).
+  responderName      String
+  responderShortName String
+  responderRole      String
+  // Synthesized answer audio (first segment url) + per-line segments for
+  // captioned playback with host portraits. Audio is produced asynchronously
+  // (background job) after the text answer is delivered, so these stay null
+  // until ready. `audioStatus` is one of: pending | ready | failed.
+  audioUrl           String?
+  durationSeconds    Int?
+  segments           Json?
+  audioStatus        String   @default("pending")
+  // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.
+  creditsCharged     Int      @default(25)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([storyId, createdAt])
 }
 
 model Generation {
@@ -125,7 +180,8 @@ model Generation {
   status               GenerationStatus @default(QUEUED)
   params               Json?
   includeIllustrations Boolean          @default(false)
-  creditsCharged       Int              @default(1)
+  // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.
+  creditsCharged       Int              @default(100)
   errorMessage         String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt @default(now())

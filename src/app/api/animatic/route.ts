@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { renderStoryAnimatic } from '@/lib/animatic'
 import { consumeCredits, CreditError } from '@/lib/credits'
+import { ILLUSTRATION_UNITS } from '@/lib/credit-units'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
@@ -10,7 +11,7 @@ const bodySchema = z.object({
   storyId: z.string().min(1),
 })
 
-/** Flat credit charge for generating animatic illustration frames. */
+/** Human credit cost for generating animatic illustration frames (display only). */
 const ILLUSTRATION_CREDITS = 2
 
 export async function POST(request: Request) {
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
     // Charged only when new frames will actually be generated
     const result = await renderStoryAnimatic(parsed.data.storyId, {
       onWillRender: async () => {
-        await consumeCredits(userId, ILLUSTRATION_CREDITS)
+        await consumeCredits(userId, ILLUSTRATION_UNITS)
       },
     })
     return NextResponse.json({ ...result, creditsCharged: result.newlyRendered > 0 ? ILLUSTRATION_CREDITS : 0 })

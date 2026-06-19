@@ -1,4 +1,11 @@
-export type AudioSegmentRole = 'hook' | 'intro' | 'body' | 'summary' | 'cta' | 'music'
+export type AudioSegmentRole =
+  | 'hook'
+  | 'intro'
+  | 'body'
+  | 'summary'
+  | 'cta'
+  | 'disclaimer'
+  | 'music'
 
 /**
  * Whether a body line is illustrated with a custom generated scene or shown

@@ -5,10 +5,13 @@ import { GoogleAuth } from 'google-auth-library'
 const ROOT = process.cwd()
 const MESSAGES_DIR = join(ROOT, 'src/i18n/messages')
 
-const LOCALES = [
-  'es', 'zh', 'hi', 'ar', 'pt', 'ru', 'ja', 'de', 'fr', 'ko',
-  'it', 'tr', 'vi', 'id', 'nl', 'pl', 'th', 'uk', 'bn',
-]
+function loadLocaleCodes() {
+  const tsPath = join(ROOT, 'src/i18n/locales.ts')
+  const file = readFileSync(tsPath, 'utf8')
+  return [...file.matchAll(/code: '([^']+)'/g)]
+    .map((match) => match[1])
+    .filter((code) => code !== 'en')
+}
 
 function parseCredentialsJson(raw) {
   const trimmed = raw.trim()
@@ -50,9 +53,20 @@ async function getAccessToken() {
   return auth.getAccessToken()
 }
 
+// Source of truth is en.ts (the typed runtime catalog). We extract the
+// `enMessages` object literal and eval it so en.json can never drift from the
+// keys the app actually uses.
 function loadEnglishKeys() {
-  const enPath = join(MESSAGES_DIR, 'en.json')
-  return JSON.parse(readFileSync(enPath, 'utf8'))
+  const tsPath = join(MESSAGES_DIR, 'en.ts')
+  const file = readFileSync(tsPath, 'utf8')
+  const start = file.indexOf('{')
+  const end = file.indexOf('} as const')
+  if (start === -1 || end === -1) {
+    throw new Error('Could not locate enMessages object literal in en.ts')
+  }
+  const body = file.slice(start + 1, end)
+  // eslint-disable-next-line no-eval
+  return (0, eval)(`({${body}})`)
 }
 
 async function translateBatch(texts, target) {
@@ -79,6 +93,7 @@ async function translateBatch(texts, target) {
 }
 
 async function translateLocale(code, english) {
+  const target = code === 'wuu' ? 'zh' : code
   const keys = Object.keys(english)
   const values = Object.values(english)
   const batchSize = 50
@@ -86,7 +101,7 @@ async function translateLocale(code, english) {
 
   for (let i = 0; i < values.length; i += batchSize) {
     const batch = values.slice(i, i + batchSize)
-    const result = await translateBatch(batch, code)
+    const result = await translateBatch(batch, target)
     translated.push(...result)
     console.log(`  batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(values.length / batchSize)}`)
   }
@@ -105,7 +120,7 @@ async function main() {
   const english = loadEnglishKeys()
   writeFileSync(join(MESSAGES_DIR, 'en.json'), `${JSON.stringify(english, null, 2)}\n`)
 
-  for (const code of LOCALES) {
+  for (const code of loadLocaleCodes()) {
     console.log(`Translating ${code}…`)
     try {
       await translateLocale(code, english)

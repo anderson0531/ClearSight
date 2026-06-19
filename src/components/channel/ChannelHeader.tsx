@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import { Heart, Pause, Play } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { useTranslatedTexts } from '@/lib/use-translated'
 import type { Show } from '@/lib/shows'
 import { FAVORITES_EVENT, isChannelFollowed, toggleFollowChannel } from '@/lib/favorites'
 import { CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
@@ -12,6 +13,21 @@ export function ChannelHeader({ show }: { show: Show }) {
   const t = useTranslations()
   const typeKey = CONTENT_TYPE_MESSAGE_KEYS[show.contentType]
   const typeLabel = typeKey ? t(typeKey) : show.contentType
+
+  // Channel registry text (name, description, host roles/bios) is authored in
+  // English; translate it on the fly for non-English locales.
+  const translatable = [
+    show.name,
+    show.description,
+    ...show.hosts.flatMap((host) => [host.role, host.bio]),
+  ]
+  const translated = useTranslatedTexts(translatable)
+  const showName = translated[0]
+  const showDescription = translated[1]
+  const hostText = (index: number) => ({
+    role: translated[2 + index * 2],
+    bio: translated[3 + index * 2],
+  })
 
   const [following, setFollowing] = useState(false)
   useEffect(() => {
@@ -53,7 +69,7 @@ export function ChannelHeader({ show }: { show: Show }) {
           <div className="channel-hero-overlay" />
           <div className="channel-hero-body">
           <span className="show-card-type">{typeLabel}</span>
-          <h1 className="channel-hero-title">{show.name}</h1>
+          <h1 className="channel-hero-title">{showName}</h1>
           <p className="channel-hero-hosts">{show.hosts.map((h) => h.shortName).join(' & ')}</p>
           <div className="channel-hero-actions">
             <button
@@ -94,31 +110,34 @@ export function ChannelHeader({ show }: { show: Show }) {
       <section className="mt-6">
         <h2 className="filter-label">{t('channelAbout')}</h2>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted-strong)]">
-          {show.description}
+          {showDescription}
         </p>
       </section>
 
       <section className="mt-6">
         <h2 className="filter-label">{t('channelHosts')}</h2>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {show.hosts.map((host) => (
-            <div key={host.name} className="channel-host-card">
-              <div className="channel-host-avatar">
-                <Image
-                  src={host.speakingImages[0] ?? show.studioImage}
-                  alt={host.name}
-                  fill
-                  sizes="64px"
-                  className="object-cover"
-                />
+          {show.hosts.map((host, index) => {
+            const { role, bio } = hostText(index)
+            return (
+              <div key={host.name} className="channel-host-card">
+                <div className="channel-host-avatar">
+                  <Image
+                    src={host.speakingImages[0] ?? show.studioImage}
+                    alt={host.name}
+                    fill
+                    sizes="64px"
+                    className="object-cover"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[var(--foreground)]">{host.name}</p>
+                  <p className="text-xs font-medium text-[var(--accent)]">{role}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--muted-strong)]">{bio}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-[var(--foreground)]">{host.name}</p>
-                <p className="text-xs font-medium text-[var(--accent)]">{host.role}</p>
-                <p className="mt-1 text-xs leading-relaxed text-[var(--muted-strong)]">{host.bio}</p>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
     </header>

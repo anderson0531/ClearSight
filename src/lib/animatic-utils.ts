@@ -3,11 +3,16 @@ import { speakingImagesForSpeaker, studioImageForSpeaker } from '@/lib/shows'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
-  return role === 'intro' || role === 'cta'
+  return role === 'intro' || role === 'cta' || role === 'disclaimer'
 }
 
 function roleNeedsImagePrompt(role?: AudioSegmentRole): boolean {
-  return role !== 'intro' && role !== 'cta' && role !== 'music'
+  return (
+    role !== 'intro' &&
+    role !== 'cta' &&
+    role !== 'disclaimer' &&
+    role !== 'music'
+  )
 }
 
 /** A line is illustrated with a custom scene unless explicitly marked 'host'. */
@@ -18,6 +23,8 @@ export function segmentWantsScene(segment: AudioSegment): boolean {
 
 export function segmentHasAnimaticMetadata(segment: AudioSegment): boolean {
   if (roleUsesHostsImage(segment.role)) return true
+  // The baked outro-music segment is a valid non-illustrated frame.
+  if (segment.role === 'music') return true
   // Host-framed lines are valid without an image prompt.
   if (segment.frameKind === 'host') return true
   return Boolean(segment.text?.trim() || segment.imagePrompt?.trim())
@@ -50,12 +57,14 @@ export function segmentsHaveRenderedImages(segments: AudioSegment[]): boolean {
 export function segmentDisplayImage(
   segment: AudioSegment | null | undefined,
   index = 0,
-  useIllustrations = true
+  useIllustrations = true,
+  showId?: string | null
 ): string {
   // Intro/outro use the show's studio frame (stored per-segment so non-News
-  // shows keep their own studio image), falling back to the canonical studio.
+  // shows keep their own studio image), falling back to the episode's show
+  // studio (by id) and finally the canonical studio.
   if (segment && roleUsesHostsImage(segment.role)) {
-    return segment.imageUrl || studioImageForSpeaker(segment.speaker) || HOSTS_IMAGE
+    return segment.imageUrl || studioImageForSpeaker(segment.speaker, showId) || HOSTS_IMAGE
   }
 
   // Lines explicitly framed on the host never show a (stale) illustration.
@@ -75,5 +84,5 @@ export function segmentDisplayImage(
     return speakingImages[Math.abs(index) % speakingImages.length]!
   }
 
-  return studioImageForSpeaker(segment?.speaker) || HOSTS_IMAGE
+  return studioImageForSpeaker(segment?.speaker, showId) || HOSTS_IMAGE
 }

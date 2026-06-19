@@ -46,11 +46,11 @@ export const HOST_SARAH: HostProfile = {
   role: 'Investigative correspondent',
   voiceId: 'Laomedeia',
   ttsStylePrompt:
-    'Bright, articulate investigative correspondent. Confident, clear, and naturally conversational at a normal broadcast pace.',
+    'Bright, sharp, fast-paced-but-clear investigative correspondent. Confident and articulate with energetic, naturally conversational broadcast delivery.',
   speakingRate: 1.0,
   bio: 'Sharp, modern, and articulate. Sarah drives the deep dive — probing the data, pressing the counter-argument, and keeping the analysis honest.',
   persona:
-    'Sharp, modern investigative correspondent — bright, articulate, and poised. Drives the deep dive with probing analytical questions and presses the counter-argument.',
+    'Sharp, modern, fast-paced investigative correspondent and the DRIVER of the conversation. Probes the data, introduces the core tension, presses hard with counter-arguments, and demands empirical honesty. Uses analytical active phrasing ("the data shows…", "but the counter-metric here is…", "let\'s push back on that for a second…"), micro-interjections, and crisp rhetorical transitions.',
   aliases: ['sarah', 'chen'],
   speakingImages: [
     'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_j04r89j04r89j04r.png',
@@ -69,11 +69,11 @@ export const HOST_ANDERSON: HostProfile = {
   role: 'Lead analyst & anchor',
   voiceId: 'Algenib',
   ttsStylePrompt:
-    'Seasoned anchor and lead analyst. Intelligent and thoughtful — grounded, calm, and authoritative, with a natural conversational broadcast delivery at a normal pace.',
+    'Seasoned anchor and lead analyst. Grounded, calm, deliberate, and deeply trustworthy, with measured, authoritative conversational broadcast delivery.',
   speakingRate: 1.0,
   bio: 'Grounded, calm, and deeply trustworthy. Dr. Anderson brings decades of seasoned journalistic authority, delivering the factor-by-factor analysis and forecast.',
   persona:
-    'Seasoned anchor and lead analyst — grounded, calm, and authoritative. Delivers factor-by-factor breakdowns, comparisons, and the forecast.',
+    'Seasoned anchor and lead analyst — grounded, calm, deliberate, and authoritative, and the ANCHOR of the conversation. Brings decades of seasoned journalistic context, structural factor-by-factor breakdowns, and historical or forward-looking forecasts. Uses measured, balanced phrasing ("to understand why, we look at…", "on the one hand… on the other…", "the structural macro trend implies…").',
   aliases: ['anderson', 'benjamin'],
   speakingImages: [
     'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_b9h9skb9h9skb9h9.png',

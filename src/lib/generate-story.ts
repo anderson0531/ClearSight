@@ -6,6 +6,7 @@ import { getLocaleByEnglishName } from '@/i18n/locales'
 import {
   getVertexAccessToken,
   vertexGenerateGrounded,
+  vertexGenerateImage,
   vertexGenerateText,
   VERTEX_FAST_MODEL,
   type GroundedSource,
@@ -21,7 +22,8 @@ import {
 } from '@/lib/animatic'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
-import { categoryVisualStyle, resolveShow, type Show } from '@/lib/shows'
+import { OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
+import { categoryVisualStyle, resolveShow, showById, type Show } from '@/lib/shows'
 import type { HostProfile } from '@/lib/hosts'
 import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
 
@@ -120,6 +122,7 @@ interface EpisodeBookends {
   intro: string
   summary: string
   cta: string
+  disclaimer: string
 }
 
 interface PreparedLine {
@@ -269,7 +272,8 @@ function prepareLines(turns: PodcastTurn[], show: Show): PreparedLine[] {
 
   turns.forEach((turn) => {
     const role = turn.role ?? 'body'
-    const imageUrl = role === 'intro' || role === 'cta' ? show.studioImage : null
+    const imageUrl =
+      role === 'intro' || role === 'cta' || role === 'disclaimer' ? show.studioImage : null
 
     for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
       lines.push({
@@ -291,7 +295,7 @@ function attachImagePrompts(
   decisions: Map<number, FrameDecision>
 ): PreparedLine[] {
   return lines.map((line, index) => {
-    if (line.role === 'intro' || line.role === 'cta') {
+    if (line.role === 'intro' || line.role === 'cta' || line.role === 'disclaimer') {
       return { ...line, imagePrompt: null, frameKind: null }
     }
     const decision = decisions.get(index)
@@ -304,6 +308,21 @@ function attachImagePrompts(
 
 function uniqueDomains(sources: GroundedSource[]): number {
   return new Set(sources.map((s) => s.domain)).size
+}
+
+/**
+ * The baked 30s outro-music segment that closes every episode. Stored as a
+ * non-TTS `role: 'music'` segment so it travels with downloads and relocalized
+ * copies and counts toward the episode duration. Players cap playback of the
+ * (longer) source bed at OUTRO_MUSIC_SECONDS.
+ */
+function outroMusicSegment(show: Show): AudioSegment {
+  return {
+    url: OUTRO_MUSIC_URL,
+    durationSeconds: OUTRO_MUSIC_SECONDS,
+    role: 'music',
+    imageUrl: show.studioImage,
+  }
 }
 
 function formatSourcesMarkdown(sources: GroundedSource[]): string {
@@ -750,10 +769,42 @@ function buildLocaleScriptContext(
   return `LOCALIZATION: Ground specifics (people, places, institutions, examples) in ${place} where relevant, and keep cultural references appropriate to that audience.${langNote}`.trim()
 }
 
+/** Source-confidence signal passed into script + bookend generation. */
+export interface ScriptConfidence {
+  reliabilityIndex: number
+  sourceCount: number
+  domainCount: number
+}
+
+function reliabilityBand(c: ScriptConfidence): 'low' | 'medium' | 'high' {
+  if (c.sourceCount <= 0 || c.reliabilityIndex < 4) return 'low'
+  if (c.reliabilityIndex < 7 || c.domainCount < 2) return 'medium'
+  return 'high'
+}
+
+/**
+ * Turns the reliability score into an on-air confidence directive so the hosts
+ * verbally qualify the story to match the evidence — most importantly, openly
+ * caveating when credible sourcing is thin instead of projecting false
+ * certainty.
+ */
+function buildConfidenceDirective(c: ScriptConfidence): string {
+  const score = c.reliabilityIndex.toFixed(1)
+  switch (reliabilityBand(c)) {
+    case 'low':
+      return `SOURCE CONFIDENCE — LOW (reliability ${score}/10, ${c.sourceCount} source${c.sourceCount === 1 ? '' : 's'}). Early in the conversation one host MUST openly acknowledge that credible, corroborating sourcing is thin or still unverified — for example: "we weren't able to find many credible sources on this yet, but here's what we can piece together." Treat every claim as provisional, attribute carefully, avoid certainty, and flag plainly what still needs confirming.`
+    case 'medium':
+      return `SOURCE CONFIDENCE — MODERATE (reliability ${score}/10). Acknowledge meaningful uncertainty where the reporting is thin or contested, qualify forecasts, and clearly separate well-established facts from still-developing details.`
+    case 'high':
+      return `SOURCE CONFIDENCE — HIGH (reliability ${score}/10, ${c.domainCount} independent source domains). Speak with justified confidence, but stay even-handed and still distinguish confirmed fact from analysis or projection.`
+  }
+}
+
 async function generatePodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
   show: Show,
+  confidence?: ScriptConfidence | null,
   editorialNotes?: string | null
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
@@ -791,11 +842,15 @@ ${lead.name}: [thoughtful] substantive response...
     ? `- End with ${lead.name} delivering the key takeaway / concrete next step`
     : `- No third speaker; end with ${lead.name} delivering the forecast and key takeaway`
 
+  const philosophyBlock = show.scriptPhilosophy?.trim()
+    ? `\n${show.scriptPhilosophy.trim()}\n`
+    : ''
+
   const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" episode in ${input.language} about: "${input.title}".
 ${descriptionBlock}${questionsBlock}
 ${editorialNotes ? `\nEditorial guidance to weave in (do not contradict the briefing):\n${editorialNotes}\n` : ''}
 ${BRAND_NAME} delivers substance NOT available in standard coverage — go beyond a recap. The energy is sharp, dynamic, and confident.
-
+${philosophyBlock}
 ${castBlock}
 
 Follow this topic-optimized structure, moving the listener forward:
@@ -812,7 +867,7 @@ INTERPRETATION RULES:
 - Do NOT invent new factual claims beyond the briefing
 - Do NOT re-litigate whether the story is real — assume the briefing reflects current reporting
 - Label inference vs. confirmed fact ("based on the reporting…", "if this holds…")
-
+${confidence ? `\n${buildConfidenceDirective(confidence)}\n` : ''}
 ${outputBlock}
 
 Rules:
@@ -823,7 +878,13 @@ Rules:
 - No stage directions beyond tags; no markdown
 ${closingRule}`
 
-  const raw = await vertexGenerateText(prompt, { temperature: 0.6, maxOutputTokens: 4096 })
+  // Ground strictly in the supplied briefing (no live search) — faster and keeps
+  // the script faithful to the verified brief rather than re-researching.
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.6,
+    maxOutputTokens: 4096,
+    useSearchGrounding: false,
+  })
   if (!raw) return null
 
   const parsed = parsePodcastScript(raw, show)
@@ -840,10 +901,14 @@ ${closingRule}`
 async function generateEpisodeBookends(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
-  show: Show
+  show: Show,
+  confidence?: ScriptConfidence | null
 ): Promise<EpisodeBookends | null> {
   const briefingExcerpt = markdown.slice(0, 2500)
   const region = geoFocusLabel(input)
+  const confidenceBlock = confidence
+    ? `\nSOURCE CONFIDENCE: ${buildConfidenceDirective(confidence)}\nThe SUMMARY must honestly reflect this confidence level (especially: if confidence is low, say so plainly rather than overstating certainty).\n`
+    : ''
 
   const prompt = `You script the spoken "bookends" for an episode of the "${show.name}" podcast on ${BRAND_NAME}, about "${input.title}".
 Write EVERYTHING in ${input.language}. Keep the brand names "${BRAND_NAME}" and "${show.name}" in Latin script.
@@ -854,18 +919,20 @@ Branded welcome to adapt for the INTRO (keep it in this show's voice): "${show.i
 
 Briefing context (ground all claims here, invent nothing):
 ${briefingExcerpt}
+${confidenceBlock}
 
-Produce exactly four labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
+Produce exactly five labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
 
 HOOK: A cold-open in the show's voice. Lead with the single most startling fact, stakes, or hook from the briefing. No greeting — drop the listener straight into the tension.
 INTRO: A branded welcome based on the channel's welcome line above, naturally woven together with the real topic ("${input.title}") and, where it fits the tone, the relevant place (${region}). Stay in "${show.name}"'s voice — do NOT use a generic news-network template. Adapt naturally into ${input.language}.
 SUMMARY: A rapid, objective 2-sentence recap of the core finding (and forecast, if relevant), in the show's tone.
 CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.
+DISCLAIMER: A brief spoken liability disclaimer in the show's calm, plain voice, adapted naturally into ${input.language}. Convey ALL of these points: this episode of "${show.name}" was produced with AI and is for general information only; it may contain errors and is not professional, legal, financial, or medical advice; sources were summarized automatically, so listeners should verify independently before relying on any claim. Keep the brand/show names in Latin script. Neutral and non-alarming.
 
 Rules:
-- Output ONLY the four lines, each beginning with its label (HOOK:, INTRO:, SUMMARY:, CTA:)
+- Output ONLY the five lines, each beginning with its label (HOOK:, INTRO:, SUMMARY:, CTA:, DISCLAIMER:)
 - No markdown, no stage directions, no speaker names
-- Each block <= 320 characters`
+- Each block <= 320 characters (the DISCLAIMER may use up to 360)`
 
   const raw = await vertexGenerateText(prompt, {
     temperature: 0.5,
@@ -884,9 +951,10 @@ Rules:
   const intro = pick('INTRO')
   const summary = pick('SUMMARY')
   const cta = pick('CTA')
+  const disclaimer = pick('DISCLAIMER')
 
-  if (!hook && !intro && !summary && !cta) return null
-  return { hook, intro, summary, cta }
+  if (!hook && !intro && !summary && !cta && !disclaimer) return null
+  return { hook, intro, summary, cta, disclaimer }
 }
 
 /**
@@ -916,11 +984,17 @@ function assembleEpisode(
   const fallbackCta = isEnglish
     ? `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
     : ''
+  // Spoken liability disclaimer. English fallback only — a failed bookends call
+  // must never leak English into a non-English episode.
+  const fallbackDisclaimer = isEnglish
+    ? `This episode of ${show.name} was produced with AI and is for general information only. It may contain errors and isn't professional, legal, financial, or medical advice. Sources were summarized automatically — please verify independently before relying on any claim.`
+    : ''
 
   const hook = bookends?.hook?.trim()
   const intro = (bookends?.intro?.trim() || fallbackIntro).trim()
   const summary = bookends?.summary?.trim()
   const cta = (bookends?.cta?.trim() || fallbackCta).trim()
+  const disclaimer = (bookends?.disclaimer?.trim() || fallbackDisclaimer).trim()
 
   const turns: PodcastTurn[] = []
 
@@ -953,7 +1027,9 @@ function assembleEpisode(
     })
   })
 
-  if (summary) {
+  // No-verdict shows (e.g. The ClearSight Brief) deliberately end on the
+  // forecast + a question to ponder, so we suppress the recap/conclusion turn.
+  if (summary && !show.noVerdict) {
     turns.push({
       speaker: hookSpeaker,
       text: truncateToBytes(`[thoughtful] ${summary}`, TTS_MAX_TURN_BYTES),
@@ -967,6 +1043,14 @@ function assembleEpisode(
       speaker: leadSpeaker,
       text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
       role: 'cta',
+    })
+  }
+
+  if (disclaimer) {
+    turns.push({
+      speaker: leadSpeaker,
+      text: truncateToBytes(`[neutral] ${disclaimer}`, TTS_MAX_TURN_BYTES),
+      role: 'disclaimer',
     })
   }
 
@@ -1266,9 +1350,109 @@ async function synthesizePodcastAudio(
 
   if (segments.length === 0) return null
 
+  // Close the episode with a baked 30s music sign-off.
+  segments.push(outroMusicSegment(show))
+
   const durationSeconds = segments.reduce((sum, segment) => sum + segment.durationSeconds, 0)
 
   return { url: segments[0]!.url, durationSeconds, segments }
+}
+
+/** One already-localized segment to re-synthesize, carrying its reused frame. */
+export interface LocalizedSegmentInput {
+  text?: string
+  speaker?: string
+  role?: AudioSegmentRole
+  imageUrl?: string | null
+  imagePrompt?: string | null
+  frameKind?: FrameKind | null
+  /** For non-TTS pass-through segments (e.g. baked outro music). */
+  url?: string | null
+  durationSeconds?: number | null
+}
+
+/**
+ * Re-synthesize audio for an already-localized episode, reusing each segment's
+ * existing frame image/prompt verbatim. Used by the re-localization job: the
+ * per-line text is already translated, the segment structure is preserved 1:1,
+ * and only the spoken audio is regenerated in the target language using the same
+ * host voices. Lines that fail TTS (rare — 6 retries each) are dropped; segments
+ * without text are skipped. Returns null when no audio could be produced.
+ */
+export async function resynthesizeLocalizedSegments(params: {
+  segments: LocalizedSegmentInput[]
+  targetLanguage: string
+  title: string
+  show: Show
+}): Promise<{ url: string; durationSeconds: number; segments: AudioSegment[] } | null> {
+  const { segments, targetLanguage, title, show } = params
+  const token = await getVertexAccessToken()
+  if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
+  if (segments.length === 0) return null
+
+  const locale = getVoiceForLanguage(targetLanguage)
+
+  // Each input is either a TTS line or a non-TTS pass-through (baked music),
+  // preserved 1:1 in order so the outro music survives re-localization.
+  type Plan =
+    | { kind: 'tts'; line: PreparedLine }
+    | { kind: 'pass'; segment: AudioSegment }
+    | null
+  const plans: Plan[] = segments.map((seg) => {
+    if (seg.role === 'music' && seg.url) {
+      return {
+        kind: 'pass',
+        segment: {
+          url: seg.url,
+          durationSeconds: seg.durationSeconds ?? OUTRO_MUSIC_SECONDS,
+          role: 'music',
+          imageUrl: seg.imageUrl ?? null,
+        },
+      }
+    }
+    const text = seg.text?.trim()
+    if (!text) return null
+    return {
+      kind: 'tts',
+      line: {
+        speaker: seg.speaker ?? leadHost(show).name,
+        text: truncateToBytes(text, TTS_MAX_TURN_BYTES),
+        role: seg.role ?? 'body',
+        imageUrl: seg.imageUrl ?? null,
+        imagePrompt: seg.imagePrompt ?? null,
+        frameKind: seg.frameKind ?? null,
+      },
+    }
+  })
+
+  const buffers = await mapPool(plans, TTS_CONCURRENCY, async (plan) =>
+    plan?.kind === 'tts' ? callGeminiTts(token, buildSingleSpeakerTtsBody('', plan.line, locale, show)) : null
+  )
+
+  const fallbackPerLine = 12
+  const built = await Promise.all(
+    plans.map(async (plan, index) => {
+      if (!plan) return null
+      if (plan.kind === 'pass') return plan.segment
+      const buffer = buffers[index]
+      if (!buffer) return null
+      const { line } = plan
+      return uploadAudioSegment(buffer, title, index, fallbackPerLine, {
+        speaker: line.speaker,
+        role: line.role,
+        imageUrl: line.imageUrl,
+        text: line.text,
+        imagePrompt: line.imagePrompt,
+        frameKind: line.frameKind,
+      })
+    })
+  )
+
+  const out = built.filter((segment): segment is AudioSegment => segment !== null)
+  if (out.length === 0) return null
+
+  const durationSeconds = out.reduce((sum, segment) => sum + segment.durationSeconds, 0)
+  return { url: out[0]!.url, durationSeconds, segments: out }
 }
 
 export { extractAudioSegments } from '@/lib/audio-segments'
@@ -1431,9 +1615,15 @@ export async function compileBriefAndScript(
   // so the briefing ships without a separate (slow, blocking) review. The
   // podcast script and episode bookends only depend on the briefing markdown,
   // so they run in parallel instead of in a serial chain.
+  const confidence: ScriptConfidence = {
+    reliabilityIndex,
+    sourceCount: sources.length,
+    domainCount: uniqueDomains(sources),
+  }
+
   const [draftScript, bookends] = await Promise.all([
-    generatePodcastScript(resolvedInput, markdownContent, show),
-    generateEpisodeBookends(resolvedInput, markdownContent, show),
+    generatePodcastScript(resolvedInput, markdownContent, show, confidence),
+    generateEpisodeBookends(resolvedInput, markdownContent, show, confidence),
   ])
 
   report('podcast', 60)
@@ -1569,6 +1759,121 @@ export async function synthesizeAndFinalize(
 
   report('done', 100)
   return { ...story, audioSegments: audio?.segments ?? null }
+}
+
+/**
+ * Distill a vivid, story-specific cover concept from the title + briefing so the
+ * episode thumbnail depicts THIS story rather than generic channel art. Cheap,
+ * best-effort LLM call; falls back to the title when it fails.
+ */
+async function buildEpisodeThumbnailConcept(
+  title: string,
+  markdownContent: string
+): Promise<string | null> {
+  const excerpt = markdownContent.replace(/\s+/g, ' ').trim().slice(0, 1400)
+  const prompt = `You are the cover-art director for a news/analysis podcast episode. Read the title and brief, then write ONE vivid, concrete sentence describing a symbolic editorial COVER IMAGE that captures THIS specific story — name the key subjects, setting, objects, action, and mood. Describe only the picture, not the dialogue, and assume NO text/logos will appear in the image.
+
+TITLE: "${title}"
+BRIEF:
+"""
+${excerpt}
+"""
+
+Return ONLY the one-sentence image description.`
+  try {
+    const raw = await vertexGenerateText(prompt, {
+      temperature: 0.4,
+      maxOutputTokens: 200,
+      model: VERTEX_FAST_MODEL,
+      useSearchGrounding: false,
+    })
+    const concept = raw?.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim()
+    return concept && concept.length > 0 ? concept.slice(0, 600) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Generate a unique, story-specific square cover image with Imagen, derived from
+ * the episode title + briefing, styled to the channel and localized to the
+ * story's place. Returns the uploaded blob URL, or null on any failure (caller
+ * keeps the channel cover-art fallback). Best-effort and never throws.
+ */
+export async function generateEpisodeThumbnail(args: {
+  title: string
+  markdownContent: string
+  show: Show
+  language?: string
+  geoLabel?: string
+  geoCountry?: string
+}): Promise<string | null> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
+
+  try {
+    const concept = await buildEpisodeThumbnailConcept(args.title, args.markdownContent)
+    const localeContext = buildLocaleVisualContext(args.language, args.geoLabel, args.geoCountry)
+    const prompt = [
+      'Premium, magazine-quality editorial cover illustration for a single podcast news episode.',
+      concept || args.title,
+      args.show.visualStyle,
+      localeContext,
+      'Square 1:1 composition, striking and specific to the subject, strong focal point, cinematic lighting. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.',
+    ]
+      .filter((part) => part && part.trim())
+      .join('\n\n')
+
+    const buffer = await vertexGenerateImage(prompt, {
+      aspectRatio: '1:1',
+      personGeneration: 'allow_adult',
+    })
+    if (!buffer) return null
+
+    const slug = args.title.slice(0, 32).replace(/\W/g, '-')
+    const blob = await put(`clearsight/thumbnails/${Date.now()}-${slug}.png`, buffer, {
+      access: 'public',
+      contentType: 'image/png',
+    })
+    return blob.url
+  } catch (err) {
+    console.error('[generate-story] episode thumbnail generation failed', err)
+    return null
+  }
+}
+
+/**
+ * Generate and persist a story-specific episode thumbnail for an already-
+ * finalized story. Best-effort: resolves the channel from stored metadata,
+ * generates the image, and updates `Story.thumbnailUrl` on success. The existing
+ * channel cover-art remains as the fallback if anything fails.
+ */
+export async function generateAndStoreEpisodeThumbnail(brief: CompiledBrief): Promise<string | null> {
+  const { storyId, context } = brief
+  const show =
+    showById(context.showMeta.showId) ??
+    resolveShow({ contentType: context.podcastType, category: context.resolvedInput.category })
+
+  const geo = context.resolvedInput
+  const geoLabel =
+    geo.geoLocal || geo.geoState || geo.geoCountry || geo.geoRegion || undefined
+
+  const url = await generateEpisodeThumbnail({
+    title: context.resolvedInput.title,
+    markdownContent: context.markdownContent,
+    show,
+    language: geo.language,
+    geoLabel,
+    geoCountry: geo.geoCountry,
+  })
+  if (!url) return null
+
+  try {
+    await prisma.story.update({ where: { id: storyId }, data: { thumbnailUrl: url } })
+    return url
+  } catch (err) {
+    console.error('[generate-story] failed to persist episode thumbnail', err)
+    return null
+  }
 }
 
 /**

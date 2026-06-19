@@ -217,7 +217,12 @@ export async function vertexGenerateGrounded(
       }>
     }
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? null
+    // Concatenate every text part: thinking models and grounded responses can
+    // split the answer across multiple parts, and reading only the first would
+    // truncate or drop the payload entirely.
+    const parts = data.candidates?.[0]?.content?.parts ?? []
+    const joined = parts.map((p) => p.text ?? '').join('')
+    const text = joined.length > 0 ? joined : null
     const sources = extractGroundingSources(data)
 
     return { text, sources }

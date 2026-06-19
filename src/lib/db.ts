@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { ensureDatabaseResolved, getCachedDatabaseCandidate } from '@/lib/database-url'
+import { buildDatabaseCandidates, ensureDatabaseResolved, getCachedDatabaseCandidate } from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined }
 
@@ -14,10 +14,20 @@ function getConnectionUrl(): string {
   const cached = getCachedDatabaseCandidate()?.url
   if (cached) return cached
 
-  return process.env.GCP_DATABASE_URL ?? process.env.DATABASE_URL ?? ''
+  // Respect DATABASE_PROVIDER and candidate ordering (not a blind GCP ?? Neon pick).
+  const candidates = buildDatabaseCandidates()
+  return candidates[0]?.url ?? process.env.GCP_DATABASE_URL ?? process.env.DATABASE_URL ?? ''
 }
 
 function getPrismaClient(): PrismaClient {
+  // After `prisma generate` adds models, a hot-reloaded dev server can keep a
+  // stale client missing new delegates (e.g. storyQuestion) until restart.
+  const existing = globalForPrisma.prisma
+  if (existing && !('storyQuestion' in existing)) {
+    void (existing as PrismaClient).$disconnect().catch(() => {})
+    globalForPrisma.prisma = undefined
+  }
+
   if (!globalForPrisma.prisma) {
     const url = getConnectionUrl()
     if (!url) {

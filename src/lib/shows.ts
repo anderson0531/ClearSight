@@ -50,6 +50,16 @@ export interface Show {
   visualStyle: string
   /** Ordered, topic-optimized script beats that drive generation. */
   scriptStructure: string[]
+  /**
+   * Optional show-specific editorial philosophy + retention rules injected into
+   * the script prompt. Lets a flagship channel (e.g. The ClearSight Brief) run a
+   * bespoke high-retention format without changing other channels. When set and
+   * `noVerdict` is true, the bookend SUMMARY is suppressed so the episode ends on
+   * a forecast + question rather than a definitive conclusion.
+   */
+  scriptPhilosophy?: string
+  /** When true, the episode avoids a definitive verdict/summary conclusion. */
+  noVerdict?: boolean
   /** Scene + tone guidance passed to TTS director notes. */
   sceneDirectorNotes: string
   /** Shared studio frame shown for intro/outro and as a host fallback. */
@@ -368,13 +378,16 @@ export const SHOW_NEWS = makeShow({
   visualStyle:
     'Style: clean, symbolic, professional news-magazine editorial illustration. Muted slate and indigo palette.',
   scriptStructure: [
-    'Hook: the single most consequential development',
-    'Context: how we got here',
-    'Key developments: what just changed',
-    'Analysis: causal factors and opposing perspectives (steel-man both sides)',
-    'Forecast: realistic scenarios and what to watch',
-    'Takeaway: the key analytical conclusion',
+    'Cold open: skip the preamble — Sarah hits the listener with the single highest-stakes data point or event; Benjamin frames the core tension in one move',
+    'Dialectical deep dive, Phase 1 (Side A): Sarah makes the strongest case for one side using hard metrics; Benjamin supplies the analytical context for why it holds weight',
+    'Dialectical deep dive, Phase 2 (Side B): Sarah pivots sharply to steel-man the opposing side, surfacing anomalies and counter-arguments; Benjamin breaks down the structural incentives driving it',
+    'Forecast & exit: Benjamin delivers a multi-factor forecast of what to watch next; Sarah leaves the listener with one vital question to ponder — no verdict, no conclusion',
   ],
+  scriptPhilosophy:
+    'SHOW PHILOSOPHY — "The ClearSight Brief": Cut through the noise with dense, even-handed analysis of one consequential story. Map the evidence transparently and steel-man EVERY perspective at its maximum intellectual strength. Do NOT take a side, do NOT patronize with summaries, and do NOT deliver a definitive final verdict or a section labeled "Conclusion" — present the balanced evidence as a conversational "table of evidence" and let the listener decide.\n' +
+    'STRUCTURE THE DEBATE AS A DIALECTIC: Phase 1 builds Side A on hard metrics with Benjamin\'s context; Phase 2 sharply steel-mans Side B with the structural incentives behind it. Both sides must be presented at full strength.\n' +
+    'RETENTION & AUDIO RULES: Write for the EAR, not the eye — short, varied sentence lengths, natural contractions (it\'s, they\'re, what\'s), and conversational transitions. Open on the highest-stakes point, not a greeting. Hosts must talk WITH each other in rapid hand-offs with frequent micro-agreement and pushback ("Let\'s push back on that…", "But the counter-metric here is…") — never long uninterrupted essays. Sarah is the sharp, fast, probing driver; Benjamin is the calm, authoritative anchor who supplies structural and historical context and the forecast. Target roughly 700-750 spoken words.',
+  noVerdict: true,
   sceneDirectorNotes:
     'Scene: modern intelligence newsroom. Tone: analytical, dense, energetic — no fluff. Pace: natural with thoughtful pauses.',
   studioImage: HOSTS_IMAGE,
@@ -1184,6 +1197,32 @@ export function featuredShows(): Show[] {
   return FEATURED_SHOW_IDS.map((id) => getShowById(id)).filter((s): s is Show => Boolean(s))
 }
 
+/** Popular channels for the home Featured row (cross-type editorial picks). */
+export function popularShows(): Show[] {
+  return featuredShows()
+}
+
+/** Top three channel picks per content type for home section thumbnails. */
+export const TOP_SHOW_IDS_BY_TYPE = {
+  Education: ['clearsight-academy', 'clearsight-science', 'clearsight-history'],
+  Entertainment: ['the-casefile', 'the-unexplained', 'the-green-room'],
+  Lifestyle: ['the-good-life', 'clearsight-kitchen', 'clearsight-travel'],
+} as const satisfies Record<'Education' | 'Entertainment' | 'Lifestyle', readonly string[]>
+
+export function topShowsForType(
+  contentType: 'Education' | 'Entertainment' | 'Lifestyle'
+): Show[] {
+  return TOP_SHOW_IDS_BY_TYPE[contentType]
+    .map((id) => getShowById(id))
+    .filter((s): s is Show => Boolean(s))
+}
+
+export const NEWS_SHOW_ID = 'clearsight-brief' as const
+
+export function newsShow(): Show {
+  return getShowById(NEWS_SHOW_ID) ?? SHOW_NEWS
+}
+
 /**
  * The categories a channel covers. A show with explicit `categories` owns just
  * those; a show with an empty list (e.g. The ClearSight Brief, ClearSight
@@ -1259,6 +1298,12 @@ export function resolveShow(input: ResolveShowInput): Show {
   return DEFAULT_SHOW_BY_TYPE[type] ?? SHOW_NEWS
 }
 
+/** Look up a show by its stored id (e.g. from `sourcesVerified.showId`). */
+export function showById(id?: string | null): Show | undefined {
+  if (!id) return undefined
+  return SHOWS.find((show) => show.id === id)
+}
+
 /** Find the host whose name/alias matches a script speaker label. */
 export function hostBySpeaker(speaker?: string | null): HostProfile | undefined {
   if (!speaker) return undefined
@@ -1269,8 +1314,14 @@ export function hostBySpeaker(speaker?: string | null): HostProfile | undefined 
   )
 }
 
-/** The show a given host belongs to (first match). */
-export function showForSpeaker(speaker?: string | null): Show | undefined {
+/**
+ * The show a given host belongs to. When `showId` is provided it wins — shared
+ * casts (e.g. Lena + Diego span 11 shows) otherwise resolve to the first
+ * registered show, which is rarely the episode's actual channel.
+ */
+export function showForSpeaker(speaker?: string | null, showId?: string | null): Show | undefined {
+  const byId = showById(showId)
+  if (byId) return byId
   const profile = hostBySpeaker(speaker)
   if (!profile) return undefined
   return SHOWS.find((show) => show.hosts.some((h) => h.name === profile.name))
@@ -1285,8 +1336,8 @@ export function speakingImagesForSpeaker(speaker?: string | null): string[] {
 }
 
 /** Studio fallback image for a speaker's show (used when no portrait exists). */
-export function studioImageForSpeaker(speaker?: string | null): string {
-  return showForSpeaker(speaker)?.studioImage ?? HOSTS_IMAGE
+export function studioImageForSpeaker(speaker?: string | null, showId?: string | null): string {
+  return showForSpeaker(speaker, showId)?.studioImage ?? HOSTS_IMAGE
 }
 
 // Per-Education-topic visual overlays, layered on top of a show's base

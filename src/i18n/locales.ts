@@ -30,6 +30,18 @@ export const LOCALES: LocaleDefinition[] = [
   { code: 'th', englishName: 'Thai', nativeName: 'ไทย', dir: 'ltr', ttsLanguageCode: 'th-TH', ttsVoice: 'th-TH-Neural2-C' },
   { code: 'uk', englishName: 'Ukrainian', nativeName: 'Українська', dir: 'ltr', ttsLanguageCode: 'uk-UA', ttsVoice: 'uk-UA-Wavenet-A' },
   { code: 'bn', englishName: 'Bengali', nativeName: 'বাংলা', dir: 'ltr', ttsLanguageCode: 'bn-IN', ttsVoice: 'bn-IN-Wavenet-A' },
+  // Next 11 by global speaker population (Ethnologue 2026, after the original 20).
+  { code: 'ur', englishName: 'Urdu', nativeName: 'اردو', dir: 'rtl', ttsLanguageCode: 'ur-IN', ttsVoice: 'ur-IN-Wavenet-A' },
+  { code: 'mr', englishName: 'Marathi', nativeName: 'मराठी', dir: 'ltr', ttsLanguageCode: 'mr-IN', ttsVoice: 'mr-IN-Wavenet-A' },
+  { code: 'te', englishName: 'Telugu', nativeName: 'తెలుగు', dir: 'ltr', ttsLanguageCode: 'te-IN', ttsVoice: 'te-IN-Standard-A' },
+  { code: 'sw', englishName: 'Swahili', nativeName: 'Kiswahili', dir: 'ltr', ttsLanguageCode: 'sw-KE', ttsVoice: 'sw-KE-Standard-A' },
+  { code: 'gu', englishName: 'Gujarati', nativeName: 'ગુજરાતી', dir: 'ltr', ttsLanguageCode: 'gu-IN', ttsVoice: 'gu-IN-Wavenet-A' },
+  { code: 'pa', englishName: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', dir: 'ltr', ttsLanguageCode: 'pa-IN', ttsVoice: 'pa-IN-Standard-A' },
+  { code: 'fil', englishName: 'Filipino', nativeName: 'Filipino', dir: 'ltr', ttsLanguageCode: 'fil-PH', ttsVoice: 'fil-PH-Wavenet-A' },
+  { code: 'ta', englishName: 'Tamil', nativeName: 'தமிழ்', dir: 'ltr', ttsLanguageCode: 'ta-IN', ttsVoice: 'ta-IN-Wavenet-A' },
+  { code: 'yue', englishName: 'Cantonese', nativeName: '粵語', dir: 'ltr', ttsLanguageCode: 'yue-HK', ttsVoice: 'yue-HK-Standard-A' },
+  { code: 'wuu', englishName: 'Wu Chinese', nativeName: '吴语', dir: 'ltr', ttsLanguageCode: 'cmn-CN', ttsVoice: 'cmn-CN-Wavenet-A' },
+  { code: 'fa', englishName: 'Persian', nativeName: 'فارسی', dir: 'rtl', ttsLanguageCode: 'fa-IR', ttsVoice: 'fa-IR-Standard-A' },
 ]
 
 export const DEFAULT_LOCALE_CODE = 'en'
@@ -53,4 +65,10 @@ export function getLocaleByEnglishName(name: string): LocaleDefinition {
 
 export function getLanguageEnglishNames(): string[] {
   return LOCALES.map((locale) => locale.englishName)
+}
+
+/** Google Translate API target code (may differ from UI locale code). */
+export function getTranslateTargetCode(localeCode: string): string {
+  if (localeCode === 'wuu') return 'zh'
+  return localeCode
 }

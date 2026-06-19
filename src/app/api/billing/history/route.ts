@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getSessionUserId } from '@/lib/auth'
+import { fromUnits } from '@/lib/credit-units'
 
 export async function GET() {
   const userId = await getSessionUserId()
@@ -8,7 +9,7 @@ export async function GET() {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const transactions = await prisma.creditTransaction.findMany({
+  const rows = await prisma.creditTransaction.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: 50,
@@ -21,6 +22,13 @@ export async function GET() {
       createdAt: true,
     },
   })
+
+  // Stored values are credit units; expose human credits (may be fractional).
+  const transactions = rows.map((t) => ({
+    ...t,
+    amount: fromUnits(t.amount),
+    balanceAfter: fromUnits(t.balanceAfter),
+  }))
 
   return NextResponse.json({ transactions })
 }

@@ -3,6 +3,7 @@ import { inngest, PODCAST_GENERATION_REQUESTED, type PodcastGenerationRequested 
 import { prisma } from '@/lib/db'
 import {
   compileBriefAndScript,
+  generateAndStoreEpisodeThumbnail,
   synthesizeAndFinalize,
   type CompiledBrief,
   type GenerateStoryInput,
@@ -106,6 +107,19 @@ export const generatePodcast = inngest.createFunction(
     })
 
     const storyId = finalized.storyId ?? brief.storyId
+
+    // Phase 2.5 — generate a story-specific episode thumbnail with Imagen.
+    // Best-effort: the channel cover-art set at finalize is already a valid
+    // thumbnail, so a failure here just leaves that fallback in place.
+    await step.run('generate-thumbnail', async () => {
+      try {
+        const url = await generateAndStoreEpisodeThumbnail(brief)
+        return { storyId, thumbnailUrl: url }
+      } catch (err) {
+        console.error('[inngest] episode thumbnail generation failed', err)
+        return { storyId, thumbnailUrl: null }
+      }
+    })
 
     // Phase 3 (optional) — render Imagen illustration frames. Best-effort: a
     // failure here must not fail the whole job (the audio podcast is the core

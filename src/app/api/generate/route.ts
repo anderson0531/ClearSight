@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { verifyAndConsumeCredits, consumeCredits, addCoreTokens, CreditError } from '@/lib/credits'
+import { BASE_GENERATION_UNITS, ILLUSTRATION_UNITS } from '@/lib/credit-units'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
 import { inngest, PODCAST_GENERATION_REQUESTED } from '@/inngest/client'
-
-/** Extra credits charged up front when Imagen illustration frames are requested. */
-const ILLUSTRATION_CREDITS = 2
 
 const generateSchema = z.object({
   title: z.string().min(3).max(200),
@@ -57,17 +55,17 @@ export async function POST(request: Request) {
     // Charges 1 core token and creates the Generation row (QUEUED by default).
     const { generationId } = await verifyAndConsumeCredits(userId, taxonomyKey)
 
-    let creditsCharged = 1
+    let creditsCharged = BASE_GENERATION_UNITS
     if (includeIllustrations) {
       // Charge the illustration add-on now so the whole request is paid up front
       // and can be refunded atomically on failure. If this charge fails (e.g.
       // insufficient balance for the add-on), refund the base token and mark the
       // never-enqueued job FAILED so we don't strand a QUEUED row or a charge.
       try {
-        await consumeCredits(userId, ILLUSTRATION_CREDITS, 'On-demand illustrations')
-        creditsCharged += ILLUSTRATION_CREDITS
+        await consumeCredits(userId, ILLUSTRATION_UNITS, 'On-demand illustrations')
+        creditsCharged += ILLUSTRATION_UNITS
       } catch (addonErr) {
-        await addCoreTokens(userId, 1, 'Refund: illustration charge failed').catch(() => {})
+        await addCoreTokens(userId, BASE_GENERATION_UNITS, 'Refund: illustration charge failed').catch(() => {})
         await prisma.generation
           .update({ where: { id: generationId }, data: { status: 'FAILED', errorMessage: 'Illustration credit charge failed.' } })
           .catch(() => {})

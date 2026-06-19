@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { prisma } from '@/lib/db'
 import { getSessionUserId } from '@/lib/auth'
+import { toUnits } from '@/lib/credit-units'
 
 export const DEMO_USER_ID = 'demo-user'
 export const USER_COOKIE = 'cs-uid'
@@ -50,7 +51,7 @@ export async function ensureDemoUser(userId: string = DEMO_USER_ID) {
       email: 'demo@clearsight.local',
       plan: 'CREATOR',
       subscriptionActive: true,
-      coreTokens: 5000,
+      coreTokens: toUnits(5000),
     },
     select: {
       id: true,

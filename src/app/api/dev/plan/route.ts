@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { isPlan } from '@/lib/plans'
+import { fromUnits } from '@/lib/credit-units'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 
 const bodySchema = z.object({
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     id: user.id,
     plan: user.plan,
-    coreTokens: user.coreTokens,
+    coreTokens: fromUnits(user.coreTokens),
     subscriptionActive: user.subscriptionActive,
     email: user.email,
     demoMode: user.id === 'demo-user',

@@ -1,9 +1,63 @@
 import { notFound } from 'next/navigation'
 import { TruthLedger, TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
 import { StoryPageHeader } from '@/components/story/StoryPageHeader'
+import { StoryQASection } from '@/components/story/StoryQASection'
 import { getStoryById } from '@/lib/stories'
 import { extractAudioSegments } from '@/lib/generate-story'
 import { MOCK_STORIES } from '@/lib/mock-stories'
+import { getShowById } from '@/lib/shows'
+import { getCurrentUserId } from '@/lib/session'
+import { serializeStoryQuestion, type SerializedStoryQuestion } from '@/lib/qa'
+import { prisma } from '@/lib/db'
+
+type ReactionValue = 1 | -1 | 0
+
+/**
+ * Resolve the current user's relationship to this story: whether they may
+ * delete it (they have a Generation that produced it) and their existing
+ * thumbs up/down. Best-effort — any failure degrades to "no permissions".
+ * Plan-based gating (e.g. who can ask the hosts) is resolved client-side via
+ * the user context, which reflects the live auth/session state.
+ */
+async function getViewerContext(
+  storyId: string
+): Promise<{ canDelete: boolean; myReaction: ReactionValue }> {
+  try {
+    const userId = await getCurrentUserId()
+    if (!userId) return { canDelete: false, myReaction: 0 }
+
+    const [ownsGeneration, reaction] = await Promise.all([
+      prisma.generation.findFirst({
+        where: { storyId, userId },
+        select: { id: true },
+      }),
+      prisma.storyReaction.findUnique({
+        where: { storyId_userId: { storyId, userId } },
+        select: { value: true },
+      }),
+    ])
+
+    const myReaction: ReactionValue =
+      reaction?.value === 1 ? 1 : reaction?.value === -1 ? -1 : 0
+    return { canDelete: Boolean(ownsGeneration), myReaction }
+  } catch {
+    return { canDelete: false, myReaction: 0 }
+  }
+}
+
+/** Load the public Q&A for an episode (best-effort). */
+async function getStoryQuestions(storyId: string): Promise<SerializedStoryQuestion[]> {
+  try {
+    const rows = await prisma.storyQuestion.findMany({
+      where: { storyId },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    })
+    return rows.map(serializeStoryQuestion)
+  } catch {
+    return []
+  }
+}
 
 interface StoryPageProps {
   params: Promise<{ id: string }>
@@ -49,6 +103,7 @@ export default async function StoryPage({ params }: StoryPageProps) {
   const durationSeconds = dbStory?.durationSeconds ?? mockStory?.durationSeconds ?? null
   const reliabilityIndex = dbStory?.reliabilityIndex ?? mockStory?.reliabilityIndex ?? null
   const category = dbStory?.category ?? mockStory!.category
+  const language = dbStory?.language ?? null
   const geoScope = dbStory?.geoScope ?? mockStory!.geoScope
   const geoRegion = dbStory?.geoRegion ?? mockStory?.geoRegion
   const geoCountry = dbStory?.geoCountry ?? mockStory?.geoCountry
@@ -56,12 +111,20 @@ export default async function StoryPage({ params }: StoryPageProps) {
   const geoLocal = dbStory?.geoLocal ?? mockStory?.geoLocal
   const sourcesCount = countSources(markdown)
 
+  const meta = (dbStory?.sourcesVerified ?? null) as { showId?: string } | null
+  const showId = meta?.showId && getShowById(meta.showId) ? meta.showId : null
+
+  const [{ canDelete, myReaction }, initialQuestions] = dbStory
+    ? await Promise.all([getViewerContext(id), getStoryQuestions(id)])
+    : [{ canDelete: false, myReaction: 0 as ReactionValue }, [] as SerializedStoryQuestion[]]
+
   return (
     <div className="min-h-screen bg-[var(--background)] pb-28">
       <StoryPageHeader
         id={id}
         title={title}
         category={category}
+        language={language}
         geoLabel={geoLabel({ geoScope, geoRegion, geoCountry, geoState, geoLocal })}
         reliabilityIndex={reliabilityIndex}
         durationSeconds={durationSeconds}
@@ -69,9 +132,23 @@ export default async function StoryPage({ params }: StoryPageProps) {
         audioUrl={audioUrl}
         audioSegments={audioSegments}
         thumbnailUrl={thumbnailUrl}
+        showId={showId}
+        canDelete={canDelete}
+        viewCount={dbStory?.viewCount ?? 0}
+        likeCount={dbStory?.likeCount ?? 0}
+        dislikeCount={dbStory?.dislikeCount ?? 0}
+        myReaction={myReaction}
       />
       <main className="fade-in mx-auto max-w-3xl px-4 py-8">
         <TruthLedger markdown={markdown} />
+        {dbStory ? (
+          <StoryQASection
+            storyId={id}
+            language={language ?? 'English'}
+            showId={showId}
+            initialQuestions={initialQuestions}
+          />
+        ) : null}
       </main>
     </div>
   )

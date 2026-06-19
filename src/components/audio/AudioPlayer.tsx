@@ -285,7 +285,15 @@ export function AudioPlayer() {
     setCurrentTime((offsets[segmentIndex] ?? 0) + localTime)
 
     const audio = audioRef.current
-    const segmentDuration = segments[segmentIndex]?.durationSeconds
+    const seg = segments[segmentIndex]
+    // Cap the baked outro-music segment at its declared length — the source bed
+    // file may be longer than the intended 30s sign-off.
+    if (seg?.role === 'music' && seg.durationSeconds > 0 && localTime >= seg.durationSeconds) {
+      audio?.pause()
+      handleEnded()
+      return
+    }
+    const segmentDuration = seg?.durationSeconds
     if (
       !audio ||
       isLastSegment ||

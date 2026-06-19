@@ -4,21 +4,21 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
-import { CategoryTiles } from '@/components/discovery/CategoryTiles'
-import { FeaturedShows } from '@/components/discovery/FeaturedShows'
-import { StoryRow } from '@/components/discovery/StoryRow'
+import { HomeContentSection } from '@/components/discovery/HomeContentSection'
+import { HomeFeaturedSection } from '@/components/discovery/HomeFeaturedSection'
+import { HomeNewsHero } from '@/components/discovery/HomeNewsHero'
 import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
 import { useUser } from '@/components/providers/UserProvider'
-import { buildStoryParams, filterMockStories, type GeoDefaults } from '@/lib/discovery-utils'
-import { DEFAULT_TAXONOMY, type Category, type TaxonomyFilter } from '@/lib/taxonomy'
-import { loadPersistedTaxonomyFilter, persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
+import { newsShow, topShowsForType } from '@/lib/shows'
 import {
   SAVED_SEARCHES_EVENT,
   loadSavedSearches,
   type SavedSearch,
 } from '@/lib/saved-searches'
 import { useI18n } from '@/i18n/I18nProvider'
-import type { StoryCard } from '@/types/story'
+import { CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
+import type { TaxonomyFilter } from '@/lib/taxonomy'
+import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
 
 function greetingKey(): 'homeGreetingMorning' | 'homeGreetingAfternoon' | 'homeGreetingEvening' {
   const hour = new Date().getHours()
@@ -31,11 +31,8 @@ export default function HomePage() {
   const { t, locale } = useI18n()
   const { plan } = useUser()
   const router = useRouter()
-  const [stories, setStories] = useState<StoryCard[]>([])
-  const [topStories, setTopStories] = useState<StoryCard[]>([])
-  const [recommended, setRecommended] = useState<StoryCard[]>([])
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
-  const [loading, setLoading] = useState(true)
+  const news = newsShow()
 
   useEffect(() => {
     const sync = () => setSavedSearches(loadSavedSearches())
@@ -47,81 +44,6 @@ export default function HomePage() {
       window.removeEventListener('storage', sync)
     }
   }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const lang = locale.englishName as TaxonomyFilter['languages'][number]
-
-    const fallback: TaxonomyFilter = { ...DEFAULT_TAXONOMY, languages: [lang] }
-    // Discovery only ever shows the active locale's language; the persisted
-    // filter can carry a stale language from before a locale switch.
-    const persisted = loadPersistedTaxonomyFilter(fallback)
-    const baseFilter: TaxonomyFilter = {
-      ...persisted,
-      languages: [lang],
-      categories: ['Top'],
-    }
-
-    const run = async () => {
-      let geo: { defaults?: GeoDefaults } | null = null
-      try {
-        const res = await fetch('/api/geo')
-        geo = res.ok ? await res.json() : null
-      } catch {
-        geo = null
-      }
-
-      const browseFilter: TaxonomyFilter = {
-        ...baseFilter,
-        geoScope: (geo?.defaults?.geoScope as TaxonomyFilter['geoScope']) ?? baseFilter.geoScope,
-        geoRegion: geo?.defaults?.geoRegion ?? baseFilter.geoRegion,
-        geoCountry: geo?.defaults?.geoCountry ?? baseFilter.geoCountry,
-        geoState: geo?.defaults?.geoState ?? baseFilter.geoState,
-        geoLocal: geo?.defaults?.geoLocal ?? baseFilter.geoLocal,
-      }
-
-      const fetchStories = async (
-        filter: TaxonomyFilter,
-        extra: Record<string, string> = {}
-      ): Promise<StoryCard[]> => {
-        const params = buildStoryParams(filter, true)
-        for (const [key, val] of Object.entries(extra)) params.set(key, val)
-        try {
-          const res = await fetch(`/api/stories?${params}`)
-          const data = (res.ok ? await res.json() : null) as { stories?: StoryCard[] } | null
-          return data?.stories ?? []
-        } catch {
-          return []
-        }
-      }
-
-      // Recommendation signal: the category the user saves searches for most.
-      const saved = loadSavedSearches()
-      const prefCategory = saved
-        .map((s) => s.filter.categories?.[0])
-        .find((c): c is Category => Boolean(c) && c !== 'Top')
-
-      const [discover, top, recs] = await Promise.all([
-        fetchStories(browseFilter),
-        fetchStories(browseFilter, { sort: 'top' }),
-        prefCategory
-          ? fetchStories({ ...browseFilter, categories: [prefCategory] })
-          : Promise.resolve<StoryCard[]>([]),
-      ])
-
-      if (cancelled) return
-      setStories(discover.length ? discover : filterMockStories(browseFilter))
-      setTopStories(top)
-      setRecommended(recs)
-      setLoading(false)
-    }
-
-    void run()
-
-    return () => {
-      cancelled = true
-    }
-  }, [locale.englishName])
 
   const openSavedSearch = (search: SavedSearch) => {
     const restored: TaxonomyFilter = {
@@ -169,19 +91,37 @@ export default function HomePage() {
         />
       ) : null}
 
-      {loading ? (
-        <div className="mb-8 h-40 animate-pulse rounded-xl bg-[var(--surface)]" />
-      ) : (
-        <>
-          <StoryRow stories={topStories} title={t('homeTopPodcasts')} />
-          <StoryRow stories={recommended} title={t('homeRecommended')} />
-          <StoryRow stories={stories} title={t('homeDiscoverNew')} />
-        </>
-      )}
+      <div className="space-y-10">
+        <HomeContentSection
+          title={t(CONTENT_TYPE_MESSAGE_KEYS.News)}
+          contentType="News"
+          seeAllHref="/channels?contentType=News"
+          hero={<HomeNewsHero show={news} />}
+        />
 
-      <FeaturedShows />
+        <HomeFeaturedSection />
 
-      <CategoryTiles />
+        <HomeContentSection
+          title={t(CONTENT_TYPE_MESSAGE_KEYS.Education)}
+          contentType="Education"
+          seeAllHref="/channels?contentType=Education"
+          shows={topShowsForType('Education')}
+        />
+
+        <HomeContentSection
+          title={t(CONTENT_TYPE_MESSAGE_KEYS.Entertainment)}
+          contentType="Entertainment"
+          seeAllHref="/channels?contentType=Entertainment"
+          shows={topShowsForType('Entertainment')}
+        />
+
+        <HomeContentSection
+          title={t(CONTENT_TYPE_MESSAGE_KEYS.Lifestyle)}
+          contentType="Lifestyle"
+          seeAllHref="/channels?contentType=Lifestyle"
+          shows={topShowsForType('Lifestyle')}
+        />
+      </div>
     </main>
   )
 }

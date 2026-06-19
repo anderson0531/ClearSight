@@ -2,10 +2,12 @@
 
 import { useRef, useState } from 'react'
 import Link from 'next/link'
-import { Clapperboard, Clock, Globe, Images, Loader2, Shield, Sparkles } from 'lucide-react'
+import { Clapperboard, Clock, Globe, Images, Languages, Loader2, Shield, Sparkles, Tv } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
 import { ShareBriefingButton } from '@/components/story/ShareBriefingButton'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
+import { TranslatePodcastDialog } from '@/components/story/TranslatePodcastDialog'
+import { StoryEngagementBar } from '@/components/story/StoryEngagementBar'
 import {
   AnimaticStage,
   type AnimaticStageHandle,
@@ -17,10 +19,13 @@ import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
 import type { AudioSegment } from '@/types/story'
 
+type ReactionValue = 1 | -1 | 0
+
 interface StoryHeaderProps {
   id: string
   title: string
   category: string
+  language: string | null
   geoLabel: string
   reliabilityIndex: number | null
   durationSeconds: number | null
@@ -28,6 +33,12 @@ interface StoryHeaderProps {
   audioUrl: string | null
   audioSegments?: AudioSegment[] | null
   thumbnailUrl: string | null
+  showId: string | null
+  canDelete: boolean
+  viewCount: number
+  likeCount: number
+  dislikeCount: number
+  myReaction: ReactionValue
 }
 
 function formatDuration(seconds: number | null): string {
@@ -41,6 +52,7 @@ export function StoryPageHeader({
   id,
   title,
   category,
+  language,
   geoLabel,
   reliabilityIndex,
   durationSeconds,
@@ -48,11 +60,18 @@ export function StoryPageHeader({
   audioUrl,
   audioSegments,
   thumbnailUrl,
+  showId,
+  canDelete,
+  viewCount,
+  likeCount,
+  dislikeCount,
+  myReaction,
 }: StoryHeaderProps) {
   const t = useTranslations()
   const { plan } = useUser()
   const canIllustrate = canGenerateOnDemand(plan)
   const animaticRef = useRef<AnimaticStageHandle>(null)
+  const [translateOpen, setTranslateOpen] = useState(false)
   const [animaticState, setAnimaticState] = useState<AnimaticStageState>({
     canView: false,
     isGenerating: false,
@@ -145,37 +164,27 @@ export function StoryPageHeader({
                   <Clapperboard className="h-4 w-4" />
                   {t('viewBriefing')}
                 </button>
-                {canIllustrate ? (
+                {canIllustrate && (!animaticState.hasIllustrations || animaticState.isGenerating) ? (
                   <button
                     type="button"
                     onClick={handleIllustrate}
-                    disabled={!audioUrl || animaticState.isGenerating || animaticState.hasIllustrations}
+                    disabled={!audioUrl || animaticState.isGenerating}
                     className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={
-                      animaticState.hasIllustrations
-                        ? t('illustrateReadyHint')
-                        : !audioUrl
-                          ? t('animaticUnavailable')
-                          : t('illustrateHint')
-                    }
+                    title={!audioUrl ? t('animaticUnavailable') : t('illustrateHint')}
                   >
                     {animaticState.isGenerating ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Images className="h-4 w-4" />
                     )}
-                    {animaticState.isGenerating
-                      ? t('illustrating')
-                      : animaticState.hasIllustrations
-                        ? t('illustrationsReady')
-                        : t('illustrate')}
-                    {!animaticState.isGenerating && !animaticState.hasIllustrations ? (
+                    {animaticState.isGenerating ? t('illustrating') : t('illustrate')}
+                    {!animaticState.isGenerating ? (
                       <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
                         {t('illustrateCredits', { count: 2 })}
                       </span>
                     ) : null}
                   </button>
-                ) : (
+                ) : !canIllustrate ? (
                   <Link
                     href="/premium"
                     className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-credit)]/30 bg-[var(--accent-credit-muted)] px-4 py-2 text-sm font-semibold text-[#e8d5a8] transition-colors hover:bg-[var(--accent-credit-muted)]"
@@ -183,9 +192,43 @@ export function StoryPageHeader({
                     <Sparkles className="h-4 w-4" />
                     {t('upgradeCta')}
                   </Link>
-                )}
+                ) : null}
+                {canIllustrate && audioUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setTranslateOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10"
+                    title={t('translateHint')}
+                  >
+                    <Languages className="h-4 w-4" />
+                    {t('translate')}
+                    <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                      {t('translateCredits')}
+                    </span>
+                  </button>
+                ) : null}
+                {showId ? (
+                  <Link
+                    href={`/channel/${showId}`}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10"
+                    title={t('goToChannel')}
+                  >
+                    <Tv className="h-4 w-4" />
+                    {t('goToChannel')}
+                  </Link>
+                ) : null}
                 <ShareBriefingButton title={title} storyId={id} />
               </div>
+
+              <StoryEngagementBar
+                storyId={id}
+                canDelete={canDelete}
+                showId={showId}
+                viewCount={viewCount}
+                likeCount={likeCount}
+                dislikeCount={dislikeCount}
+                myReaction={myReaction}
+              />
             </div>
           </div>
 
@@ -195,9 +238,17 @@ export function StoryPageHeader({
             title={title}
             audioUrl={audioUrl}
             audioSegments={audioSegments}
+            showId={showId}
             onStateChange={setAnimaticState}
           />
         </div>
+
+        <TranslatePodcastDialog
+          storyId={id}
+          currentLanguage={language}
+          open={translateOpen}
+          onClose={() => setTranslateOpen(false)}
+        />
       </header>
   )
 }

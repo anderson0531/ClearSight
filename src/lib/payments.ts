@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { toUnits } from '@/lib/credit-units'
 import { PLAN_MONTHLY_CREDITS, type CreditPack, type Plan } from '@/lib/plans'
 
 /** Days of data retention for a lapsed (delinquent) account before purge. */
@@ -25,7 +26,7 @@ export function isPaymentBypassEnabled(): boolean {
  * delinquency flag, and records a credit transaction.
  */
 export async function autoConfirmSubscription(userId: string, plan: Plan) {
-  const grant = PLAN_MONTHLY_CREDITS[plan]
+  const grant = toUnits(PLAN_MONTHLY_CREDITS[plan])
   const active = plan !== 'FREE'
 
   return prisma.$transaction(async (tx) => {
@@ -62,17 +63,18 @@ export async function autoConfirmSubscription(userId: string, plan: Plan) {
  * records a transaction.
  */
 export async function autoConfirmCreditPurchase(userId: string, pack: CreditPack) {
+  const units = toUnits(pack)
   return prisma.$transaction(async (tx) => {
     const updated = await tx.user.update({
       where: { id: userId },
-      data: { coreTokens: { increment: pack } },
+      data: { coreTokens: { increment: units } },
       select: { id: true, plan: true, coreTokens: true, subscriptionActive: true, email: true, name: true },
     })
 
     await tx.creditTransaction.create({
       data: {
         userId,
-        amount: pack,
+        amount: units,
         balanceAfter: updated.coreTokens,
         type: 'PURCHASE',
         description: `${pack}-credit add-on pack`,
