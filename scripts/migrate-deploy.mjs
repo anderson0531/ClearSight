@@ -4,8 +4,18 @@ import { join } from 'node:path'
 import { resolveAndApplyDatabaseEnv } from './database-url.mjs'
 
 async function main() {
-  const candidate = await resolveAndApplyDatabaseEnv(join(process.cwd(), '.env'))
-  console.log(`[migrate] Active provider: ${candidate.provider}`)
+  if (process.env.VERCEL) {
+    // On Vercel, use the project DATABASE_URL directly. Local multi-provider
+    // probing (Neon vs GCP) is for dev only and can fail or add minutes of
+    // timeout when GCP credentials are absent from the build environment.
+    if (!process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is required for schema sync on Vercel')
+    }
+    console.log('[migrate] Vercel build — using DATABASE_URL')
+  } else {
+    const candidate = await resolveAndApplyDatabaseEnv(join(process.cwd(), '.env'))
+    console.log(`[migrate] Active provider: ${candidate.provider}`)
+  }
 
   try {
     execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env })
