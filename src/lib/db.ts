@@ -29,8 +29,15 @@ function getPrismaClient(): PrismaClient {
 }
 
 export async function warmDatabaseConnection(): Promise<void> {
-  await ensureDatabaseResolved()
-  getPrismaClient()
+  try {
+    await ensureDatabaseResolved()
+    getPrismaClient()
+  } catch (error) {
+    console.warn(
+      '[db] Startup database warmup skipped:',
+      error instanceof Error ? error.message : error
+    )
+  }
 }
 
 export const prisma = new Proxy({} as PrismaClient, {

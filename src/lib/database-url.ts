@@ -92,6 +92,13 @@ export function buildDatabaseCandidates(): DatabaseCandidate[] {
 }
 
 export function isDatabaseUnavailableError(error: unknown): boolean {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: string }).code
+    if (code === 'P2021' || code === 'P2022') {
+      return true
+    }
+  }
+
   const message = error instanceof Error ? error.message : String(error)
   return (
     message.includes("Can't reach database server") ||

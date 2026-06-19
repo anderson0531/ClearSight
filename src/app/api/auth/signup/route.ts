@@ -5,7 +5,7 @@ import { prisma } from '@/lib/db'
 import { createSession, hashPassword } from '@/lib/auth'
 import { serializeUser } from '@/lib/account'
 import { AFFILIATE_COOKIE } from '@/lib/geo'
-import { isDatabaseUnavailableError } from '@/lib/database-url'
+import { isDatabaseUnavailableError, ensureDatabaseResolved } from '@/lib/database-url'
 
 const bodySchema = z.object({
   email: z.string().email().transform((v) => v.trim().toLowerCase()),
@@ -25,6 +25,7 @@ export async function POST(request: Request) {
   const { email, password, name } = parsed.data
 
   try {
+    await ensureDatabaseResolved()
     const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
     if (existing) {
       return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409 })

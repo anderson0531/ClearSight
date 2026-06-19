@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { createSession, verifyPassword } from '@/lib/auth'
 import { serializeUser } from '@/lib/account'
-import { isDatabaseUnavailableError } from '@/lib/database-url'
+import { isDatabaseUnavailableError, ensureDatabaseResolved } from '@/lib/database-url'
 
 const bodySchema = z.object({
   email: z.string().email().transform((v) => v.trim().toLowerCase()),
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
   const { email, password } = parsed.data
 
   try {
+    await ensureDatabaseResolved()
     const user = await prisma.user.findUnique({
       where: { email },
       select: {
