@@ -1,36 +1,74 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process'
 import { join } from 'node:path'
-import { resolveAndApplyDatabaseEnv } from './database-url.mjs'
+import { Client } from 'pg'
+import {
+  applyCandidateToProcessEnv,
+  loadEnvFile,
+  resolveDatabaseCandidate,
+  resolveAndApplyDatabaseEnv,
+} from './database-url.mjs'
+
+async function sessionTableExists(url) {
+  const client = new Client({
+    connectionString: url,
+    connectionTimeoutMillis: 10000,
+    ssl: { rejectUnauthorized: false },
+  })
+  try {
+    await client.connect()
+    const result = await client.query(
+      "SELECT to_regclass('public.\"Session\"') IS NOT NULL AS exists"
+    )
+    return result.rows[0]?.exists === true
+  } catch {
+    return false
+  } finally {
+    await client.end().catch(() => undefined)
+  }
+}
+
+function runPrisma(command) {
+  execSync(command, { stdio: 'inherit', env: process.env })
+}
+
+async function syncSchema() {
+  try {
+    runPrisma('npx prisma migrate deploy')
+    console.log('[migrate] migrate deploy succeeded')
+  } catch (deployErr) {
+    console.warn(
+      '[migrate] migrate deploy failed — falling back to db push:',
+      deployErr instanceof Error ? deployErr.message : deployErr
+    )
+    runPrisma('npx prisma db push --skip-generate --accept-data-loss')
+    console.log('[migrate] db push succeeded')
+    return
+  }
+
+  const hasSession = await sessionTableExists(process.env.DATABASE_URL)
+  if (!hasSession) {
+    console.warn(
+      '[migrate] migrations marked applied but Session table missing — running db push'
+    )
+    runPrisma('npx prisma db push --skip-generate --accept-data-loss')
+    console.log('[migrate] schema repair via db push succeeded')
+  }
+}
 
 async function main() {
   if (process.env.VERCEL) {
-    // On Vercel, use the project DATABASE_URL directly. Local multi-provider
-    // probing (Neon vs GCP) is for dev only and can fail or add minutes of
-    // timeout when GCP credentials are absent from the build environment.
-    if (!process.env.DATABASE_URL) {
-      throw new Error('DATABASE_URL is required for schema sync on Vercel')
-    }
-    console.log('[migrate] Vercel build — using DATABASE_URL')
+    // Probe Neon then GCP using Vercel env vars (no local .env).
+    loadEnvFile(join(process.cwd(), '.env'))
+    const candidate = await resolveDatabaseCandidate(process.env)
+    applyCandidateToProcessEnv(candidate)
+    console.log(`[migrate] Vercel build — using ${candidate.provider} database`)
   } else {
     const candidate = await resolveAndApplyDatabaseEnv(join(process.cwd(), '.env'))
     console.log(`[migrate] Active provider: ${candidate.provider}`)
   }
 
-  try {
-    execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env })
-    console.log('[migrate] migrate deploy succeeded')
-  } catch (deployErr) {
-    // Production databases that predate Prisma Migrate may already have the init
-    // tables but no _prisma_migrations row. In that case migrate deploy fails on
-    // the first migration; db push safely brings the schema up to date instead.
-    console.warn(
-      '[migrate] migrate deploy failed — falling back to db push:',
-      deployErr instanceof Error ? deployErr.message : deployErr
-    )
-    execSync('npx prisma db push --skip-generate', { stdio: 'inherit', env: process.env })
-    console.log('[migrate] db push succeeded')
-  }
+  await syncSchema()
 }
 
 main().catch((error) => {

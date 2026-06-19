@@ -25,7 +25,7 @@
     "generate:show-intros": "node scripts/generate-show-intros.mjs",
     "generate:vapid": "node scripts/generate-vapid-keys.mjs",
     "db:gcp": "node scripts/start-gcp-db.mjs",
-    "db:push": "node -e \"import('./scripts/database-url.mjs').then(m=>m.resolveAndApplyDatabaseEnv()).then(()=>process.exit(0))\" && npx prisma db push"
+    "db:push": "node scripts/db-push.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"
