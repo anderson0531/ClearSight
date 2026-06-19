@@ -112,7 +112,15 @@ export function isDatabaseUnavailableError(error: unknown): boolean {
   )
 }
 
-async function probeDatabase(url: string, timeoutMs = 8000): Promise<boolean> {
+export function getDatabaseUnavailableMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes('data transfer quota')) {
+    return 'Database quota exceeded. Please upgrade your Neon plan or try again after the quota resets.'
+  }
+  return 'Database unavailable. Please try again shortly.'
+}
+
+async function probeDatabase(url: string, timeoutMs = 8000): Promise<{ ok: true } | { ok: false; error: string }> {
   const client = new Client({
     connectionString: url,
     connectionTimeoutMillis: timeoutMs,
@@ -122,9 +130,10 @@ async function probeDatabase(url: string, timeoutMs = 8000): Promise<boolean> {
   try {
     await client.connect()
     await client.query('SELECT 1')
-    return true
-  } catch {
-    return false
+    return { ok: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { ok: false, error: message }
   } finally {
     await client.end().catch(() => undefined)
   }
@@ -141,24 +150,26 @@ export async function resolveDatabaseCandidate(force = false): Promise<DatabaseC
 
   globalForDb.resolvingDatabase = (async () => {
     const candidates = buildDatabaseCandidates()
+    let lastError = 'No reachable database found. Neon and GCP both failed connectivity checks.'
 
     if (candidates.length === 0) {
       throw new Error('No database candidates configured. Set DATABASE_URL or GCP_DATABASE_URL.')
     }
 
     for (const candidate of candidates) {
-      const reachable = await probeDatabase(candidate.url)
-      if (reachable) {
+      const result = await probeDatabase(candidate.url)
+      if (result.ok) {
         globalForDb.resolvedDatabase = candidate
         process.env.ACTIVE_DATABASE_PROVIDER = candidate.provider
         console.info(`[db] Using ${candidate.provider} database`)
         return candidate
       }
 
+      lastError = result.error
       console.warn(`[db] ${candidate.provider} database unreachable, trying next candidate`)
     }
 
-    throw new Error('No reachable database found. Neon and GCP both failed connectivity checks.')
+    throw new Error(lastError)
   })()
 
   try {

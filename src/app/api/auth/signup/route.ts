@@ -5,7 +5,7 @@ import { prisma } from '@/lib/db'
 import { createSession, hashPassword } from '@/lib/auth'
 import { serializeUser } from '@/lib/account'
 import { AFFILIATE_COOKIE } from '@/lib/geo'
-import { isDatabaseUnavailableError, ensureDatabaseResolved } from '@/lib/database-url'
+import { isDatabaseUnavailableError, ensureDatabaseResolved, getDatabaseUnavailableMessage } from '@/lib/database-url'
 
 const bodySchema = z.object({
   email: z.string().email().transform((v) => v.trim().toLowerCase()),
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
   } catch (err) {
     if (isDatabaseUnavailableError(err)) {
       return NextResponse.json(
-        { error: 'Database unavailable. Please try again shortly.', code: 'DB_UNAVAILABLE' },
+        { error: getDatabaseUnavailableMessage(err), code: 'DB_UNAVAILABLE' },
         { status: 503 }
       )
     }
