@@ -43,6 +43,19 @@ export function buildDatabaseCandidates(): DatabaseCandidate[] {
     })
   }
 
+  for (const url of [
+    process.env.POSTGRES_PRISMA_URL,
+    process.env.POSTGRES_URL,
+  ].filter(Boolean)) {
+    if (!candidates.some((candidate) => candidate.url === url)) {
+      candidates.push({
+        provider: 'neon',
+        url,
+        directUrl: process.env.POSTGRES_URL_NON_POOLING ?? url,
+      })
+    }
+  }
+
   if (process.env.GCP_DATABASE_URL) {
     const url = process.env.GCP_DATABASE_URL.includes('uselibpqcompat')
       ? process.env.GCP_DATABASE_URL
@@ -70,7 +83,7 @@ export function buildDatabaseCandidates(): DatabaseCandidate[] {
     })
   }
 
-  const forced = process.env.DATABASE_PROVIDER
+  const forced = process.env.DATABASE_PROVIDER?.trim()
   if (forced === 'neon' || forced === 'gcp') {
     return candidates.filter((candidate) => candidate.provider === forced)
   }

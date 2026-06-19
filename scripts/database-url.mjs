@@ -17,11 +17,17 @@ export function buildUrl(user, password, host, database, port = '5432', { libpqC
 export function buildDatabaseCandidates(env = process.env) {
   const candidates = []
 
-  if (env.DATABASE_URL) {
+  const neonUrls = [
+    env.DATABASE_URL,
+    env.POSTGRES_PRISMA_URL,
+    env.POSTGRES_URL,
+  ].filter(Boolean)
+
+  for (const url of [...new Set(neonUrls)]) {
     candidates.push({
       provider: 'neon',
-      url: env.DATABASE_URL,
-      directUrl: env.DATABASE_URL_UNPOOLED ?? env.DATABASE_URL,
+      url,
+      directUrl: env.DATABASE_URL_UNPOOLED ?? env.POSTGRES_URL_NON_POOLING ?? url,
     })
   }
 
@@ -52,7 +58,7 @@ export function buildDatabaseCandidates(env = process.env) {
     })
   }
 
-  const forced = env.DATABASE_PROVIDER
+  const forced = env.DATABASE_PROVIDER?.trim()
   if (forced === 'neon' || forced === 'gcp') {
     return candidates.filter((candidate) => candidate.provider === forced)
   }

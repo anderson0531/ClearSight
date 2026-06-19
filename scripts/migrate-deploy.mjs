@@ -60,7 +60,19 @@ async function main() {
   if (process.env.VERCEL) {
     // Probe Neon then GCP using Vercel env vars (no local .env).
     loadEnvFile(join(process.cwd(), '.env'))
-    const candidate = await resolveDatabaseCandidate(process.env)
+    let candidate
+    try {
+      candidate = await resolveDatabaseCandidate(process.env)
+    } catch (error) {
+      console.warn(
+        '[migrate] No reachable database during Vercel build — skipping schema sync:',
+        error instanceof Error ? error.message : error
+      )
+      console.warn(
+        '[migrate] Ensure DATABASE_URL (Neon) is valid or GCP allows Vercel connections, then redeploy.'
+      )
+      return
+    }
     applyCandidateToProcessEnv(candidate)
     console.log(`[migrate] Vercel build — using ${candidate.provider} database`)
   } else {
