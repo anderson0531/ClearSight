@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db'
 import { createSession, hashPassword } from '@/lib/auth'
 import { serializeUser } from '@/lib/account'
 import { AFFILIATE_COOKIE } from '@/lib/geo'
+import { isDatabaseUnavailableError } from '@/lib/database-url'
 
 const bodySchema = z.object({
   email: z.string().email().transform((v) => v.trim().toLowerCase()),
@@ -23,29 +24,40 @@ export async function POST(request: Request) {
 
   const { email, password, name } = parsed.data
 
-  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-  if (existing) {
-    return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409 })
+  try {
+    const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+    if (existing) {
+      return NextResponse.json({ error: 'An account with this email already exists' }, { status: 409 })
+    }
+
+    const cookieStore = await cookies()
+    const affiliateCode = cookieStore.get(AFFILIATE_COOKIE)?.value ?? null
+
+    const passwordHash = await hashPassword(password)
+    const user = await prisma.user.create({
+      data: {
+        email,
+        name: name ?? null,
+        passwordHash,
+        affiliateCode,
+        plan: 'FREE',
+        subscriptionActive: false,
+        coreTokens: 0,
+      },
+      select: { id: true, email: true, name: true, plan: true, coreTokens: true, subscriptionActive: true },
+    })
+
+    await createSession(user.id)
+
+    return NextResponse.json(serializeUser(user, true), { status: 201 })
+  } catch (err) {
+    if (isDatabaseUnavailableError(err)) {
+      return NextResponse.json(
+        { error: 'Database unavailable. Please try again shortly.', code: 'DB_UNAVAILABLE' },
+        { status: 503 }
+      )
+    }
+    console.error('[auth/signup]', err)
+    return NextResponse.json({ error: 'Sign up failed. Please try again.' }, { status: 500 })
   }
-
-  const cookieStore = await cookies()
-  const affiliateCode = cookieStore.get(AFFILIATE_COOKIE)?.value ?? null
-
-  const passwordHash = await hashPassword(password)
-  const user = await prisma.user.create({
-    data: {
-      email,
-      name: name ?? null,
-      passwordHash,
-      affiliateCode,
-      plan: 'FREE',
-      subscriptionActive: false,
-      coreTokens: 0,
-    },
-    select: { id: true, email: true, name: true, plan: true, coreTokens: true, subscriptionActive: true },
-  })
-
-  await createSession(user.id)
-
-  return NextResponse.json(serializeUser(user, true), { status: 201 })
 }
