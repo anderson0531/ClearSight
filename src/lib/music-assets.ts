@@ -1,4 +1,4 @@
-import type { AudioSegment, MusicMood } from '@/types/story'
+import type { AudioSegment, AudioSegmentRole, MusicMood } from '@/types/story'
 
 /**
  * Reusable ClearSight brand music generated via Lyria.
@@ -14,11 +14,24 @@ export const MUSIC_ASSETS: {
   outro: { url: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-outro.wav", durationSeconds: 6 },
 }
 
-/** Background beds played under intro/outro dialogue at 20% volume (client overlay). */
+/**
+ * Background beds for the three episode phases, played as a ducked underscore
+ * beneath dialogue (client overlay). `content` loops continuously under the body
+ * so the music never restarts between frames. Reuses the two existing brand
+ * tracks (no new audio generation); a dedicated content bed can be produced
+ * later via `npm run generate:music`.
+ */
 export const BACKGROUND_MUSIC = {
   intro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_Morning_Brief.mp3',
+  content: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_ClearSight_Brief.mp3',
   outro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_ClearSight_Brief.mp3',
 } as const
+
+/**
+ * Volume the background beds play at, relative to the dialogue volume. Kept low
+ * so the underscore enhances engagement without competing with the hosts.
+ */
+export const BACKGROUND_MUSIC_VOLUME_RATIO = 0.15
 
 /**
  * Duration of the baked outro music segment that closes every episode. Players
@@ -68,5 +81,30 @@ export function musicBedForMood(
       return { url: BACKGROUND_MUSIC.outro, loop: true }
     default:
       return null
+  }
+}
+
+/**
+ * Phase-based background bed for a segment role. The episode plays one bed per
+ * phase — intro under the cold-open/welcome, a single CONTINUOUS content bed
+ * under the body/recap (so it never restarts between frames), and the outro bed
+ * under the closing call-to-action. The baked `role: 'music'` segment plays as
+ * real audio, so it gets no overlay bed.
+ */
+export function musicBedForRole(
+  role?: AudioSegmentRole
+): { url: string; loop: boolean } | null {
+  switch (role) {
+    case 'hook':
+    case 'intro':
+      return { url: BACKGROUND_MUSIC.intro, loop: true }
+    case 'cta':
+    case 'disclaimer':
+      return { url: BACKGROUND_MUSIC.outro, loop: true }
+    case 'music':
+      return null
+    default:
+      // body, summary, and any other spoken frame share the continuous content bed.
+      return { url: BACKGROUND_MUSIC.content, loop: true }
   }
 }

@@ -32,7 +32,7 @@ function buildUrl(
   return `postgresql://${user}:${encodePassword(password)}@${host}:${port}/${database}?${params.toString()}`
 }
 
-export function buildDatabaseCandidates(): DatabaseCandidate[] {
+function collectDatabaseCandidates(): DatabaseCandidate[] {
   const candidates: DatabaseCandidate[] = []
 
   if (process.env.DATABASE_URL) {
@@ -83,11 +83,41 @@ export function buildDatabaseCandidates(): DatabaseCandidate[] {
     })
   }
 
+  return candidates
+}
+
+function forcedProvider(): DbProvider | null {
   const forced = process.env.DATABASE_PROVIDER?.trim()
-  if (forced === 'neon' || forced === 'gcp') {
+  return forced === 'neon' || forced === 'gcp' ? forced : null
+}
+
+/**
+ * Candidates honoring `DATABASE_PROVIDER`. When a provider is forced, ONLY that
+ * provider is returned (used for the synchronous primary-URL pick).
+ */
+export function buildDatabaseCandidates(): DatabaseCandidate[] {
+  const candidates = collectDatabaseCandidates()
+  const forced = forcedProvider()
+  if (forced) {
     return candidates.filter((candidate) => candidate.provider === forced)
   }
+  return candidates
+}
 
+/**
+ * ALL configured candidates ordered with the forced/preferred provider first.
+ * Used for runtime health-probing + failover so a dead primary (e.g. a Neon
+ * data-transfer quota outage) can transparently fall back to any other healthy
+ * database instead of bouncing users.
+ */
+export function buildFailoverCandidates(): DatabaseCandidate[] {
+  const candidates = collectDatabaseCandidates()
+  const forced = forcedProvider()
+  if (forced) {
+    const preferred = candidates.filter((candidate) => candidate.provider === forced)
+    const rest = candidates.filter((candidate) => candidate.provider !== forced)
+    return [...preferred, ...rest]
+  }
   return candidates
 }
 
@@ -134,20 +164,49 @@ export class DatabaseUnavailableError extends Error {
 }
 
 /**
+ * Optional failover hook, registered by the Prisma layer (db.ts) to avoid a
+ * circular import. On a connectivity error, `withDbRetry` asks it to swap the
+ * active client to a healthy database; it returns `true` when it switched to a
+ * DIFFERENT database (so the operation is worth retrying immediately).
+ */
+type DatabaseFailoverHandler = () => Promise<boolean>
+let failoverHandler: DatabaseFailoverHandler | null = null
+
+export function registerDatabaseFailoverHandler(handler: DatabaseFailoverHandler): void {
+  failoverHandler = handler
+}
+
+/**
  * Run a DB operation with a few short retries for transient connectivity errors
  * (dropped sockets after Neon idle-suspend, brief pool exhaustion, etc.). Other
- * errors propagate immediately. After exhausting retries on a connectivity
+ * errors propagate immediately. On the first connectivity error it also attempts
+ * a failover to a healthy database (e.g. away from a quota-exhausted Neon to
+ * GCP) and retries immediately. After exhausting retries on a connectivity
  * error, throws a {@link DatabaseUnavailableError} so callers can handle it
  * distinctly from application errors.
  */
 export async function withDbRetry<T>(fn: () => Promise<T>, retries = 2, baseDelayMs = 150): Promise<T> {
   let lastError: unknown
+  let attemptedFailover = false
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       return await fn()
     } catch (error) {
       lastError = error
-      if (!isDatabaseUnavailableError(error) || attempt === retries) break
+      if (!isDatabaseUnavailableError(error)) break
+
+      // First connectivity failure: try to fail over to a healthy database and
+      // retry right away (doesn't consume a backoff attempt).
+      if (!attemptedFailover && failoverHandler) {
+        attemptedFailover = true
+        try {
+          if (await failoverHandler()) continue
+        } catch {
+          /* failover itself failed; fall through to normal backoff */
+        }
+      }
+
+      if (attempt === retries) break
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * (attempt + 1)))
     }
   }
@@ -186,7 +245,7 @@ export async function resolveDatabaseCandidate(force = false): Promise<DatabaseC
   }
 
   globalForDb.resolvingDatabase = (async () => {
-    const candidates = buildDatabaseCandidates()
+    const candidates = buildFailoverCandidates()
     let lastError = 'No reachable database found. Neon and GCP both failed connectivity checks.'
 
     if (candidates.length === 0) {
@@ -218,6 +277,11 @@ export async function resolveDatabaseCandidate(force = false): Promise<DatabaseC
 
 export function getCachedDatabaseCandidate(): DatabaseCandidate | undefined {
   return globalForDb.resolvedDatabase
+}
+
+/** Drop the cached resolved database so the next resolution re-probes health. */
+export function invalidateResolvedDatabase(): void {
+  globalForDb.resolvedDatabase = undefined
 }
 
 export function getCachedDatabaseUrl(): string {

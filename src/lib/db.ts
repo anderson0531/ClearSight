@@ -1,5 +1,12 @@
 import { PrismaClient } from '@prisma/client'
-import { buildDatabaseCandidates, ensureDatabaseResolved, getCachedDatabaseCandidate } from '@/lib/database-url'
+import {
+  buildDatabaseCandidates,
+  ensureDatabaseResolved,
+  getCachedDatabaseCandidate,
+  invalidateResolvedDatabase,
+  registerDatabaseFailoverHandler,
+  resolveDatabaseCandidate,
+} from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined }
 
@@ -37,6 +44,39 @@ function getPrismaClient(): PrismaClient {
   }
   return globalForPrisma.prisma
 }
+
+/**
+ * Re-probe configured databases and, if a DIFFERENT healthy one is found, swap
+ * the live Prisma client over to it. Registered with `withDbRetry` so a primary
+ * outage (e.g. Neon hits its data-transfer quota) transparently fails over to a
+ * healthy database (e.g. GCP) instead of bouncing users. Returns `true` when the
+ * active connection actually changed.
+ */
+async function failoverToHealthyDatabase(): Promise<boolean> {
+  const currentUrl = getCachedDatabaseCandidate()?.url ?? getConnectionUrl()
+  invalidateResolvedDatabase()
+
+  let healthy
+  try {
+    healthy = await resolveDatabaseCandidate(true)
+  } catch {
+    return false
+  }
+
+  if (!healthy.url || healthy.url === currentUrl) {
+    return false
+  }
+
+  const previous = globalForPrisma.prisma
+  globalForPrisma.prisma = createPrismaClient(healthy.url)
+  if (previous) {
+    void previous.$disconnect().catch(() => {})
+  }
+  console.warn(`[db] Failed over to ${healthy.provider} database`)
+  return true
+}
+
+registerDatabaseFailoverHandler(failoverToHealthyDatabase)
 
 export async function warmDatabaseConnection(): Promise<void> {
   try {

@@ -17,7 +17,7 @@ import {
 import { useTranslations } from '@/i18n/I18nProvider'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { hostBySpeaker, showById } from '@/lib/shows'
-import { BACKGROUND_MUSIC, musicBedForMood } from '@/lib/music-assets'
+import { BACKGROUND_MUSIC, BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole } from '@/lib/music-assets'
 import {
   segmentDisplayImage,
   segmentHasAnimaticMetadata,
@@ -28,7 +28,6 @@ import type { AudioSegment } from '@/types/story'
 
 type TransitionEffect = 'kenburns' | 'crossfade' | 'slide' | 'zoom' | 'none'
 
-const BACKGROUND_MUSIC_VOLUME_RATIO = 0.2
 /** Silence after the final line before the outro theme swells in. */
 const OUTRO_MUSIC_DELAY_SECONDS = 5
 /** How long the outro theme plays once it starts. */
@@ -296,27 +295,20 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       const music = musicRef.current
       if (!music || outroPlaying) return
 
-      // A per-frame mood (News) selects the ducked underscore bed; otherwise the
-      // legacy role mapping (hook/intro) plays the intro bed.
-      const moodBed = musicBedForMood(segment?.musicMood)
-      let bedUrl: string | null = null
-      let loop = false
-      if (moodBed) {
-        bedUrl = moodBed.url
-        loop = moodBed.loop
-      } else if (segment?.role === 'hook' || segment?.role === 'intro') {
-        bedUrl = BACKGROUND_MUSIC.intro
-        loop = true
-      }
+      // Three-phase underscore: intro bed under hook/intro, one CONTINUOUS
+      // content bed under the body, outro bed under the cta. Consecutive body
+      // frames resolve to the same URL, so the guard below keeps the bed
+      // playing without restarting between frames.
+      const bed = musicBedForRole(segment?.role)
 
-      if (!bedUrl) {
+      if (!bed) {
         music.pause()
         return
       }
 
-      if (music.src !== bedUrl) {
-        music.src = bedUrl
-        music.loop = loop
+      if (music.src !== bed.url) {
+        music.src = bed.url
+        music.loop = bed.loop
         music.load()
       }
       music.volume = musicVolume
@@ -511,12 +503,22 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-black/30" />
 
-        {/* News title slide: episode title overlaid on the editorial backdrop. */}
+        {/* News title slide: episode title centered on the editorial backdrop,
+            designed for engagement with a channel eyebrow and a legibility scrim. */}
         {showTitleOverlay ? (
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-5 sm:p-7">
-            <h2 className="max-w-3xl text-center text-xl font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] sm:text-3xl">
-              {title}
-            </h2>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+            <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/55 to-black/40" />
+            <div className="relative flex max-w-3xl flex-col items-center gap-3">
+              {show?.name ? (
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/90 backdrop-blur-sm sm:text-xs">
+                  {show.name}
+                </span>
+              ) : null}
+              <h2 className="text-2xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_3px_14px_rgba(0,0,0,0.85)] sm:text-4xl md:text-5xl">
+                {title}
+              </h2>
+              <span className="mt-1 h-1 w-16 rounded-full bg-white/70" />
+            </div>
           </div>
         ) : null}
 

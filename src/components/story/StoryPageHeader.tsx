@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import Image from 'next/image'
 import Link from 'next/link'
 import { Clapperboard, Clock, Globe, Images, Languages, Loader2, Shield, Sparkles, Tv } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
@@ -15,6 +16,7 @@ import {
 } from '@/components/story/AnimaticStage'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
+import { showById } from '@/lib/shows'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
 import type { AudioSegment } from '@/types/story'
@@ -81,6 +83,7 @@ export function StoryPageHeader({
   })
   const categoryKey = CATEGORY_MESSAGE_KEYS[category]
   const categoryLabel = categoryKey ? t(categoryKey) : category
+  const show = useMemo(() => (showId ? showById(showId) : undefined), [showId])
 
   const handleView = () => {
     animaticRef.current?.openView()
@@ -100,6 +103,28 @@ export function StoryPageHeader({
           ← {t('backToHome')}
         </Link>
 
+        {show?.coverImage ? (
+          <div className="channel-hero-bleed mt-4">
+            <Link href={`/channel/${show.id}`} className="block channel-hero" title={t('goToChannel')}>
+              <Image
+                src={show.coverImage}
+                alt={show.name}
+                fill
+                priority
+                sizes="(max-width: 768px) 100vw, 768px"
+                className="channel-hero-img"
+              />
+              <div className="channel-hero-overlay" />
+              <div className="channel-hero-body">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/80">
+                  {show.name} · {categoryLabel}
+                </span>
+                <h1 className="channel-hero-title mt-1">{title}</h1>
+              </div>
+            </Link>
+          </div>
+        ) : null}
+
           <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
             {thumbnailUrl ? (
               <div className="relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
@@ -114,14 +139,16 @@ export function StoryPageHeader({
             ) : null}
 
             <div className="min-w-0 flex-1 space-y-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
-                  {categoryLabel}
-                </p>
-                <h1 className="mt-1 text-xl font-bold leading-tight text-[var(--foreground)] sm:text-2xl">
-                  {title}
-                </h1>
-              </div>
+              {show?.coverImage ? null : (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
+                    {categoryLabel}
+                  </p>
+                  <h1 className="mt-1 text-xl font-bold leading-tight text-[var(--foreground)] sm:text-2xl">
+                    {title}
+                  </h1>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">

@@ -347,24 +347,52 @@ function prepareLines(
       return
     }
 
-    // News: resolve the illustration group shared across this turn's frames.
+    // News: resolve the illustration grouping for this turn's frames.
+    //  - An explicit `spanGroup` deliberately holds ONE image across several
+    //    consecutive frames (shared group + shared prompt).
+    //  - Otherwise each split TTS piece gets its OWN group + its OWN prompt built
+    //    from that piece's dialogue, so a long turn becomes several distinct
+    //    illustrations instead of one image repeated across frames.
     const spanKey = turn.spanGroup?.trim()
-    let groupId: string
+    const isTitleSlide = role === 'intro'
+    const musicMood = turn.musicMood ?? null
+    const sceneText = turn.scene?.trim() || turn.text
+
     if (spanKey) {
-      groupId = spanGroupIds.get(spanKey) ?? nextGroupId()
+      const groupId = spanGroupIds.get(spanKey) ?? nextGroupId()
       spanGroupIds.set(spanKey, groupId)
-    } else {
-      groupId = `t${turnIndex}-${nextGroupId()}`
+      const imagePrompt = isTitleSlide
+        ? buildTitleSlidePrompt(options?.title ?? turn.text, promptOptions)
+        : buildAnimaticPrompt(sceneText, promptOptions)
+      for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
+        lines.push({
+          speaker: piece.speaker,
+          text: piece.text,
+          role,
+          imageUrl: null,
+          imagePrompt,
+          frameKind: 'scene',
+          musicMood,
+          illustrationGroupId: groupId,
+          titleSlide: isTitleSlide,
+        })
+      }
+      return
     }
 
-    const isTitleSlide = role === 'intro'
-    const sceneText = turn.scene?.trim() || turn.text
-    const imagePrompt = isTitleSlide
-      ? buildTitleSlidePrompt(options?.title ?? turn.text, promptOptions)
-      : buildAnimaticPrompt(sceneText, promptOptions)
-    const musicMood = turn.musicMood ?? null
-
-    for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
+    const pieces = splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)
+    const singlePiece = pieces.length <= 1
+    pieces.forEach((piece) => {
+      // Title slide always shares the turn's scene; multi-piece body turns
+      // illustrate each piece from its own dialogue for visual variety.
+      const promptBasis = isTitleSlide
+        ? options?.title ?? turn.text
+        : singlePiece
+          ? sceneText
+          : piece.text?.trim() || sceneText
+      const imagePrompt = isTitleSlide
+        ? buildTitleSlidePrompt(promptBasis, promptOptions)
+        : buildAnimaticPrompt(promptBasis, promptOptions)
       lines.push({
         speaker: piece.speaker,
         text: piece.text,
@@ -373,10 +401,10 @@ function prepareLines(
         imagePrompt,
         frameKind: 'scene',
         musicMood,
-        illustrationGroupId: groupId,
+        illustrationGroupId: `t${turnIndex}-${nextGroupId()}`,
         titleSlide: isTitleSlide,
       })
-    }
+    })
   })
 
   return lines
@@ -1171,9 +1199,10 @@ FRAME MODEL (critical):
 - Output a JSON array of FRAMES. Each frame is one spoken line by one host.
 - Every frame is an illustration. For each frame write "scene": ONE vivid, concrete sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue. Honor the localization above. The scene must contain NO text/letters/words.
 - "musicMood": pick the best underscore mood from: ${moods}.
-- "spanGroup": when several CONSECUTIVE frames should share ONE illustration (the same image holds across the lines), give them the SAME spanGroup string (e.g. "scene-A"). Use distinct spanGroup values for distinct images. Omit spanGroup for a frame with its own unique image. Use spanning sparingly and only when it genuinely reads as one continuous visual.
+- "spanGroup": when several CONSECUTIVE frames should share ONE illustration (the same image holds across the lines), give them the SAME spanGroup string (e.g. "scene-A"). Use distinct spanGroup values for distinct images. Omit spanGroup for a frame with its own unique image. Use spanning VERY sparingly and only when it genuinely reads as one continuous visual — most frames should have their own distinct scene.
+- Favor shorter spoken lines and finer visual beats so each frame earns a fresh, distinct illustration (avoid long monologues that would reuse one image).
 
-Output ONLY a JSON array (12-18 frames), alternating ${co.name} and ${lead.name}, e.g.:
+Output ONLY a JSON array (16-24 frames), alternating ${co.name} and ${lead.name}, e.g.:
 [{"speaker":"${co.name}","text":"...","musicMood":"tension","scene":"A ... wide shot of ...","spanGroup":"scene-A"},{"speaker":"${lead.name}","text":"...","musicMood":"reflective","scene":"Close on ..."}]
 
 Rules:

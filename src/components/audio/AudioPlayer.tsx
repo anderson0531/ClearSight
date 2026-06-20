@@ -15,14 +15,13 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { BACKGROUND_MUSIC, musicBedForMood } from '@/lib/music-assets'
+import { BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole } from '@/lib/music-assets'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import { useMediaSession } from '@/hooks/useMediaSession'
 import type { AudioSegment, AudioTrack } from '@/types/story'
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const
 const SLEEP_OPTIONS = [0, 15, 30, 60] as const
-const BACKGROUND_MUSIC_VOLUME_RATIO = 0.2
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
@@ -126,37 +125,24 @@ export function AudioPlayer() {
     setCurrentSegmentIndex(segmentIndex)
   }, [segmentIndex, setCurrentSegmentIndex])
 
-  // Background intro/outro music at 30% volume under dialogue segments.
+  // Three-phase background underscore (intro / continuous content / outro) at a
+  // low ducked volume beneath dialogue. The content bed maps to one URL across
+  // all body frames, so the `music.src !== bedUrl` guard keeps it playing
+  // continuously without restarting between frames.
   useEffect(() => {
     const music = musicRef.current
     if (!music || !currentTrack) return
 
-    const role = currentSegment?.role
-    let bedUrl: string | null = null
-    let shouldLoop = false
+    const bed = musicBedForRole(currentSegment?.role)
 
-    // A per-frame mood (News) picks the ducked underscore bed; otherwise the
-    // legacy role mapping applies (intro bed under hook/intro, outro under cta).
-    const moodBed = musicBedForMood(currentSegment?.musicMood)
-    if (moodBed) {
-      bedUrl = moodBed.url
-      shouldLoop = moodBed.loop
-    } else if (role === 'hook' || role === 'intro') {
-      bedUrl = BACKGROUND_MUSIC.intro
-      shouldLoop = true
-    } else if (role === 'cta') {
-      bedUrl = BACKGROUND_MUSIC.outro
-      shouldLoop = false
-    }
-
-    if (!bedUrl) {
+    if (!bed) {
       music.pause()
       return
     }
 
-    if (music.src !== bedUrl) {
-      music.src = bedUrl
-      music.loop = shouldLoop
+    if (music.src !== bed.url) {
+      music.src = bed.url
+      music.loop = bed.loop
       music.load()
     }
 
