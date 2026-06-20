@@ -6,10 +6,13 @@ import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon, M
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import { ensurePushSubscription } from '@/lib/push-client'
 import {
+  getMusicVocalLanguageGroups,
+  isMusicVocalLanguage,
   isTopCategory,
-  LYRIA_VOCAL_LANGUAGES,
+  MUSIC_VOICE_TONES,
   MUSIC_VOICE_TYPES,
   type Category,
+  type MusicVoiceTone,
   type MusicVoiceType,
 } from '@/lib/taxonomy'
 import type { TopicReviewResult } from '@/lib/topic-review'
@@ -57,12 +60,23 @@ const VOICE_TYPE_LABEL_KEYS: Record<MusicVoiceType, MessageKey> = {
   group: 'musicVoiceGroup',
 }
 
-/** Default the vocal language to the active locale when Lyria can sing it. */
+const VOICE_TONE_LABEL_KEYS: Record<MusicVoiceTone, MessageKey> = {
+  auto: 'musicVoiceToneAuto',
+  female_soprano: 'musicVoiceToneFemaleSoprano',
+  female_alto: 'musicVoiceToneFemaleAlto',
+  male_tenor: 'musicVoiceToneMaleTenor',
+  male_baritone: 'musicVoiceToneMaleBaritone',
+  raspy_rock: 'musicVoiceToneRaspyRock',
+  breathy_soulful: 'musicVoiceToneBreathySoulful',
+  smooth_croon: 'musicVoiceToneSmoothCroon',
+}
+
+const MUSIC_LANGUAGE_GROUPS = getMusicVocalLanguageGroups()
+
+/** Default the vocal language to the active locale when it is a vocal language. */
 function defaultMusicLanguage(filter: TaxonomyFilter): string {
   const active = filter.languages[0]
-  return active && (LYRIA_VOCAL_LANGUAGES as readonly string[]).includes(active)
-    ? active
-    : 'English'
+  return active && isMusicVocalLanguage(active) ? active : 'English'
 }
 
 export function AddTopicDialog({
@@ -85,6 +99,7 @@ export function AddTopicDialog({
   const [musicMode, setMusicMode] = useState<'full' | 'instrumental'>('full')
   const [musicLanguage, setMusicLanguage] = useState<string>(() => defaultMusicLanguage(filter))
   const [voiceType, setVoiceType] = useState<MusicVoiceType>('auto')
+  const [voiceTone, setVoiceTone] = useState<MusicVoiceTone>('auto')
   const [submitting, setSubmitting] = useState(false)
   const [queued, setQueued] = useState(false)
 
@@ -99,6 +114,7 @@ export function AddTopicDialog({
     setMusicMode('full')
     setMusicLanguage(defaultMusicLanguage(filter))
     setVoiceType('auto')
+    setVoiceTone('auto')
     setSubmitting(false)
     setQueued(false)
   }
@@ -120,6 +136,11 @@ export function AddTopicDialog({
 
   const handleVoiceTypeChange = (value: MusicVoiceType) => {
     setVoiceType(value)
+    invalidateReview()
+  }
+
+  const handleVoiceToneChange = (value: MusicVoiceTone) => {
+    setVoiceTone(value)
     invalidateReview()
   }
 
@@ -174,7 +195,10 @@ export function AddTopicDialog({
           showDescription,
           showFocus,
           ...(filter.contentType === 'Music'
-            ? { musicMode, ...(musicMode === 'full' ? { voiceType } : {}) }
+            ? {
+                musicMode,
+                ...(musicMode === 'full' ? { voiceType, voiceTone } : {}),
+              }
             : {}),
         }),
       })
@@ -230,7 +254,7 @@ export function AddTopicDialog({
             category,
             contentType: 'Music' as const,
             musicMode,
-            ...(musicMode === 'full' ? { voiceType } : {}),
+            ...(musicMode === 'full' ? { voiceType, voiceTone } : {}),
             geoScope: 'Worldwide',
           }
         : {
@@ -389,7 +413,7 @@ export function AddTopicDialog({
               </fieldset>
 
               {musicMode === 'full' ? (
-                <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <div className="mb-4 space-y-3">
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
                       {t('musicLanguageLabel')}
@@ -399,29 +423,59 @@ export function AddTopicDialog({
                       onChange={(event) => handleMusicLanguageChange(event.target.value)}
                       className="dialog-textarea w-full"
                     >
-                      {LYRIA_VOCAL_LANGUAGES.map((lang) => (
-                        <option key={lang} value={lang}>
-                          {lang}
-                        </option>
-                      ))}
+                      <optgroup label={t('musicLangGroupSupported')}>
+                        {MUSIC_LANGUAGE_GROUPS.supported.map(({ englishName, nativeName }) => (
+                          <option key={englishName} value={englishName}>
+                            {englishName === nativeName ? englishName : `${englishName} — ${nativeName}`}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label={t('musicLangGroupExperimental')}>
+                        {MUSIC_LANGUAGE_GROUPS.experimental.map(({ englishName, nativeName }) => (
+                          <option key={englishName} value={englishName}>
+                            {englishName === nativeName ? englishName : `${englishName} — ${nativeName}`}
+                          </option>
+                        ))}
+                      </optgroup>
                     </select>
-                  </label>
-                  <label className="block">
-                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
-                      {t('musicVoiceTypeLabel')}
+                    <span className="mt-1.5 block text-xs text-[var(--muted-strong)]">
+                      {t('musicLanguageHint')}
                     </span>
-                    <select
-                      value={voiceType}
-                      onChange={(event) => handleVoiceTypeChange(event.target.value as MusicVoiceType)}
-                      className="dialog-textarea w-full"
-                    >
-                      {MUSIC_VOICE_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {t(VOICE_TYPE_LABEL_KEYS[type])}
-                        </option>
-                      ))}
-                    </select>
                   </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                        {t('musicVoiceTypeLabel')}
+                      </span>
+                      <select
+                        value={voiceType}
+                        onChange={(event) => handleVoiceTypeChange(event.target.value as MusicVoiceType)}
+                        className="dialog-textarea w-full"
+                      >
+                        {MUSIC_VOICE_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {t(VOICE_TYPE_LABEL_KEYS[type])}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                        {t('musicVoiceToneLabel')}
+                      </span>
+                      <select
+                        value={voiceTone}
+                        onChange={(event) => handleVoiceToneChange(event.target.value as MusicVoiceTone)}
+                        className="dialog-textarea w-full"
+                      >
+                        {MUSIC_VOICE_TONES.map((tone) => (
+                          <option key={tone} value={tone}>
+                            {t(VOICE_TONE_LABEL_KEYS[tone])}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </div>
               ) : null}
               </>

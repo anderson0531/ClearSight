@@ -21,6 +21,16 @@ export interface TopicReviewInput {
   musicMode?: 'full' | 'instrumental'
   /** For full music tracks: the requested vocal voice type, used to tailor lyrics. */
   voiceType?: 'auto' | 'female' | 'male' | 'duet' | 'group'
+  /** For full music tracks: the requested vocal timbre/range profile. */
+  voiceTone?:
+    | 'auto'
+    | 'female_soprano'
+    | 'female_alto'
+    | 'male_tenor'
+    | 'male_baritone'
+    | 'raspy_rock'
+    | 'breathy_soulful'
+    | 'smooth_croon'
 }
 
 export interface TopicReviewResult {
@@ -77,6 +87,27 @@ function voiceTypeNote(voiceType?: TopicReviewInput['voiceType']): string {
   }
 }
 
+function voiceToneNote(voiceTone?: TopicReviewInput['voiceTone']): string {
+  switch (voiceTone) {
+    case 'female_soprano':
+      return ' with a clear, soaring female soprano tone'
+    case 'female_alto':
+      return ' with a warm, soulful female alto tone'
+    case 'male_tenor':
+      return ' with a bright, energetic male tenor tone'
+    case 'male_baritone':
+      return ' with a deep, smooth male baritone tone'
+    case 'raspy_rock':
+      return ' with a raspy, textured rock vocal tone'
+    case 'breathy_soulful':
+      return ' with a breathy, soulful vocal tone'
+    case 'smooth_croon':
+      return ' with a smooth, polished crooning tone'
+    default:
+      return ''
+  }
+}
+
 function buildPrompt(input: TopicReviewInput): string {
   const channelLine = input.showName
     ? `Channel: "${input.showName}"${input.showDescription ? ` — ${input.showDescription}` : ''}`
@@ -94,7 +125,7 @@ function buildPrompt(input: TopicReviewInput): string {
       ? `
 This is a MUSIC track brief for an INSTRUMENTAL track. The recommendedDescription must describe genre, mood, tempo/BPM, instrumentation, and structure. Do NOT include any lyrics — this is an instrumental soundbed with no vocals.`
       : `
-This is a MUSIC track brief for a FULL track WITH SUNG VOCALS${voiceTypeNote(input.voiceType)}. The recommendedDescription must:
+This is a MUSIC track brief for a FULL track WITH SUNG VOCALS${voiceTypeNote(input.voiceType)}${voiceToneNote(input.voiceTone)}. The recommendedDescription must:
 - First describe genre, mood, tempo/BPM, instrumentation, and vocal style (1-3 sentences).
 - Then end with a section that starts on its own line with exactly "Lyrics:" followed by original, on-theme song lyrics in ${input.language}, organized with [Verse] and [Chorus] section tags.
 - Keep lyrics concise (1 verse + 1 chorus is enough for a short track) and within community guidelines (no hate, explicit sexual content, or instructions for illegal/dangerous acts).`

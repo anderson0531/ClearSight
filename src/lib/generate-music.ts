@@ -1,9 +1,11 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
 import { audioDurationSeconds } from '@/lib/audio-duration'
+import { getTranslateTargetCode, LOCALE_BY_ENGLISH_NAME } from '@/i18n/locales'
 import { LYRIA_3_PRO_MODEL, LyriaError, vertexGenerateLyria3 } from '@/lib/lyria'
 import { resolveShow, type Show } from '@/lib/shows'
-import { buildTaxonomyKey, type Category, type MusicVoiceType } from '@/lib/taxonomy'
+import { buildTaxonomyKey, type Category, type MusicVoiceTone, type MusicVoiceType } from '@/lib/taxonomy'
+import { translateTexts } from '@/lib/translate'
 import { vertexGenerateImage, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
 
 export type MusicMode = 'full' | 'instrumental'
@@ -18,6 +20,8 @@ export interface GenerateMusicInput {
   musicMode: MusicMode
   /** Optional vocal voice type for full (vocal) tracks; ignored for instrumental. */
   voiceType?: MusicVoiceType
+  /** Optional vocal timbre/range profile; ignored for instrumental. */
+  voiceTone?: MusicVoiceTone
   geoScope?: string
 }
 
@@ -78,6 +82,52 @@ export function splitBriefAndLyrics(brief: string): { body: string; lyrics: stri
   return { body, lyrics }
 }
 
+/** A line that is only a section tag like `[Verse]`/`[Chorus 2]` (not sung text). */
+function isSectionTagLine(line: string): boolean {
+  return /^\s*\[[^\]]+\]\s*$/.test(line)
+}
+
+/**
+ * Guarantee the `Lyrics:` block of a full-track brief is in the target language
+ * before it reaches Lyria. Translates only the sung lines (skipping `[Verse]`/
+ * `[Chorus]` tags and blank lines) via Google Translate with source auto-detect,
+ * so lyrics already written in the target language pass through unchanged. The
+ * descriptive body is left intact. Best-effort: returns the original brief on
+ * any failure or for English.
+ */
+export async function ensureLyricsInLanguage(description: string, language?: string): Promise<string> {
+  if (!isNonEnglish(language)) return description
+  const { body, lyrics } = splitBriefAndLyrics(description)
+  if (!lyrics) return description
+
+  const locale = LOCALE_BY_ENGLISH_NAME[language as string]
+  if (!locale) return description
+  const target = getTranslateTargetCode(locale.code)
+  if (!target || target === 'en') return description
+
+  try {
+    const lines = lyrics.split('\n')
+    const translatable = lines.filter((line) => line.trim() && !isSectionTagLine(line))
+    if (translatable.length === 0) return description
+
+    const translated = await translateTexts(translatable, target, 'auto')
+    let cursor = 0
+    const rebuiltLines = lines.map((line) => {
+      if (!line.trim() || isSectionTagLine(line)) return line
+      const next = translated[cursor] ?? line
+      cursor += 1
+      return next
+    })
+    const rebuiltLyrics = rebuiltLines.join('\n').trim()
+    if (!rebuiltLyrics) return description
+
+    return body ? `${body}\n\nLyrics:\n${rebuiltLyrics}` : `Lyrics:\n${rebuiltLyrics}`
+  } catch (err) {
+    console.error('[generate-music] lyrics translation failed', err)
+    return description
+  }
+}
+
 /** Genre-specific scaffolding merged into every Lyria prompt. */
 const GENRE_SCAFFOLD: Record<string, string> = {
   'Hip-Hop': 'Hip-hop. Punchy drums, deep bass, sample texture. BPM 85–95 boom bap or 130–150 hard-hitting beats.',
@@ -106,6 +156,35 @@ function voiceTypePhrase(voiceType?: MusicVoiceType): string {
   }
 }
 
+/** Map a voice tone to a Lyria singer-profile description (timbre + range). */
+function voiceTonePhrase(voiceTone?: MusicVoiceTone): string {
+  switch (voiceTone) {
+    case 'female_soprano':
+      return 'clear, crystalline female soprano vocals with an agile, soaring quality and airy, breathy high notes'
+    case 'female_alto':
+      return 'rich, warm female alto vocals with a smoky, soulful timbre and resonant lower range'
+    case 'male_tenor':
+      return 'bright, energetic male tenor vocals with high belting power cutting through the mix'
+    case 'male_baritone':
+      return 'deep, velvet-smooth male baritone vocals with a soothing, crooning chest voice'
+    case 'raspy_rock':
+      return 'raspy, textured male rock vocals with gravelly timbre and strained emotional intensity'
+    case 'breathy_soulful':
+      return 'breathy, soulful vocals with an intimate, emotional delivery'
+    case 'smooth_croon':
+      return 'smooth, polished crooning vocals with a warm and refined delivery'
+    default:
+      return ''
+  }
+}
+
+/** Combine voice tone (timbre) and voice type (gender/ensemble) for the prompt. */
+function vocalDescriptor(voiceType?: MusicVoiceType, voiceTone?: MusicVoiceTone): string {
+  const tone = voiceTonePhrase(voiceTone)
+  if (tone) return tone
+  return voiceTypePhrase(voiceType)
+}
+
 function isNonEnglish(language?: string): boolean {
   return Boolean(language && language.trim() && language.trim().toLowerCase() !== 'english')
 }
@@ -117,6 +196,7 @@ export function buildLyriaPrompt(args: {
   show?: Show
   language?: string
   voiceType?: MusicVoiceType
+  voiceTone?: MusicVoiceTone
 }): string {
   const scaffold = GENRE_SCAFFOLD[args.genre] ?? args.genre
   const showNotes = args.show?.sceneDirectorNotes?.trim()
@@ -139,15 +219,22 @@ export function buildLyriaPrompt(args: {
   // Full track: request sung vocals and carry any user-supplied lyrics through
   // using Lyria's `Lyrics:` syntax.
   const { body, lyrics } = splitBriefAndLyrics(args.userBrief)
-  const vocal = voiceTypePhrase(args.voiceType)
-  const sungIn = isNonEnglish(args.language) ? ` sung in ${args.language}` : ''
-  const lyricsIn = isNonEnglish(args.language) ? ` in ${args.language}` : ''
+  const vocal = vocalDescriptor(args.voiceType, args.voiceTone)
+  const nonEnglish = isNonEnglish(args.language)
+  const sungIn = nonEnglish ? ` sung in ${args.language}` : ''
+  const lyricsIn = nonEnglish ? ` in ${args.language}` : ''
+  // When lyrics are supplied in a non-English language, tell Lyria to perform
+  // them exactly as written so it does not re-translate or anglicize them.
+  const verbatimNote =
+    lyrics && nonEnglish
+      ? `Sing the provided lyrics exactly as written — they are already in ${args.language}.`
+      : ''
   const descriptive = [
     `Create a ${TARGET_SECONDS}-second high-fidelity stereo song at 44.1 kHz with ${vocal}${sungIn}.`,
     scaffold,
     showNotes,
     `Creative brief: ${(body || args.userBrief).trim()}`,
-    lyrics ? '' : `Write original, on-theme lyrics${lyricsIn} for the vocals to sing.`,
+    lyrics ? verbatimNote : `Write original, on-theme lyrics${lyricsIn} for the vocals to sing.`,
     'Professionally mixed, broadcast-quality.',
   ]
     .filter(Boolean)
@@ -168,14 +255,17 @@ export async function composeLyriaPromptWithLLM(args: {
   show: Show
   language?: string
   voiceType?: MusicVoiceType
+  voiceTone?: MusicVoiceTone
 }): Promise<string> {
   const fallback = buildLyriaPrompt(args)
   const { body, lyrics } = splitBriefAndLyrics(args.userBrief)
 
   const nonEnglish = isNonEnglish(args.language)
-  const voicePhrase = voiceTypePhrase(args.voiceType)
+  const vocal = vocalDescriptor(args.voiceType, args.voiceTone)
   const voiceLine =
-    args.voiceType && args.voiceType !== 'auto' ? `\nThe vocals must be ${voicePhrase}.` : ''
+    (args.voiceTone && args.voiceTone !== 'auto') || (args.voiceType && args.voiceType !== 'auto')
+      ? `\nThe vocals must be ${vocal}.`
+      : ''
   const langLine = nonEnglish
     ? `\nThe vocals MUST be sung in ${args.language}, and the lyrics MUST be written in ${args.language}.`
     : ''
@@ -189,7 +279,7 @@ The track MUST be instrumental only — include the word "instrumental" and forb
 Describe genre, mood, instrumentation, tempo/BPM, vocal style, and structure cues.
 The song MUST have sung vocals — never say "instrumental" or "no vocals".${voiceLine}${langLine}
 End the prompt with a section that starts on its own line with exactly "Lyrics:" followed by the song lyrics, using [Verse] and [Chorus] tags.
-${lyrics ? 'Use the provided lyrics VERBATIM under "Lyrics:" — do not rewrite them.' : `Write concise, original, on-theme lyrics${nonEnglish ? ` in ${args.language}` : ''} (about one verse and one chorus).`}`
+${lyrics ? `Use the provided lyrics VERBATIM under "Lyrics:" — do not rewrite${nonEnglish ? `, translate, or anglicize them; they are already in ${args.language}` : ' them'}.` : `Write concise, original, on-theme lyrics${nonEnglish ? ` in ${args.language}` : ''} (about one verse and one chorus).`}`
 
   const lyricsBlock = lyrics ? `\nProvided lyrics (use verbatim):\n"""\n${lyrics}\n"""\n` : ''
 

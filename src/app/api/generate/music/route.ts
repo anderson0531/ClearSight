@@ -7,7 +7,7 @@ import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
 import { inngest, MUSIC_GENERATION_REQUESTED } from '@/inngest/client'
-import { MUSIC_CATEGORIES, MUSIC_VOICE_TYPES } from '@/lib/taxonomy'
+import { MUSIC_CATEGORIES, MUSIC_VOICE_TONES, MUSIC_VOICE_TYPES } from '@/lib/taxonomy'
 
 const musicGenerateSchema = z.object({
   title: z.string().min(3).max(200),
@@ -17,6 +17,7 @@ const musicGenerateSchema = z.object({
   description: z.string().min(10).max(1000),
   musicMode: z.enum(['full', 'instrumental']),
   voiceType: z.enum(MUSIC_VOICE_TYPES).optional(),
+  voiceTone: z.enum(MUSIC_VOICE_TONES).optional(),
   geoScope: z.string().min(1).optional(),
 })
 

@@ -6,18 +6,26 @@ const TRANSLATE_ENDPOINT = 'https://translation.googleapis.com/language/translat
 // the API. Keyed by `${target}\u0000${sourceText}`.
 const cache = new Map<string, string>()
 
-function cacheKey(target: string, text: string): string {
-  return `${target}\u0000${text}`
+function cacheKey(target: string, text: string, source: string): string {
+  return `${source}\u0000${target}\u0000${text}`
 }
 
 /**
- * Translate an array of English UI/content strings into `target`, preserving
- * order. Empty strings and the English locale pass through untouched. Results
- * are cached in-process and the call degrades gracefully to the original text
- * when credentials are missing or the API errors.
+ * Translate an array of strings into `target`, preserving order. Empty strings
+ * and the English locale pass through untouched. `source` defaults to `'en'`;
+ * pass `'auto'` (or an empty string) to let Google auto-detect the source, which
+ * makes same-language input idempotent. Results are cached in-process and the
+ * call degrades gracefully to the original text when credentials/API fail.
  */
-export async function translateTexts(texts: string[], target: string): Promise<string[]> {
+export async function translateTexts(
+  texts: string[],
+  target: string,
+  source: string = 'en'
+): Promise<string[]> {
   if (!target || target === 'en') return texts
+
+  const autoDetect = !source || source === 'auto'
+  const sourceKey = autoDetect ? 'auto' : source
 
   const result = [...texts]
   const missingIdx: number[] = []
@@ -25,7 +33,7 @@ export async function translateTexts(texts: string[], target: string): Promise<s
 
   texts.forEach((text, i) => {
     if (!text || !text.trim()) return
-    const cached = cache.get(cacheKey(target, text))
+    const cached = cache.get(cacheKey(target, text, sourceKey))
     if (cached !== undefined) {
       result[i] = cached
     } else {
@@ -49,7 +57,12 @@ export async function translateTexts(texts: string[], target: string): Promise<s
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ q: batch, target, source: 'en', format: 'text' }),
+        body: JSON.stringify({
+          q: batch,
+          target,
+          ...(autoDetect ? {} : { source }),
+          format: 'text',
+        }),
       })
       if (!res.ok) continue
       const data = (await res.json()) as {
@@ -59,7 +72,7 @@ export async function translateTexts(texts: string[], target: string): Promise<s
       batch.forEach((text, j) => {
         const translated = translations[j]?.translatedText
         if (!translated) return
-        cache.set(cacheKey(target, text), translated)
+        cache.set(cacheKey(target, text, sourceKey), translated)
         result[missingIdx[i + j]] = translated
       })
     } catch {

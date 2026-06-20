@@ -1,26 +1,69 @@
-import { getLanguageEnglishNames } from '@/i18n/locales'
+import { getLanguageEnglishNames, LOCALE_BY_ENGLISH_NAME } from '@/i18n/locales'
 
 export const LANGUAGES = getLanguageEnglishNames() as readonly string[]
 export const GEO_SCOPES = ['Worldwide', 'Region', 'Country', 'State/Province', 'Local'] as const
 
-// Languages Lyria 3 Pro reliably sings vocals in. Used to scope the on-demand
-// music language selector so full (vocal) tracks stay intelligible.
+// All vocal languages Lyria 3 Pro officially supports (per Google Cloud docs).
 export const LYRIA_VOCAL_LANGUAGES = [
   'English',
+  'German',
   'Spanish',
   'French',
-  'German',
-  'Portuguese',
   'Hindi',
   'Japanese',
   'Korean',
+  'Portuguese',
 ] as const
 export type LyriaVocalLanguage = (typeof LYRIA_VOCAL_LANGUAGES)[number]
+
+export interface MusicVocalLanguageOption {
+  englishName: string
+  nativeName: string
+}
+
+/**
+ * All app locales as vocal-language options, split into Lyria's officially
+ * supported set and an experimental tier (the rest). Experimental languages
+ * rely on pre-written lyrics being passed to Lyria verbatim.
+ */
+export function getMusicVocalLanguageGroups(): {
+  supported: MusicVocalLanguageOption[]
+  experimental: MusicVocalLanguageOption[]
+} {
+  const official = new Set<string>(LYRIA_VOCAL_LANGUAGES)
+  const toOpt = (englishName: string): MusicVocalLanguageOption => ({
+    englishName,
+    nativeName: LOCALE_BY_ENGLISH_NAME[englishName]?.nativeName ?? englishName,
+  })
+  return {
+    supported: LYRIA_VOCAL_LANGUAGES.map(toOpt),
+    experimental: LANGUAGES.filter((l) => !official.has(l)).map(toOpt),
+  }
+}
+
+/** True when the given English language name is a selectable vocal language. */
+export function isMusicVocalLanguage(englishName: string): boolean {
+  return (LANGUAGES as readonly string[]).includes(englishName)
+}
 
 // Optional vocal voice type for on-demand full (vocal) music tracks. Lyria has
 // no voice IDs, so this maps to a sung-vocal description injected into the prompt.
 export const MUSIC_VOICE_TYPES = ['auto', 'female', 'male', 'duet', 'group'] as const
 export type MusicVoiceType = (typeof MUSIC_VOICE_TYPES)[number]
+
+// Vocal timbre / range profiles from the Lyria 3 prompting guide. Separate from
+// voice type (gender/ensemble) — describes how the singer sounds.
+export const MUSIC_VOICE_TONES = [
+  'auto',
+  'female_soprano',
+  'female_alto',
+  'male_tenor',
+  'male_baritone',
+  'raspy_rock',
+  'breathy_soulful',
+  'smooth_croon',
+] as const
+export type MusicVoiceTone = (typeof MUSIC_VOICE_TONES)[number]
 
 // Top-level content Type. ClearSight is principally a News/Discussion network
 // (like Spotify is music), with Education and Entertainment as sibling modes.

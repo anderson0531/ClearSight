@@ -15,6 +15,16 @@ const bodySchema = z.object({
   hosts: z.array(z.string().min(1).max(80)).max(6).optional(),
   musicMode: z.enum(['full', 'instrumental']).optional(),
   voiceType: z.enum(['auto', 'female', 'male', 'duet', 'group']).optional(),
+  voiceTone: z.enum([
+    'auto',
+    'female_soprano',
+    'female_alto',
+    'male_tenor',
+    'male_baritone',
+    'raspy_rock',
+    'breathy_soulful',
+    'smooth_croon',
+  ]).optional(),
 })
 
 export async function POST(request: Request) {

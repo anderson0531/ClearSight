@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db'
 import {
   buildLyriaPrompt,
   composeLyriaPromptWithLLM,
+  ensureLyricsInLanguage,
   finalizeMusicStory,
   generateMusicLinerNotes,
   generateMusicThumbnail,
@@ -114,14 +115,21 @@ export const generateMusic = inngest.createFunction(
       return { verdict: result.verdict }
     })
 
+    // For non-English (especially experimental) languages, ensure the sung
+    // Lyrics: block is in the target language before it reaches Lyria.
+    const localizedDescription = await step.run('localize-lyrics', () =>
+      ensureLyricsInLanguage(input.description, input.language)
+    )
+
     const lyriaPrompt = await step.run('compose-prompt', () =>
       composeLyriaPromptWithLLM({
         genre: input.category,
-        userBrief: input.description,
+        userBrief: localizedDescription,
         mode: input.musicMode as MusicMode,
         show,
         language: input.language,
         voiceType: input.voiceType,
+        voiceTone: input.voiceTone,
       })
     )
 
@@ -158,11 +166,12 @@ export const generateMusic = inngest.createFunction(
     const track = await step.run('generate', async () => {
       const fallbackPrompt = buildLyriaPrompt({
         genre: input.category,
-        userBrief: input.description,
+        userBrief: localizedDescription,
         mode: input.musicMode as MusicMode,
         show,
         language: input.language,
         voiceType: input.voiceType,
+        voiceTone: input.voiceTone,
       })
       const minimalPrompt = buildLyriaPrompt({
         genre: input.category,
@@ -174,6 +183,7 @@ export const generateMusic = inngest.createFunction(
         show,
         language: input.language,
         voiceType: input.voiceType,
+        voiceTone: input.voiceTone,
       })
 
       try {
