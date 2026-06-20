@@ -104,6 +104,7 @@ const HOST_SPECS = [
   { name: 'Theo Nakamura', look: 'Knowledgeable male music co-host, 30s, cool and articulate.' },
   { name: 'Kai Nguyen', look: 'Energetic male gaming host, late 20s, hyped and modern.' },
   { name: 'Bree Sullivan', look: 'Savvy female gaming co-host, late 20s, warm and witty.' },
+  { name: 'DJ Nova Reyes', look: 'Charismatic club DJ and genre curator, late 20s, behind a DJ booth with turntables and headphones, stylish, urban, rhythm-aware.' },
 ]
 
 // Host looks for cover art, including the News pair (which is not part of
@@ -354,6 +355,31 @@ function buildCoverPrompt(spec) {
   return `${spec.studioPrompt} ${base}${hostSentence}`
 }
 
+// Genre hero key-art for the music channels. Unlike podcast covers (a studio
+// with hosts), these are genre-forward album-poster visuals that can optionally
+// feature the shared mixer host. Seeded with Hip-Hop; add the other 7 genre ids
+// to also regenerate their hero banners.
+const MUSIC_COVER_BASE =
+  'Premium music channel hero key-art, 16:9: bold genre-forward album-poster aesthetic, dramatic cinematic lighting, rich color, high-end and aspirational. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.'
+
+const MUSIC_COVER_SPECS = [
+  {
+    id: 'clearsight-hip-hop',
+    style: 'Hip-hop: urban city nightscape, vinyl records, turntables, boom-bap energy, bold rhythmic motifs.',
+    host: 'DJ Nova Reyes',
+  },
+]
+
+// The shared mixer host that fronts every music channel.
+const MUSIC_HOST_SPECS = HOST_SPECS.filter((h) => h.name === 'DJ Nova Reyes')
+
+/** Build a genre hero prompt from a music channel's style + the mixer host look. */
+function buildMusicCoverPrompt(spec) {
+  const look = COVER_HOST_LOOKS[spec.host]
+  const hostSentence = look ? ` Featuring ${look}` : ''
+  return `${MUSIC_COVER_BASE} ${spec.style}${hostSentence}`
+}
+
 /** Build a host-populated intro prompt from a show's studio style + host looks. */
 function buildIntroPrompt(show) {
   const looks = (show.hosts ?? [])
@@ -376,11 +402,49 @@ async function main() {
   // host/studio/intro art and only produces the new fixed cover key-art. Set
   // REGEN_ALL=1 to regenerate studio frames, intro frames, and host portraits.
   const regenAll = process.env.REGEN_ALL === '1'
+  // Music-only pass: generate just the shared mixer host portrait(s) and the
+  // music channel hero banners, preserving all existing podcast art.
+  const musicOnly = process.env.MUSIC_ONLY === '1'
   const existing = readExistingArt()
   const studioArt = existing.studioArt
   const introArt = existing.introArt
   const hostArt = existing.hostArt
   const coverArt = existing.coverArt
+
+  if (musicOnly) {
+    for (const host of MUSIC_HOST_SPECS) {
+      const urls = []
+      for (let i = 0; i < PORTRAITS_PER_HOST; i += 1) {
+        console.log(`[generate-host-art] Music host portrait: ${host.name} (${i + 1}/${PORTRAITS_PER_HOST})...`)
+        try {
+          const buffer = await generateImage(`${PORTRAIT_BASE} ${host.look}`, '16:9')
+          const url = await uploadImage(`clearsight/hosts/${slug(host.name)}-${i + 1}.png`, buffer)
+          urls.push(url)
+          console.log(`  -> ${url}`)
+        } catch (error) {
+          console.warn(`  [skip] ${host.name} #${i + 1}: ${error instanceof Error ? error.message : error}`)
+        }
+        await sleep(2000)
+      }
+      if (urls.length > 0) hostArt[host.name] = urls
+    }
+
+    for (const spec of MUSIC_COVER_SPECS) {
+      console.log(`[generate-host-art] Music cover: ${spec.id}...`)
+      try {
+        const buffer = await generateImage(buildMusicCoverPrompt(spec), '16:9')
+        coverArt[spec.id] = await uploadImage(`clearsight/shows/${spec.id}-cover.png`, buffer)
+        console.log(`  -> ${coverArt[spec.id]}`)
+      } catch (error) {
+        console.warn(`  [skip] ${spec.id} cover: ${error instanceof Error ? error.message : error}`)
+      }
+      await sleep(2000)
+    }
+
+    writeHostArtFile(hostArt, studioArt, introArt, coverArt)
+    console.log('[generate-host-art] Done (music-only).')
+    return
+  }
 
   if (regenAll) {
     for (const show of SHOW_SPECS) {

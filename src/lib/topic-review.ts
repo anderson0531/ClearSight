@@ -13,6 +13,14 @@ export interface TopicReviewInput {
   /** The channel's explicit area of focus; the primary fit test. */
   showFocus?: string
   hosts?: string[]
+  /**
+   * For Music channels only: 'full' tracks include sung vocals, so the review
+   * appends an editable `Lyrics:` section to the recommendedDescription;
+   * 'instrumental' tracks stay lyric-free.
+   */
+  musicMode?: 'full' | 'instrumental'
+  /** For full music tracks: the requested vocal voice type, used to tailor lyrics. */
+  voiceType?: 'auto' | 'female' | 'male' | 'duet' | 'group'
 }
 
 export interface TopicReviewResult {
@@ -53,6 +61,22 @@ function blockedFallback(issue: string, transient = false): TopicReviewResult {
   }
 }
 
+/** Describe the requested vocal voice type for the lyrics-writing prompt. */
+function voiceTypeNote(voiceType?: TopicReviewInput['voiceType']): string {
+  switch (voiceType) {
+    case 'female':
+      return ' sung by a female lead vocalist'
+    case 'male':
+      return ' sung by a male lead vocalist'
+    case 'duet':
+      return ' performed as a male and female duet'
+    case 'group':
+      return ' performed by a group or choir'
+    default:
+      return ''
+  }
+}
+
 function buildPrompt(input: TopicReviewInput): string {
   const channelLine = input.showName
     ? `Channel: "${input.showName}"${input.showDescription ? ` — ${input.showDescription}` : ''}`
@@ -61,7 +85,23 @@ function buildPrompt(input: TopicReviewInput): string {
   const hostsLine = input.hosts && input.hosts.length > 0 ? `Hosts: ${input.hosts.join(', ')}` : ''
   const typeLine = `Content type: ${input.contentType ?? 'News'}. Category: ${input.category}.`
 
+  const isMusic = input.contentType === 'Music'
+  // For music, the "episode" is a generated track and the recommendedDescription
+  // doubles as the music brief. Full tracks get a sung Lyrics: section the user
+  // can edit; instrumental tracks stay lyric-free.
+  const musicGuidance = isMusic
+    ? input.musicMode === 'instrumental'
+      ? `
+This is a MUSIC track brief for an INSTRUMENTAL track. The recommendedDescription must describe genre, mood, tempo/BPM, instrumentation, and structure. Do NOT include any lyrics — this is an instrumental soundbed with no vocals.`
+      : `
+This is a MUSIC track brief for a FULL track WITH SUNG VOCALS${voiceTypeNote(input.voiceType)}. The recommendedDescription must:
+- First describe genre, mood, tempo/BPM, instrumentation, and vocal style (1-3 sentences).
+- Then end with a section that starts on its own line with exactly "Lyrics:" followed by original, on-theme song lyrics in ${input.language}, organized with [Verse] and [Chorus] section tags.
+- Keep lyrics concise (1 verse + 1 chorus is enough for a short track) and within community guidelines (no hate, explicit sexual content, or instructions for illegal/dangerous acts).`
+    : ''
+
   return `You are the editorial gatekeeper for a podcast platform. Evaluate a creator's proposed episode description for ONE specific channel and respond with STRICT JSON only.
+${musicGuidance}
 
 ${channelLine}
 ${focusLine}

@@ -39,6 +39,7 @@ interface StoryHeaderProps {
   likeCount: number
   dislikeCount: number
   myReaction: ReactionValue
+  musicOnly?: boolean
 }
 
 function formatDuration(seconds: number | null): string {
@@ -66,6 +67,7 @@ export function StoryPageHeader({
   likeCount,
   dislikeCount,
   myReaction,
+  musicOnly = false,
 }: StoryHeaderProps) {
   const t = useTranslations()
   const { plan } = useUser()
@@ -126,7 +128,7 @@ export function StoryPageHeader({
                   <Globe className="h-3 w-3" />
                   {geoLabel}
                 </span>
-                {reliabilityIndex != null ? (
+                {reliabilityIndex != null && !musicOnly ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
                     <Shield className="h-3 w-3 text-[var(--accent)]" />
                     {t('reliability')} {reliabilityIndex.toFixed(1)}
@@ -136,7 +138,7 @@ export function StoryPageHeader({
                   <Clock className="h-3 w-3" />
                   {formatDuration(durationSeconds)}
                 </span>
-                {sourcesCount > 0 ? (
+                {sourcesCount > 0 && !musicOnly ? (
                   <span className="rounded-full bg-white/5 px-2.5 py-1">
                     {sourcesCount === 1
                       ? t('verifiedSources', { count: sourcesCount })
@@ -154,6 +156,8 @@ export function StoryPageHeader({
                   thumbnailUrl={thumbnailUrl}
                   durationSeconds={durationSeconds}
                 />
+                {!musicOnly ? (
+                <>
                 <button
                   type="button"
                   onClick={handleView}
@@ -207,6 +211,8 @@ export function StoryPageHeader({
                     </span>
                   </button>
                 ) : null}
+                </>
+                ) : null}
                 {showId ? (
                   <Link
                     href={`/channel/${showId}`}
@@ -232,6 +238,7 @@ export function StoryPageHeader({
             </div>
           </div>
 
+          {!musicOnly ? (
           <AnimaticStage
             ref={animaticRef}
             storyId={id}
@@ -241,14 +248,17 @@ export function StoryPageHeader({
             showId={showId}
             onStateChange={setAnimaticState}
           />
+          ) : null}
         </div>
 
+        {!musicOnly ? (
         <TranslatePodcastDialog
           storyId={id}
           currentLanguage={language}
           open={translateOpen}
           onClose={() => setTranslateOpen(false)}
         />
+        ) : null}
       </header>
   )
 }

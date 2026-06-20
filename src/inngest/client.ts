@@ -34,6 +34,14 @@ export interface QaAnswerAudioRequested {
   questionId: string
 }
 
+/** Event name + payload for on-demand HD music track generation. */
+export const MUSIC_GENERATION_REQUESTED = 'music/generation.requested' as const
+
+export interface MusicGenerationRequested {
+  generationId: string
+  userId: string
+}
+
 /**
  * Whether to run the Inngest SDK in Development Mode (no signing/event key, and
  * events/registration go to the local `inngest dev` server). Recent SDK

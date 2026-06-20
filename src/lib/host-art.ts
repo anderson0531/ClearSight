@@ -67,6 +67,10 @@ export const HOST_ART: Record<string, string[]> = {
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/bree-sullivan-1-3waOMIe9VXTs69VGygHqSF1flRR9Ow.png",
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/bree-sullivan-2-vFDn5mTl3mpcr7MM2lJDcMFSYOAbzz.png"
   ],
+  "DJ Nova Reyes": [
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/dj-nova-reyes-1-A6SbbmhZNsQfLYQXBW45EnDMxn6uqx.png",
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/dj-nova-reyes-2-4fJQd4sVwizjlmdG9DUlrzesKBb9Lw.png"
+  ],
 }
 
 /** Show id → studio frame image URL. */
@@ -123,4 +127,5 @@ export const SHOW_COVER_ART: Record<string, string> = {
   "clearsight-economics": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-economics-cover-GcwmnhphkAbYOepLuby2mKYT1nwSbz.png",
   "clearsight-arts": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-arts-cover-Hj2rAxXMbL2m1bKBTLFLK4uyOTR1eX.png",
   "clearsight-nature": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-nature-cover-NVmSaIwSqJCHsDrWWQlVaeOabGPQFX.png",
+  "clearsight-hip-hop": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-hip-hop-cover-E2ohFOnx3tGt9CVCJp2s4RX3UvLnDn.png",
 }

@@ -129,11 +129,22 @@ const LIFESTYLE_FRAMEWORK: AnalysisFramework = {
   ],
 }
 
+/** Music tracks skip podcast analysis; this stub satisfies the type map only. */
+const MUSIC_FRAMEWORK: AnalysisFramework = {
+  label: 'Music production brief',
+  briefingDirectives: ['Describe mood, tempo, instrumentation, and structure for the track'],
+  podcastDirectives: [],
+  analyticalArc: 'N/A — music-only generation',
+  forecastMandate: '',
+  antiFluffRules: ['No speech or podcast narration in the output'],
+}
+
 const TYPE_FRAMEWORKS: Record<ContentType, AnalysisFramework> = {
   News: DEFAULT_FRAMEWORK,
   Education: EDUCATION_FRAMEWORK,
   Entertainment: ENTERTAINMENT_FRAMEWORK,
   Lifestyle: LIFESTYLE_FRAMEWORK,
+  Music: MUSIC_FRAMEWORK,
 }
 
 /**

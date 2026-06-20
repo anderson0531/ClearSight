@@ -1387,6 +1387,14 @@ input[type='search']::-webkit-search-cancel-button {
 .category-tile-style { background: linear-gradient(135deg, #9f7aea, #553c9a); }
 .category-tile-wellness { background: linear-gradient(135deg, #319795, #285e61); }
 .category-tile-pets { background: linear-gradient(135deg, #975a16, #5f370e); }
+.category-tile-hip-hop { background: linear-gradient(135deg, #1a202c, #6b46c1); }
+.category-tile-electronic { background: linear-gradient(135deg, #0987a0, #553c9a); }
+.category-tile-jazz { background: linear-gradient(135deg, #b7791f, #2c5282); }
+.category-tile-rock { background: linear-gradient(135deg, #c53030, #1a202c); }
+.category-tile-classical { background: linear-gradient(135deg, #2d3748, #744210); }
+.category-tile-ambient { background: linear-gradient(135deg, #319795, #44337a); }
+.category-tile-rnb { background: linear-gradient(135deg, #d53f8c, #553c9a); }
+.category-tile-latin { background: linear-gradient(135deg, #dd6b20, #c53030); }
 
 /* ── Premium / upsell ── */
 

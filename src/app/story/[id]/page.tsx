@@ -4,6 +4,7 @@ import { StoryPageHeader } from '@/components/story/StoryPageHeader'
 import { StoryQASection } from '@/components/story/StoryQASection'
 import { getStoryById } from '@/lib/stories'
 import { extractAudioSegments } from '@/lib/generate-story'
+import { isMusicOnlyStory } from '@/lib/generate-music'
 import { MOCK_STORIES } from '@/lib/mock-stories'
 import { getShowById } from '@/lib/shows'
 import { getCurrentUserId } from '@/lib/session'
@@ -113,6 +114,7 @@ export default async function StoryPage({ params }: StoryPageProps) {
 
   const meta = (dbStory?.sourcesVerified ?? null) as { showId?: string } | null
   const showId = meta?.showId && getShowById(meta.showId) ? meta.showId : null
+  const musicOnly = dbStory ? isMusicOnlyStory(dbStory.sourcesVerified) : false
 
   const [{ canDelete, myReaction }, initialQuestions] = dbStory
     ? await Promise.all([getViewerContext(id), getStoryQuestions(id)])
@@ -138,10 +140,19 @@ export default async function StoryPage({ params }: StoryPageProps) {
         likeCount={dbStory?.likeCount ?? 0}
         dislikeCount={dbStory?.dislikeCount ?? 0}
         myReaction={myReaction}
+        musicOnly={musicOnly}
       />
       <main className="fade-in mx-auto max-w-3xl px-4 py-8">
-        <TruthLedger markdown={markdown} />
-        {dbStory ? (
+        {musicOnly ? (
+          markdown.trim() ? (
+            <section className="rounded-xl border border-[var(--border)] bg-white/[0.03] p-5">
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--muted-strong)]">{markdown}</p>
+            </section>
+          ) : null
+        ) : (
+          <TruthLedger markdown={markdown} />
+        )}
+        {dbStory && !musicOnly ? (
           <StoryQASection
             storyId={id}
             language={language ?? 'English'}

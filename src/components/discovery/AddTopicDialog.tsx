@@ -2,12 +2,19 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon } from 'lucide-react'
+import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon, Music2 } from 'lucide-react'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import { ensurePushSubscription } from '@/lib/push-client'
-import { isTopCategory, type Category } from '@/lib/taxonomy'
+import {
+  isTopCategory,
+  LYRIA_VOCAL_LANGUAGES,
+  MUSIC_VOICE_TYPES,
+  type Category,
+  type MusicVoiceType,
+} from '@/lib/taxonomy'
 import type { TopicReviewResult } from '@/lib/topic-review'
 import { useTranslations } from '@/i18n/I18nProvider'
+import type { MessageKey } from '@/i18n/messages/en'
 
 interface AddTopicDialogProps {
   filter: TaxonomyFilter
@@ -42,6 +49,22 @@ function resolveCategory(filter: TaxonomyFilter): string {
 const MIN_DESCRIPTION = 10
 const MAX_DESCRIPTION = 1000
 
+const VOICE_TYPE_LABEL_KEYS: Record<MusicVoiceType, MessageKey> = {
+  auto: 'musicVoiceAuto',
+  female: 'musicVoiceFemale',
+  male: 'musicVoiceMale',
+  duet: 'musicVoiceDuet',
+  group: 'musicVoiceGroup',
+}
+
+/** Default the vocal language to the active locale when Lyria can sing it. */
+function defaultMusicLanguage(filter: TaxonomyFilter): string {
+  const active = filter.languages[0]
+  return active && (LYRIA_VOCAL_LANGUAGES as readonly string[]).includes(active)
+    ? active
+    : 'English'
+}
+
 export function AddTopicDialog({
   filter,
   buttonLabel,
@@ -59,6 +82,9 @@ export function AddTopicDialog({
   const [error, setError] = useState<string | null>(null)
   const [reReviewNote, setReReviewNote] = useState(false)
   const [includeIllustrations, setIncludeIllustrations] = useState(false)
+  const [musicMode, setMusicMode] = useState<'full' | 'instrumental'>('full')
+  const [musicLanguage, setMusicLanguage] = useState<string>(() => defaultMusicLanguage(filter))
+  const [voiceType, setVoiceType] = useState<MusicVoiceType>('auto')
   const [submitting, setSubmitting] = useState(false)
   const [queued, setQueued] = useState(false)
 
@@ -70,8 +96,31 @@ export function AddTopicDialog({
     setError(null)
     setReReviewNote(false)
     setIncludeIllustrations(false)
+    setMusicMode('full')
+    setMusicLanguage(defaultMusicLanguage(filter))
+    setVoiceType('auto')
     setSubmitting(false)
     setQueued(false)
+  }
+
+  // Vocal language/voice changes alter the lyrics + vocals a prior review
+  // produced, so they must invalidate the review like a description edit.
+  const invalidateReview = () => {
+    if (review) {
+      setReview(null)
+      setRecommended('')
+      setReReviewNote(true)
+    }
+  }
+
+  const handleMusicLanguageChange = (value: string) => {
+    setMusicLanguage(value)
+    invalidateReview()
+  }
+
+  const handleVoiceTypeChange = (value: MusicVoiceType) => {
+    setVoiceType(value)
+    invalidateReview()
   }
 
   const handleClose = () => {
@@ -83,6 +132,18 @@ export function AddTopicDialog({
   // gate cannot be bypassed by editing after a successful review.
   const handleDescriptionChange = (value: string) => {
     setDescription(value)
+    if (review) {
+      setReview(null)
+      setRecommended('')
+      setReReviewNote(true)
+    }
+  }
+
+  // Switching track mode changes whether lyrics are generated, so a prior review
+  // (and its recommended description/lyrics) must be re-run to match.
+  const handleMusicModeChange = (mode: 'full' | 'instrumental') => {
+    if (mode === musicMode) return
+    setMusicMode(mode)
     if (review) {
       setReview(null)
       setRecommended('')
@@ -106,12 +167,15 @@ export function AddTopicDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: trimmed,
-          language: filter.languages[0] ?? 'English',
+          language: filter.contentType === 'Music' ? musicLanguage : filter.languages[0] ?? 'English',
           contentType: filter.contentType,
           category: resolveCategory(filter),
           showName,
           showDescription,
           showFocus,
+          ...(filter.contentType === 'Music'
+            ? { musicMode, ...(musicMode === 'full' ? { voiceType } : {}) }
+            : {}),
         }),
       })
       if (!res.ok) {
@@ -141,6 +205,10 @@ export function AddTopicDialog({
     }
   }
 
+  const canReview = description.trim().length >= MIN_DESCRIPTION && !reviewing
+  const passed = review?.verdict === 'pass'
+  const isMusic = filter.contentType === 'Music'
+
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!review || review.verdict !== 'pass' || submitting) return
@@ -150,27 +218,39 @@ export function AddTopicDialog({
 
     setError(null)
     setSubmitting(true)
-    // Now that the user is committing, contextually request notification
-    // permission and register a push subscription (best-effort).
     void ensurePushSubscription()
 
     try {
-      const res = await fetch('/api/generate', {
+      const category = resolveCategory(filter)
+      const payload = isMusic
+        ? {
+            title,
+            description: approved,
+            language: musicLanguage,
+            category,
+            contentType: 'Music' as const,
+            musicMode,
+            ...(musicMode === 'full' ? { voiceType } : {}),
+            geoScope: 'Worldwide',
+          }
+        : {
+            title,
+            description: approved,
+            language: filter.languages[0] ?? 'English',
+            category,
+            contentType: filter.contentType,
+            geoScope: filter.geoScope,
+            geoRegion: filter.geoRegion,
+            geoCountry: filter.geoCountry,
+            geoState: filter.geoState,
+            geoLocal: filter.geoLocal,
+            includeIllustrations,
+          }
+
+      const res = await fetch(isMusic ? '/api/generate/music' : '/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          description: approved,
-          language: filter.languages[0] ?? 'English',
-          category: resolveCategory(filter),
-          contentType: filter.contentType,
-          geoScope: filter.geoScope,
-          geoRegion: filter.geoRegion,
-          geoCountry: filter.geoCountry,
-          geoState: filter.geoState,
-          geoLocal: filter.geoLocal,
-          includeIllustrations,
-        }),
+        body: JSON.stringify(payload),
       })
 
       if (!res.ok) {
@@ -198,9 +278,6 @@ export function AddTopicDialog({
     router.push('/library')
   }
 
-  const canReview = description.trim().length >= MIN_DESCRIPTION && !reviewing
-  const passed = review?.verdict === 'pass'
-
   return (
     <>
       <button
@@ -211,8 +288,8 @@ export function AddTopicDialog({
         }}
         className="btn-accent mb-4"
       >
-        <Mic className="h-4 w-4" />
-        {buttonLabel ?? t('onDemandPodcastButton')}
+        {isMusic ? <Music2 className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+        {buttonLabel ?? (isMusic ? t('onDemandMusicButton') : t('onDemandPodcastButton'))}
       </button>
 
       {open ? (
@@ -233,8 +310,12 @@ export function AddTopicDialog({
                 <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-muted)]">
                   <CheckCircle2 className="h-6 w-6 text-[var(--accent)]" />
                 </div>
-                <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('onDemandQueuedTitle')}</h3>
-                <p className="mt-2 text-sm text-[var(--muted-strong)]">{t('onDemandQueuedBody')}</p>
+                <h3 className="text-lg font-semibold text-[var(--foreground)]">
+                  {isMusic ? t('onDemandMusicQueuedTitle') : t('onDemandQueuedTitle')}
+                </h3>
+                <p className="mt-2 text-sm text-[var(--muted-strong)]">
+                  {isMusic ? t('onDemandMusicQueuedBody') : t('onDemandQueuedBody')}
+                </p>
                 <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('onDemandNotifyHint')}</p>
                 <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-center">
                   <button type="button" onClick={handleClose} className="geo-action-btn-muted justify-center">
@@ -249,11 +330,17 @@ export function AddTopicDialog({
               <>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold text-[var(--foreground)]">{t('onDemandPodcastTitle')}</h3>
-                <p className="mt-1 text-xs text-[var(--muted-strong)]">{t('onDemandPodcastSubtitle')}</p>
+                <h3 className="text-lg font-semibold text-[var(--foreground)]">
+                  {isMusic ? t('onDemandMusicTitle') : t('onDemandPodcastTitle')}
+                </h3>
+                <p className="mt-1 text-xs text-[var(--muted-strong)]">
+                  {isMusic ? t('onDemandMusicSubtitle') : t('onDemandPodcastSubtitle')}
+                </p>
+                {!isMusic ? (
                 <p className="mt-1 text-xs text-[var(--muted-strong)]">
                   {t('addTopicGeoHint', { geo: geoFocusSummary(filter) })}
                 </p>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -264,6 +351,81 @@ export function AddTopicDialog({
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {isMusic ? (
+              <>
+              <fieldset className="mb-4 space-y-2">
+                <legend className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                  {t('musicModeLegend')}
+                </legend>
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--border)] bg-white/[0.03] p-3 has-[:checked]:border-[var(--accent)]/40">
+                  <input
+                    type="radio"
+                    name="musicMode"
+                    value="full"
+                    checked={musicMode === 'full'}
+                    onChange={() => handleMusicModeChange('full')}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-[var(--foreground)]">{t('musicModeFull')}</span>
+                    <span className="mt-0.5 block text-xs text-[var(--muted-strong)]">{t('musicModeFullHint')}</span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--border)] bg-white/[0.03] p-3 has-[:checked]:border-[var(--accent)]/40">
+                  <input
+                    type="radio"
+                    name="musicMode"
+                    value="instrumental"
+                    checked={musicMode === 'instrumental'}
+                    onChange={() => handleMusicModeChange('instrumental')}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-[var(--foreground)]">{t('musicModeInstrumental')}</span>
+                    <span className="mt-0.5 block text-xs text-[var(--muted-strong)]">{t('musicModeInstrumentalHint')}</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {musicMode === 'full' ? (
+                <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                      {t('musicLanguageLabel')}
+                    </span>
+                    <select
+                      value={musicLanguage}
+                      onChange={(event) => handleMusicLanguageChange(event.target.value)}
+                      className="dialog-textarea w-full"
+                    >
+                      {LYRIA_VOCAL_LANGUAGES.map((lang) => (
+                        <option key={lang} value={lang}>
+                          {lang}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                      {t('musicVoiceTypeLabel')}
+                    </span>
+                    <select
+                      value={voiceType}
+                      onChange={(event) => handleVoiceTypeChange(event.target.value as MusicVoiceType)}
+                      className="dialog-textarea w-full"
+                    >
+                      {MUSIC_VOICE_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {t(VOICE_TYPE_LABEL_KEYS[type])}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+              </>
+            ) : null}
 
             <label className="mb-4 block">
               <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
@@ -339,11 +501,17 @@ export function AddTopicDialog({
                     value={recommended}
                     onChange={(event) => setRecommended(event.target.value)}
                     maxLength={MAX_DESCRIPTION}
-                    rows={4}
+                    rows={isMusic && musicMode === 'full' ? 8 : 4}
                     className="dialog-textarea w-full resize-y"
                   />
+                  {isMusic && musicMode === 'full' ? (
+                    <span className="mt-1.5 block text-xs text-[var(--muted-strong)]">
+                      {t('musicLyricsEditHint')}
+                    </span>
+                  ) : null}
                 </label>
 
+                {!isMusic ? (
                 <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--border)] bg-white/[0.03] p-3">
                   <input
                     type="checkbox"
@@ -361,6 +529,7 @@ export function AddTopicDialog({
                     </span>
                   </span>
                 </label>
+                ) : null}
               </div>
             ) : null}
 
@@ -374,8 +543,8 @@ export function AddTopicDialog({
                   className="btn-accent justify-center"
                   disabled={recommended.trim().length < MIN_DESCRIPTION || submitting}
                 >
-                  <Mic className="h-4 w-4" />
-                  {submitting ? t('onDemandSubmitting') : t('topicReviewApproveCreate')}
+                  {isMusic ? <Music2 className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  {submitting ? t('onDemandSubmitting') : isMusic ? t('generateTrack') : t('topicReviewApproveCreate')}
                 </button>
               ) : (
                 <button

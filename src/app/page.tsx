@@ -102,6 +102,13 @@ export default function HomePage() {
         <HomeFeaturedSection />
 
         <HomeContentSection
+          title={t(CONTENT_TYPE_MESSAGE_KEYS.Music)}
+          contentType="Music"
+          seeAllHref="/channels?contentType=Music"
+          shows={topShowsForType('Music')}
+        />
+
+        <HomeContentSection
           title={t(CONTENT_TYPE_MESSAGE_KEYS.Education)}
           contentType="Education"
           seeAllHref="/channels?contentType=Education"

@@ -276,6 +276,21 @@ export const HOST_THEO = host({
   speakingImages: [],
 })
 
+// Music genre channels — shared solo mixer host (channel intro only; tracks are Lyria-generated).
+export const HOST_MIXER = host({
+  name: 'DJ Nova Reyes',
+  role: 'Club DJ & genre curator',
+  voiceId: 'Zephyr',
+  ttsStylePrompt:
+    'Confident club DJ and curator. Energetic, warm, and rhythm-aware with crisp broadcast delivery.',
+  speakingRate: 1.05,
+  bio: 'Veteran DJ and mixer who curates genre-specific sound — from boom bap to bossa, ambient to acid house.',
+  persona:
+    'Veteran DJ and genre curator who shapes mood, tempo, and instrumentation for each channel. Speaks like a mixer, not a news anchor — punchy, rhythmic, and scene-aware.',
+  aliases: ['nova', 'reyes', 'dj', 'mixer', 'nova reyes'],
+  speakingImages: [],
+})
+
 // ---------------------------------------------------------------------------
 // Gaming — "Player Two" (duo, energetic insiders)
 // ---------------------------------------------------------------------------
@@ -602,6 +617,164 @@ export const SHOW_PLAYERTWO = makeShow({
   ],
   sceneDirectorNotes:
     'Scene: high-energy gaming studio. Tone: energetic, insider, witty. Pace: fast.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+// ---------------------------------------------------------------------------
+// Music genre channels (Lyria 3 Pro — HD music-only, no podcast pipeline)
+// ---------------------------------------------------------------------------
+
+const MUSIC_LYRIA_BASE =
+  'Target 90–120 seconds at 44.1 kHz stereo. High-fidelity, professionally mixed, no speech or podcast narration.'
+
+export const SHOW_HIPHOP = makeShow({
+  id: 'clearsight-hip-hop',
+  name: 'ClearSight Hip-Hop',
+  description:
+    'Boom bap, hard-hitting beats, and lo-fi curated by DJ Nova Reyes. On-demand HD tracks built for study, cyphers, and late-night sessions.',
+  focus:
+    'Hip-hop instrumentals and full tracks — beats, boom bap, lo-fi hip-hop, and sample-driven production.',
+  introTagline:
+    'Welcome to ClearSight Hip-Hop — where DJ Nova Reyes drops the beats that hit.',
+  contentType: 'Music',
+  categories: ['Hip-Hop'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: urban, rhythmic editorial illustration — vinyl, city nightscapes, bold typography-free motifs.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: hip-hop. Emphasize punchy drums, bass, and sample texture.`,
+  ],
+  sceneDirectorNotes: 'Mood: confident, head-nodding. BPM: 80–95 for boom bap, 130–150 for hard-hitting hip-hop beats.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_ELECTRONIC = makeShow({
+  id: 'clearsight-electronic',
+  name: 'ClearSight Electronic',
+  description:
+    'House, techno, and synthwave from the mixer booth. High-definition electronic tracks generated on demand.',
+  focus:
+    'Electronic music — house, techno, synthwave, ambient electronic, and drum & bass.',
+  introTagline:
+    'Welcome to ClearSight Electronic — synthesized sound, curated by DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Electronic'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: neon, futuristic editorial illustration — waveforms, club lights, schematic motifs.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: electronic dance. Emphasize synth layers, four-on-the-floor or breakbeats.`,
+  ],
+  sceneDirectorNotes: 'Mood: driving, hypnotic, luminous. BPM: 120–128 house, 130+ techno.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_JAZZ = makeShow({
+  id: 'clearsight-jazz',
+  name: 'ClearSight Jazz',
+  description:
+    'Smooth jazz, bebop, and fusion — improvised warmth generated as HD audio on demand.',
+  focus: 'Jazz — smooth jazz, bebop, fusion, cool jazz, and swing.',
+  introTagline: 'Welcome to ClearSight Jazz — improvisation and groove with DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Jazz'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: smoky, sophisticated editorial illustration — brass, piano, club stage.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: jazz. Emphasize live instrumentation, walking bass, brushed drums.`,
+  ],
+  sceneDirectorNotes: 'Mood: warm, sophisticated, swinging. BPM: 90–140 depending on sub-style.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_ROCK = makeShow({
+  id: 'clearsight-rock',
+  name: 'ClearSight Rock',
+  description:
+    'Classic rock, indie, and alternative — guitar-driven HD tracks from the ClearSight mixer.',
+  focus: 'Rock — classic rock, indie rock, alternative, hard rock, and post-rock.',
+  introTagline: 'Welcome to ClearSight Rock — turn it up with DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Rock'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: gritty, energetic editorial illustration — guitars, amps, stadium energy.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: rock. Emphasize electric guitar, drums, and dynamic arrangement.`,
+  ],
+  sceneDirectorNotes: 'Mood: anthemic, raw, or introspective. BPM: 100–140.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_CLASSICAL = makeShow({
+  id: 'clearsight-classical',
+  name: 'ClearSight Classical',
+  description:
+    'Orchestral, piano, and chamber works — refined HD compositions generated on demand.',
+  focus: 'Classical music — orchestral, piano, chamber, opera, and minimalist works.',
+  introTagline:
+    'Welcome to ClearSight Classical — timeless composition, mixed by DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Classical'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: elegant, refined editorial illustration — concert hall, strings, gold tones.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: classical. Emphasize orchestral or solo piano with clear dynamics.`,
+  ],
+  sceneDirectorNotes: 'Mood: majestic, intimate, or contemplative. Tempo varies by form.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_AMBIENT = makeShow({
+  id: 'clearsight-ambient',
+  name: 'ClearSight Ambient',
+  description:
+    'Soundscapes, meditation beds, and cinematic drones — immersive HD ambient on demand.',
+  focus: 'Ambient music — soundscapes, meditation, drone, cinematic, and nature-inspired beds.',
+  introTagline:
+    'Welcome to ClearSight Ambient — breathe deep with DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Ambient'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: ethereal, atmospheric editorial illustration — mist, horizons, soft gradients.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: ambient. Emphasize pads, slow evolution, spacious reverb.`,
+  ],
+  sceneDirectorNotes: 'Mood: calm, expansive, meditative. BPM: 60–80 or free time.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_RNB = makeShow({
+  id: 'clearsight-rnb',
+  name: 'ClearSight R&B',
+  description:
+    'Neo-soul, contemporary R&B, and slow jams — silky HD tracks curated on demand.',
+  focus: 'R&B and soul — neo-soul, contemporary R&B, funk, slow jams, and gospel-inflected grooves.',
+  introTagline: 'Welcome to ClearSight R&B — smooth grooves with DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['R&B'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: warm, soulful editorial illustration — vinyl warmth, city lights, velvet tones.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: R&B/soul. Emphasize groove, keys, and warm bass.`,
+  ],
+  sceneDirectorNotes: 'Mood: smooth, intimate, groovy. BPM: 70–100.',
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+export const SHOW_LATIN = makeShow({
+  id: 'clearsight-latin',
+  name: 'ClearSight Latin',
+  description:
+    'Reggaeton, salsa, bossa nova, and Latin pop — rhythmic HD tracks from the mixer.',
+  focus: 'Latin music — reggaeton, salsa, bossa nova, cumbia, and Latin pop.',
+  introTagline:
+    'Welcome to ClearSight Latin — ritmo y sabor with DJ Nova Reyes.',
+  contentType: 'Music',
+  categories: ['Latin'],
+  hosts: [HOST_MIXER],
+  visualStyle: 'Style: vibrant, tropical editorial illustration — percussion, dance, warm palette.',
+  scriptStructure: [
+    `${MUSIC_LYRIA_BASE} Genre: Latin. Emphasize percussion, clave or dembow patterns, warm brass or nylon guitar.`,
+  ],
+  sceneDirectorNotes: 'Mood: festive, romantic, or driving. BPM: 90–110 salsa, 90 reggaeton dembow.',
   studioImage: PLACEHOLDER_STUDIO,
 })
 
@@ -1152,6 +1325,14 @@ export const SHOWS: Show[] = [
   SHOW_FRAMEBYFRAME,
   SHOW_LINERNOTES,
   SHOW_PLAYERTWO,
+  SHOW_HIPHOP,
+  SHOW_ELECTRONIC,
+  SHOW_JAZZ,
+  SHOW_ROCK,
+  SHOW_CLASSICAL,
+  SHOW_AMBIENT,
+  SHOW_RNB,
+  SHOW_LATIN,
   SHOW_GOODLIFE,
   SHOW_KITCHEN,
   SHOW_TRAVEL,
@@ -1207,10 +1388,11 @@ export const TOP_SHOW_IDS_BY_TYPE = {
   Education: ['clearsight-academy', 'clearsight-science', 'clearsight-history'],
   Entertainment: ['the-casefile', 'the-unexplained', 'the-green-room'],
   Lifestyle: ['the-good-life', 'clearsight-kitchen', 'clearsight-travel'],
-} as const satisfies Record<'Education' | 'Entertainment' | 'Lifestyle', readonly string[]>
+  Music: ['clearsight-hip-hop', 'clearsight-electronic', 'clearsight-jazz'],
+} as const satisfies Record<'Education' | 'Entertainment' | 'Lifestyle' | 'Music', readonly string[]>
 
 export function topShowsForType(
-  contentType: 'Education' | 'Entertainment' | 'Lifestyle'
+  contentType: 'Education' | 'Entertainment' | 'Lifestyle' | 'Music'
 ): Show[] {
   return TOP_SHOW_IDS_BY_TYPE[contentType]
     .map((id) => getShowById(id))
@@ -1278,6 +1460,7 @@ const DEFAULT_SHOW_BY_TYPE: Record<ContentType, Show> = {
   Education: SHOW_ACADEMY,
   Entertainment: SHOW_CASEFILE,
   Lifestyle: SHOW_GOODLIFE,
+  Music: SHOW_HIPHOP,
 }
 
 export interface ResolveShowInput {

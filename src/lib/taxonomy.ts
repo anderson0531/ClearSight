@@ -3,11 +3,30 @@ import { getLanguageEnglishNames } from '@/i18n/locales'
 export const LANGUAGES = getLanguageEnglishNames() as readonly string[]
 export const GEO_SCOPES = ['Worldwide', 'Region', 'Country', 'State/Province', 'Local'] as const
 
+// Languages Lyria 3 Pro reliably sings vocals in. Used to scope the on-demand
+// music language selector so full (vocal) tracks stay intelligible.
+export const LYRIA_VOCAL_LANGUAGES = [
+  'English',
+  'Spanish',
+  'French',
+  'German',
+  'Portuguese',
+  'Hindi',
+  'Japanese',
+  'Korean',
+] as const
+export type LyriaVocalLanguage = (typeof LYRIA_VOCAL_LANGUAGES)[number]
+
+// Optional vocal voice type for on-demand full (vocal) music tracks. Lyria has
+// no voice IDs, so this maps to a sung-vocal description injected into the prompt.
+export const MUSIC_VOICE_TYPES = ['auto', 'female', 'male', 'duet', 'group'] as const
+export type MusicVoiceType = (typeof MUSIC_VOICE_TYPES)[number]
+
 // Top-level content Type. ClearSight is principally a News/Discussion network
 // (like Spotify is music), with Education and Entertainment as sibling modes.
 // The Type drives discovery filtering AND the generation pipeline (script
 // framework + illustration style + default conversational format).
-export const CONTENT_TYPES = ['News', 'Education', 'Entertainment', 'Lifestyle'] as const
+export const CONTENT_TYPES = ['News', 'Education', 'Entertainment', 'Lifestyle', 'Music'] as const
 export type ContentType = (typeof CONTENT_TYPES)[number]
 export const DEFAULT_CONTENT_TYPE: ContentType = 'News'
 
@@ -57,6 +76,18 @@ export const ENTERTAINMENT_CATEGORIES = [
   'Gaming',
 ] as const
 
+// Music genres — each maps to a dedicated Lyria-powered genre channel.
+export const MUSIC_CATEGORIES = [
+  'Hip-Hop',
+  'Electronic',
+  'Jazz',
+  'Rock',
+  'Classical',
+  'Ambient',
+  'R&B',
+  'Latin',
+] as const
+
 // Home & Lifestyle topics: practical, evergreen, service-journalism subjects.
 export const LIFESTYLE_CATEGORIES = [
   'Food & Cooking',
@@ -76,6 +107,7 @@ export const CONTENT_CATEGORIES = [
   ...EDUCATION_CATEGORIES,
   ...ENTERTAINMENT_CATEGORIES,
   ...LIFESTYLE_CATEGORIES,
+  ...MUSIC_CATEGORIES,
 ] as const
 
 export const CATEGORIES = ['Top', ...CONTENT_CATEGORIES] as const
@@ -90,6 +122,7 @@ const CATEGORIES_BY_TYPE: Record<ContentType, readonly string[]> = {
   Education: EDUCATION_CATEGORIES,
   Entertainment: ENTERTAINMENT_CATEGORIES,
   Lifestyle: LIFESTYLE_CATEGORIES,
+  Music: MUSIC_CATEGORIES,
 }
 
 /** Categories available for a given Type, with 'Top' first as the "all" option. */
@@ -108,6 +141,7 @@ export function typeForCategory(category: string): ContentType {
   if ((EDUCATION_CATEGORIES as readonly string[]).includes(canonical)) return 'Education'
   if ((ENTERTAINMENT_CATEGORIES as readonly string[]).includes(canonical)) return 'Entertainment'
   if ((LIFESTYLE_CATEGORIES as readonly string[]).includes(canonical)) return 'Lifestyle'
+  if ((MUSIC_CATEGORIES as readonly string[]).includes(canonical)) return 'Music'
   return 'News'
 }
 
@@ -157,6 +191,15 @@ export const CATEGORY_SUBTOPICS: Record<string, string[]> = {
   'Style & Fashion': ['Trends', 'Wardrobe Basics', 'Sustainable Fashion', 'Grooming', 'Accessories'],
   'Mindfulness & Wellness': ['Meditation', 'Sleep', 'Stress Relief', 'Journaling', 'Self-Care'],
   Pets: ['Dogs', 'Cats', 'Pet Health', 'Training', 'Adoption'],
+  // Music genres
+  'Hip-Hop': ['Beats', 'Boom Bap', 'Trap', 'Lo-Fi Hip-Hop', 'West Coast'],
+  Electronic: ['House', 'Techno', 'Synthwave', 'Ambient Electronic', 'Drum & Bass'],
+  Jazz: ['Smooth Jazz', 'Bebop', 'Fusion', 'Cool Jazz', 'Swing'],
+  Rock: ['Classic Rock', 'Indie Rock', 'Alternative', 'Hard Rock', 'Post-Rock'],
+  Classical: ['Orchestral', 'Piano', 'Chamber', 'Opera', 'Minimalist'],
+  Ambient: ['Soundscape', 'Meditation', 'Drone', 'Cinematic', 'Nature'],
+  'R&B': ['Neo-Soul', 'Contemporary R&B', 'Funk', 'Slow Jam', 'Gospel'],
+  Latin: ['Reggaeton', 'Salsa', 'Bossa Nova', 'Cumbia', 'Latin Pop'],
 }
 
 /** Curated sub-topic chips for a category (empty when none are defined). */

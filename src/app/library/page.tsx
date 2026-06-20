@@ -100,6 +100,7 @@ export default function LibraryPage() {
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [following, setFollowing] = useState<FollowedChannel[]>([])
   const [generations, setGenerations] = useState<GenerationJob[]>([])
+  const [retryingId, setRetryingId] = useState<string | null>(null)
 
   useEffect(() => {
     const sync = () => setSavedSearches(loadSavedSearches())
@@ -198,6 +199,23 @@ export default function LibraryPage() {
     }
   }
 
+  const handleRetryGeneration = async (id: string) => {
+    setRetryingId(id)
+    try {
+      const res = await fetch(`/api/generations/${id}`, { method: 'POST' })
+      if (!res.ok) return
+      setGenerations((jobs) =>
+        jobs.map((job) =>
+          job.id === id ? { ...job, status: 'QUEUED', errorMessage: null } : job
+        )
+      )
+    } catch {
+      /* keep failed state */
+    } finally {
+      setRetryingId(null)
+    }
+  }
+
   const isPremium = plan === 'PREMIUM' || plan === 'CREATOR'
   const isCreator = plan === 'CREATOR'
 
@@ -245,9 +263,17 @@ export default function LibraryPage() {
                       </Link>
                     ) : null}
                     {job.status === 'FAILED' ? (
-                      <Link href="/" className="btn-ghost">
-                        {t('libraryGenRetry')}
-                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => void handleRetryGeneration(job.id)}
+                        className="btn-ghost"
+                        disabled={retryingId === job.id}
+                      >
+                        {retryingId === job.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
+                        {retryingId === job.id ? t('onDemandSubmitting') : t('libraryGenRetry')}
+                      </button>
                     ) : null}
                     {job.status === 'QUEUED' || job.status === 'FAILED' ? (
                       <button

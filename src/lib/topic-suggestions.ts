@@ -140,6 +140,46 @@ const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
     'The design secrets behind an addictive mechanic',
     'The making of a landmark video game franchise',
   ],
+  'Hip-Hop': [
+    'Late-night trap beat with moody 808s and sparse piano',
+    'Boom bap instrumental for a storytelling cypher',
+    'West Coast g-funk groove with talkbox accents',
+  ],
+  Electronic: [
+    'Uplifting progressive house build for a festival drop',
+    'Dark techno warehouse track with industrial percussion',
+    'Retro synthwave cruise with neon arpeggios',
+  ],
+  Jazz: [
+    'Smoky late-night jazz trio with brushed drums',
+    'Up-tempo bebop swing with walking bass',
+    'Modal jazz exploration with muted trumpet',
+  ],
+  Rock: [
+    'Anthemic stadium rock with big chorus guitars',
+    'Garage punk energy with raw drums and bass',
+    'Melodic indie rock with jangly clean tone',
+  ],
+  Classical: [
+    'Romantic piano nocturne with gentle rubato',
+    'String quartet in a minor key with rising tension',
+    'Minimalist orchestral swell for a film cue',
+  ],
+  Ambient: [
+    'Deep space ambient with evolving pads',
+    'Rainy forest soundscape with soft drones',
+    'Meditative morning light with gentle harmonics',
+  ],
+  'R&B': [
+    'Slow jam with warm Rhodes and silky bass',
+    'Neo-soul groove with live drums and Rhodes',
+    '90s-inspired R&B ballad with layered harmonies',
+  ],
+  Latin: [
+    'Reggaeton dembow with bright brass stabs',
+    'Bossa nova café groove with nylon guitar',
+    'Salsa montuno with lively percussion',
+  ],
 }
 
 interface CacheEntry {
@@ -546,6 +586,31 @@ Requirements:
 - Write every title in ${language}; neutral wording, no sensational clickbait
 - One title per line; no numbering, bullets, URLs, source names, or preamble
 - Do NOT include intro lines like "Here are the ideas" — titles only`,
+    }
+  }
+
+  if (contentType === 'Music') {
+    const scope = isTop
+      ? `Cover a diverse mix across these genres: ${cats.join(', ')}.
+${topFormat}`
+      : `Every brief must clearly fit the genre: ${category}.
+${specificFormat}`
+    return {
+      defaultCategory,
+      prompt: `You are curating on-demand music briefs for a genre channel network. List exactly ${count} creative track briefs in ${language} that a producer could turn into a 1–2 minute HD track.
+
+Audience geography: ${geoFocus}
+${focusLine}
+
+${scope}
+
+Requirements:
+- Each line is a SHORT creative brief (mood, tempo, instrumentation, vibe) — not a podcast episode title
+- Briefs must be appropriate for AI music generation; no copyrighted song titles or artist impersonation
+- Favor vivid, specific sonic direction (BPM, instruments, mood, structure)
+- Write every brief in ${language}; no sensational or explicit content
+- One brief per line; no numbering, bullets, URLs, or preamble
+- Do NOT include intro lines like "Here are the ideas" — briefs only`,
     }
   }
 

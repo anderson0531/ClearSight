@@ -44,3 +44,5 @@ export const TOPIC_SEARCH_UNITS = toUnits(1)
 export const RELOCALIZE_UNITS = toUnits(0.5)
 /** Ask a channel host a moderated question about an episode: 0.25 credit. */
 export const QA_QUESTION_UNITS = toUnits(0.25)
+/** On-demand HD music track generation (Lyria 3 Pro): 1 credit. */
+export const MUSIC_GENERATION_UNITS = toUnits(1)

@@ -41,6 +41,14 @@ const CATEGORY_COLORS: Partial<Record<Category, string>> = {
   'Style & Fashion': 'category-tile-style',
   'Mindfulness & Wellness': 'category-tile-wellness',
   Pets: 'category-tile-pets',
+  'Hip-Hop': 'category-tile-hip-hop',
+  Electronic: 'category-tile-electronic',
+  Jazz: 'category-tile-jazz',
+  Rock: 'category-tile-rock',
+  Classical: 'category-tile-classical',
+  Ambient: 'category-tile-ambient',
+  'R&B': 'category-tile-rnb',
+  Latin: 'category-tile-latin',
 }
 
 export function CategoryGrid({ contentType }: { contentType: ContentType }) {

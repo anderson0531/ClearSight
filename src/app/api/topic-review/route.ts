@@ -7,12 +7,14 @@ import { reviewTopic } from '@/lib/topic-review'
 const bodySchema = z.object({
   description: z.string().min(10).max(1000),
   language: z.string().min(1),
-  contentType: z.enum(['News', 'Education', 'Entertainment', 'Lifestyle']).optional(),
+  contentType: z.enum(['News', 'Education', 'Entertainment', 'Lifestyle', 'Music']).optional(),
   category: z.string().min(1),
   showName: z.string().max(120).optional(),
   showDescription: z.string().max(600).optional(),
   showFocus: z.string().max(400).optional(),
   hosts: z.array(z.string().min(1).max(80)).max(6).optional(),
+  musicMode: z.enum(['full', 'instrumental']).optional(),
+  voiceType: z.enum(['auto', 'female', 'male', 'duet', 'group']).optional(),
 })
 
 export async function POST(request: Request) {
