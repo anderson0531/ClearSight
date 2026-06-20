@@ -128,6 +128,9 @@ model StoryReaction {
   userId    String
   // 1 = thumbs up, -1 = thumbs down. A user has at most one reaction per story.
   value     Int
+  // Optional structured reason id for the rating (see src/lib/reaction-reasons.ts).
+  // Cleared when the vote is removed. Validated against the vote polarity.
+  reason    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -178,6 +181,10 @@ model Generation {
   // these fields track its state so the client can poll and the worker can
   // resume/refund on failure.
   status               GenerationStatus @default(QUEUED)
+  // Fine-grained pipeline phase for the live progress UI (e.g. "analysis",
+  // "audio", "thumbnail", "illustrations"). The worker advances this as each
+  // step starts; the client maps it to a percentage + activity label.
+  stage                String?          @default("queued")
   params               Json?
   includeIllustrations Boolean          @default(false)
   // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.

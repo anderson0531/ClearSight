@@ -15,7 +15,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { BACKGROUND_MUSIC } from '@/lib/music-assets'
+import { BACKGROUND_MUSIC, musicBedForMood } from '@/lib/music-assets'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import { useMediaSession } from '@/hooks/useMediaSession'
 import type { AudioSegment, AudioTrack } from '@/types/story'
@@ -135,7 +135,13 @@ export function AudioPlayer() {
     let bedUrl: string | null = null
     let shouldLoop = false
 
-    if (role === 'hook' || role === 'intro') {
+    // A per-frame mood (News) picks the ducked underscore bed; otherwise the
+    // legacy role mapping applies (intro bed under hook/intro, outro under cta).
+    const moodBed = musicBedForMood(currentSegment?.musicMood)
+    if (moodBed) {
+      bedUrl = moodBed.url
+      shouldLoop = moodBed.loop
+    } else if (role === 'hook' || role === 'intro') {
       bedUrl = BACKGROUND_MUSIC.intro
       shouldLoop = true
     } else if (role === 'cta') {

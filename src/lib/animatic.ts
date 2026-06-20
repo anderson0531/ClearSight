@@ -101,6 +101,21 @@ export function buildAnimaticPrompt(lineText: string, options?: AnimaticPromptOp
   return parts.join('\n\n')
 }
 
+/**
+ * Backdrop for the News intro "title slide". A clean, editorial, cinematic
+ * establishing image themed to the episode subject, with NO baked text — the
+ * episode title is overlaid client-side so it stays crisp and localizable.
+ */
+export function buildTitleSlidePrompt(title: string, options?: AnimaticPromptOptions): string {
+  const subject = title.replace(/\[[^\]]+\]/g, '').trim().slice(0, 300)
+  const parts = [
+    `Create a cinematic, editorial title-card backdrop for a news episode about: "${subject}". Wide establishing composition with clear negative space (especially lower third) for an overlaid title. Premium, modern broadcast look. Absolutely NO text, letters, words, captions, logos, or watermarks anywhere in the image.`,
+  ]
+  if (options?.style?.trim()) parts.push(options.style.trim())
+  if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
+  return parts.join('\n\n')
+}
+
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
   return role === 'intro' || role === 'cta' || role === 'disclaimer'
 }
@@ -254,12 +269,46 @@ async function mapPool<T, R>(
   return results
 }
 
+/** Render an Imagen 16:9 frame from a prompt and upload it, with retries. */
+async function renderImageFromPrompt(
+  prompt: string,
+  title: string,
+  index: number,
+  attempt = 1
+): Promise<string | null> {
+  const buffer = await vertexGenerateImage(prompt, {
+    aspectRatio: '16:9',
+    personGeneration: 'allow_adult',
+  })
+  if (!buffer) {
+    if (attempt < 3) {
+      await sleep(attempt * 5000)
+      return renderImageFromPrompt(prompt, title, index, attempt + 1)
+    }
+    return null
+  }
+
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
+
+  try {
+    const slug = title.slice(0, 24).replace(/\W/g, '-')
+    const blob = await put(
+      `clearsight/animatic/${Date.now()}-${slug}-${index}.png`,
+      buffer,
+      { access: 'public', contentType: 'image/png' }
+    )
+    return blob.url
+  } catch (error) {
+    console.error('[animatic] upload failed:', error)
+    return null
+  }
+}
+
 async function renderSegmentImage(
   segment: AudioSegment,
   title: string,
   index: number,
-  studioImage: string,
-  attempt = 1
+  studioImage: string
 ): Promise<string | null> {
   if (roleUsesHostsImage(segment.role)) {
     return studioImage
@@ -281,32 +330,7 @@ async function renderSegmentImage(
 
   if (!prompt) return null
 
-  const buffer = await vertexGenerateImage(prompt, {
-    aspectRatio: '16:9',
-    personGeneration: 'allow_adult',
-  })
-  if (!buffer) {
-    if (attempt < 3) {
-      await sleep(attempt * 5000)
-      return renderSegmentImage(segment, title, index, studioImage, attempt + 1)
-    }
-    return null
-  }
-
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
-
-  try {
-    const slug = title.slice(0, 24).replace(/\W/g, '-')
-    const blob = await put(
-      `clearsight/animatic/${Date.now()}-${slug}-${index}.png`,
-      buffer,
-      { access: 'public', contentType: 'image/png' }
-    )
-    return blob.url
-  } catch (error) {
-    console.error('[animatic] upload failed:', error)
-    return null
-  }
+  return renderImageFromPrompt(prompt, title, index)
 }
 
 interface RenderStoryAnimaticOptions {
@@ -349,6 +373,11 @@ export async function renderStoryAnimatic(
 
   if (!segments.every(segmentHasAnimaticMetadata)) {
     throw new Error('ANIMATIC_UNAVAILABLE')
+  }
+
+  const isNews = (meta.contentType ?? show.contentType) === 'News'
+  if (isNews) {
+    return renderNewsAnimatic(storyId, story, segments, options)
   }
 
   const toRender = segments
@@ -395,6 +424,105 @@ export async function renderStoryAnimatic(
       return segment
     }
 
+    failed += 1
+    return segment
+  })
+
+  const sourcesVerified =
+    story.sourcesVerified && typeof story.sourcesVerified === 'object'
+      ? { ...(story.sourcesVerified as Record<string, unknown>) }
+      : {}
+
+  await prisma.story.update({
+    where: { id: storyId },
+    data: {
+      sourcesVerified: {
+        ...sourcesVerified,
+        audioSegments: serializeAudioSegments(updated) as object[],
+      },
+    },
+  })
+
+  return { segments: updated, rendered, failed, newlyRendered }
+}
+
+/**
+ * News render path: every frame is an illustration (no host/studio frames) and
+ * frames sharing an `illustrationGroupId` reuse ONE generated image (so an
+ * illustration can span several consecutive frames). We render exactly one
+ * Imagen image per group, charging only for groups that still need one.
+ */
+async function renderNewsAnimatic(
+  storyId: string,
+  story: { title: string; sourcesVerified: unknown },
+  segments: AudioSegment[],
+  options?: RenderStoryAnimaticOptions
+): Promise<{ segments: AudioSegment[]; rendered: number; failed: number; newlyRendered: number }> {
+  const groupKeyFor = (segment: AudioSegment, index: number): string =>
+    segment.illustrationGroupId || `__seg-${index}`
+
+  const isRealImage = (url?: string | null): boolean =>
+    Boolean(url) && !url!.startsWith('/hosts/')
+
+  interface Group {
+    indices: number[]
+    prompt: string | null
+    existing: string | null
+  }
+  const groups = new Map<string, Group>()
+
+  segments.forEach((segment, index) => {
+    if (segment.role === 'music' || segment.frameKind === 'host') return
+    const key = groupKeyFor(segment, index)
+    const entry: Group = groups.get(key) ?? { indices: [], prompt: null, existing: null }
+    entry.indices.push(index)
+    if (!entry.prompt) {
+      entry.prompt =
+        segment.imagePrompt?.trim() || (segment.text ? buildAnimaticPrompt(segment.text) : null)
+    }
+    if (!entry.existing && isRealImage(segment.imageUrl)) entry.existing = segment.imageUrl!
+    groups.set(key, entry)
+  })
+
+  const groupList = Array.from(groups.entries())
+
+  // Only groups lacking a real illustration incur generation cost.
+  const pendingGroups = groupList.filter(([, group]) => !group.existing && group.prompt).length
+  if (pendingGroups > 0 && options?.onWillRender) {
+    await options.onWillRender(pendingGroups)
+  }
+
+  const renderedGroups = await mapPool(groupList, RENDER_CONCURRENCY, async ([key, group], i) => {
+    if (group.existing) return { key, url: group.existing, fresh: false }
+    if (!group.prompt) return { key, url: null, fresh: false }
+    const url = await renderImageFromPrompt(group.prompt, story.title, group.indices[0] ?? i)
+    return { key, url, fresh: true }
+  })
+
+  const urlByGroup = new Map(renderedGroups.map((item) => [item.key, item.url]))
+  const newlyRendered = renderedGroups.filter((item) => item.fresh && item.url).length
+  // The closing music frame reuses the final illustration so News never shows a
+  // host/studio frame.
+  const lastIllustration =
+    [...renderedGroups].reverse().find((item) => item.url)?.url ?? null
+
+  let rendered = 0
+  let failed = 0
+  const updated = segments.map((segment, index) => {
+    if (segment.role === 'music') {
+      rendered += 1
+      return lastIllustration ? { ...segment, imageUrl: lastIllustration } : segment
+    }
+    const key = groupKeyFor(segment, index)
+    const url = urlByGroup.get(key)
+    if (url) {
+      rendered += 1
+      return { ...segment, imageUrl: url }
+    }
+    if (segment.imageUrl) {
+      rendered += 1
+      return segment
+    }
     failed += 1
     return segment
   })

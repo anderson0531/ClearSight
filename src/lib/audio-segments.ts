@@ -27,6 +27,9 @@ export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] |
       ...(segment.text ? { text: segment.text } : {}),
       ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
       ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
+      ...(segment.musicMood ? { musicMood: segment.musicMood } : {}),
+      ...(segment.illustrationGroupId ? { illustrationGroupId: segment.illustrationGroupId } : {}),
+      ...(segment.titleSlide ? { titleSlide: true } : {}),
     })
   }
 
@@ -42,6 +45,9 @@ export function serializeAudioSegments(segments: AudioSegment[]): Record<string,
     ...(segment.text ? { text: segment.text } : {}),
     ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
     ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
+    ...(segment.musicMood ? { musicMood: segment.musicMood } : {}),
+    ...(segment.illustrationGroupId ? { illustrationGroupId: segment.illustrationGroupId } : {}),
+    ...(segment.titleSlide ? { titleSlide: true } : {}),
     ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
   }))
 }

@@ -183,8 +183,7 @@ async function main() {
     throw new Error('BLOB_READ_WRITE_TOKEN is required in .env')
   }
 
-  const existingLogo =
-    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight-optimized-logo.png'
+  const existingLogo = '/brand/clearsight-logo-transparent.png'
 
   console.log('[upload-pwa-icons] Generating standard app icon (512)...')
   const icon512Buffer = await generateImage(ICON_PROMPT, '1:1')

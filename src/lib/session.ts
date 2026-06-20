@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { prisma } from '@/lib/db'
 import { getSessionUserId } from '@/lib/auth'
+import { DatabaseUnavailableError, isDatabaseUnavailableError, withDbRetry } from '@/lib/database-url'
 import { toUnits } from '@/lib/credit-units'
 
 export const DEMO_USER_ID = 'demo-user'
@@ -77,10 +78,12 @@ export async function getCurrentUser() {
   if (!userId) return null
 
   try {
-    let user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: USER_SELECT,
-    })
+    let user = await withDbRetry(() =>
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: USER_SELECT,
+      })
+    )
 
     if (!user && userId === DEMO_USER_ID && demoFallbackEnabled()) {
       const demo = await ensureDemoUser(userId)
@@ -88,7 +91,10 @@ export async function getCurrentUser() {
     }
 
     return user
-  } catch {
+  } catch (err) {
+    // A transient DB outage must not masquerade as "logged out" — surface it so
+    // the caller (e.g. /api/me) can return 503 and the client keeps prior state.
+    if (err instanceof DatabaseUnavailableError || isDatabaseUnavailableError(err)) throw err
     return null
   }
 }
@@ -101,8 +107,11 @@ export async function getAuthenticatedUser() {
   const userId = await getSessionUserId()
   if (!userId) return null
   try {
-    return await prisma.user.findUnique({ where: { id: userId }, select: USER_SELECT })
-  } catch {
+    return await withDbRetry(() =>
+      prisma.user.findUnique({ where: { id: userId }, select: USER_SELECT })
+    )
+  } catch (err) {
+    if (err instanceof DatabaseUnavailableError || isDatabaseUnavailableError(err)) throw err
     return null
   }
 }

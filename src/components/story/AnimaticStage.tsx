@@ -17,7 +17,7 @@ import {
 import { useTranslations } from '@/i18n/I18nProvider'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { hostBySpeaker, showById } from '@/lib/shows'
-import { BACKGROUND_MUSIC } from '@/lib/music-assets'
+import { BACKGROUND_MUSIC, musicBedForMood } from '@/lib/music-assets'
 import {
   segmentDisplayImage,
   segmentHasAnimaticMetadata,
@@ -42,6 +42,8 @@ interface AnimaticStageProps {
   audioSegments?: AudioSegment[] | null
   /** The episode's resolved channel id — drives cast names and the studio frame. */
   showId?: string | null
+  /** Episode cover, used as the News poster/fallback (no host frames). */
+  posterImage?: string | null
   hideInlineControls?: boolean
   /** Reports player capability/state up to the header so it can drive controls. */
   onStateChange?: (state: AnimaticStageState) => void
@@ -90,7 +92,7 @@ function frameAnimationClass(effect: TransitionEffect, index: number): string {
  * effects, synced audio, captions, and volume + effect controls.
  */
 export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>(function AnimaticStage(
-  { storyId, title, audioUrl, audioSegments, showId, hideInlineControls = false, onStateChange },
+  { storyId, title, audioUrl, audioSegments, showId, posterImage, hideInlineControls = false, onStateChange },
   ref
 ) {
   const t = useTranslations()
@@ -148,11 +150,27 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }, [segments, hasBakedOutro])
 
   const currentSegment = segments?.[segmentIndex]
-  const frameSrc = segmentDisplayImage(currentSegment, segmentIndex, useIllustrations, showId)
   const frameClass = frameAnimationClass(effect, segmentIndex)
 
   // The episode's resolved channel is the source of truth for host identity.
   const show = useMemo(() => showById(showId), [showId])
+  // News episodes are audio-only: every frame is an illustration (no host
+  // avatars), and the intro is a title slide with the title overlaid.
+  const isNews = show?.contentType === 'News'
+  const displayOptions = useMemo(
+    () => ({ isNews, posterFallback: posterImage ?? null }),
+    [isNews, posterImage]
+  )
+  const frameSrc = segmentDisplayImage(
+    currentSegment,
+    segmentIndex,
+    useIllustrations,
+    showId,
+    displayOptions
+  )
+  // Overlay the episode title on the News title-slide frame (intro) and on the
+  // pre-play poster.
+  const showTitleOverlay = isNews && (!started || currentSegment?.titleSlide === true)
 
   // Resolve this episode's cast: prefer the resolved show's hosts (correct
   // names/roles even for shared casts), else derive from the segments' speakers,
@@ -174,6 +192,15 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   // Studio poster: prefer a stored intro/outro studio frame, else the resolved
   // show's studio image, else the cast's show studio, else the canonical studio.
   const studioPoster = useMemo<string>(() => {
+    // News: the title-slide backdrop (intro illustration) is the poster; fall
+    // back to the episode cover rather than a host studio frame.
+    if (isNews) {
+      const backdrop = (segments ?? []).find((s) => s.titleSlide && s.imageUrl)?.imageUrl
+      const introIllustration = (segments ?? []).find(
+        (s) => (s.role === 'intro' || s.role === 'cta') && s.imageUrl && !s.imageUrl.startsWith('/hosts/')
+      )?.imageUrl
+      return backdrop || introIllustration || posterImage || show?.coverImage || HOSTS_IMAGE
+    }
     const studio = (segments ?? []).find(
       (s) => (s.role === 'intro' || s.role === 'cta') && s.imageUrl
     )?.imageUrl
@@ -188,7 +215,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       ) ||
       HOSTS_IMAGE
     )
-  }, [segments, show, cast, showId])
+  }, [segments, show, cast, showId, isNews, posterImage])
 
   // Every distinct frame the player might show in either mode, resolved up front
   // so we can warm the browser cache before playback (studio poster + each
@@ -196,11 +223,11 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const frameSources = useMemo(() => {
     const urls = new Set<string>([studioPoster])
     ;(segments ?? []).forEach((segment, index) => {
-      urls.add(segmentDisplayImage(segment, index, true, showId))
-      urls.add(segmentDisplayImage(segment, index, false, showId))
+      urls.add(segmentDisplayImage(segment, index, true, showId, displayOptions))
+      urls.add(segmentDisplayImage(segment, index, false, showId, displayOptions))
     })
     return Array.from(urls)
-  }, [segments, studioPoster, showId])
+  }, [segments, studioPoster, showId, displayOptions])
 
   // Preload all frames once they're known. Decoding ahead of time removes the
   // visible delay on first display; subsequent loads hit the browser cache.
@@ -265,23 +292,36 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }, [stopOutroMusic, musicVolume])
 
   const syncBackgroundMusic = useCallback(
-    (role: AudioSegment['role'] | undefined, playing: boolean) => {
+    (segment: AudioSegment | undefined, playing: boolean) => {
       const music = musicRef.current
       if (!music || outroPlaying) return
 
-      if (role === 'hook' || role === 'intro') {
-        if (music.src !== BACKGROUND_MUSIC.intro) {
-          music.src = BACKGROUND_MUSIC.intro
-          music.loop = true
-          music.load()
-        }
-        music.volume = musicVolume
-        if (playing) void music.play().catch(() => {})
-        else music.pause()
+      // A per-frame mood (News) selects the ducked underscore bed; otherwise the
+      // legacy role mapping (hook/intro) plays the intro bed.
+      const moodBed = musicBedForMood(segment?.musicMood)
+      let bedUrl: string | null = null
+      let loop = false
+      if (moodBed) {
+        bedUrl = moodBed.url
+        loop = moodBed.loop
+      } else if (segment?.role === 'hook' || segment?.role === 'intro') {
+        bedUrl = BACKGROUND_MUSIC.intro
+        loop = true
+      }
+
+      if (!bedUrl) {
+        music.pause()
         return
       }
 
-      music.pause()
+      if (music.src !== bedUrl) {
+        music.src = bedUrl
+        music.loop = loop
+        music.load()
+      }
+      music.volume = musicVolume
+      if (playing) void music.play().catch(() => {})
+      else music.pause()
     },
     [outroPlaying, musicVolume]
   )
@@ -391,7 +431,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       audio.load()
     }
     audio.volume = muted ? 0 : volume
-    syncBackgroundMusic(segment.role, isPlaying)
+    syncBackgroundMusic(segment, isPlaying)
 
     if (isPlaying) void audio.play().catch(() => setIsPlaying(false))
     else audio.pause()
@@ -470,6 +510,15 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         )}
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-black/30" />
+
+        {/* News title slide: episode title overlaid on the editorial backdrop. */}
+        {showTitleOverlay ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-5 sm:p-7">
+            <h2 className="max-w-3xl text-center text-xl font-bold leading-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] sm:text-3xl">
+              {title}
+            </h2>
+          </div>
+        ) : null}
 
         {/* Audio elements */}
         <audio
@@ -660,7 +709,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             </select>
           </label>
 
-          {hasRenderedImages ? (
+          {hasRenderedImages && !isNews ? (
             <button
               type="button"
               onClick={() => setUseIllustrations((on) => !on)}

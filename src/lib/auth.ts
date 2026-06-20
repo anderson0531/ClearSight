@@ -2,6 +2,7 @@ import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash } from 'no
 import { promisify } from 'node:util'
 import { cookies } from 'next/headers'
 import { prisma } from '@/lib/db'
+import { withDbRetry } from '@/lib/database-url'
 
 const scrypt = promisify(scryptCb)
 
@@ -72,14 +73,20 @@ export async function getSessionUserId(): Promise<string | null> {
   const token = cookieStore.get(SESSION_COOKIE)?.value
   if (!token) return null
 
-  const session = await prisma.session.findUnique({
-    where: { tokenHash: hashToken(token) },
-    select: { userId: true, expiresAt: true },
-  })
+  // Retry transient connectivity errors; a DB blip here would otherwise look
+  // identical to "no session" and silently log the user out. On exhausted
+  // retries this throws DatabaseUnavailableError (handled by callers).
+  const session = await withDbRetry(() =>
+    prisma.session.findUnique({
+      where: { tokenHash: hashToken(token) },
+      select: { userId: true, expiresAt: true },
+    })
+  )
 
   if (!session) return null
   if (session.expiresAt.getTime() < Date.now()) {
-    await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } })
+    // Best-effort cleanup — never let a delete failure surface as an auth error.
+    await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } }).catch(() => {})
     return null
   }
 

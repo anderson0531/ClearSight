@@ -307,11 +307,15 @@ function buildResearchPrompt(input: GenerateHostAnswerInput): string {
   const { show } = input
   const lead = leadHost(show)
   const briefingExcerpt = input.briefing.slice(0, BRIEFING_EXCERPT_CHARS)
-  const askerName = (input.askerName ?? '').trim()
+  // News keeps viewers anonymous: a collective greeting, never a personal name.
+  const isNews = show.contentType === 'News'
+  const askerName = isNews ? '' : (input.askerName ?? '').trim()
 
-  const greetingRule = askerName
-    ? `- Address the listener by their name, "${askerName}", once and naturally near the opening (e.g. "${askerName}, that's a great question…"). Use this exact name; never write a placeholder like "[Username]".`
-    : `- Do NOT address the listener by name and never write a placeholder like "[Username]"; open with a hook or thesis instead.`
+  const greetingRule = isNews
+    ? `- Open by warmly acknowledging this as a question from a viewer, collectively and WITHOUT any name (e.g. "We've got a great question from a viewer…" / "A viewer asked us…"). Never address anyone by name and never write a placeholder like "[Username]".`
+    : askerName
+      ? `- Address the listener by their name, "${askerName}", once and naturally near the opening (e.g. "${askerName}, that's a great question…"). Use this exact name; never write a placeholder like "[Username]".`
+      : `- Do NOT address the listener by name and never write a placeholder like "[Username]"; open with a hook or thesis instead.`
 
   return `You are ${lead.name}, ${lead.role} on a podcast — ${lead.persona}. A listener${askerName ? ` named ${askerName}` : ''} asked a question about a published episode. Write your spoken answer.
 
@@ -466,8 +470,10 @@ export async function generateHostAnswer(
   if (!prose) return null
 
   const formatted = await formatAnswerSegments(prose, input.show, input.language)
+  // News answers stay anonymous — strip any name placeholder, never insert one.
+  const askerName = input.show.contentType === 'News' ? null : input.askerName
   const segments = formatted
-    .map((seg) => ({ speaker: seg.speaker, text: applyAskerName(seg.text, input.askerName) }))
+    .map((seg) => ({ speaker: seg.speaker, text: applyAskerName(seg.text, askerName) }))
     .filter((seg) => seg.text.length > 0)
   if (segments.length === 0) return null
 

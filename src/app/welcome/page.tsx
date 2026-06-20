@@ -50,7 +50,7 @@ export default function WelcomePage() {
       <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[rgba(12,14,20,0.85)] backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <Link href="/" className="flex shrink-0 items-center">
-            <ClearSightLogo className="!h-36 w-auto sm:!h-[10.5rem]" />
+            <ClearSightLogo className="!h-14 !w-auto sm:!h-16" />
           </Link>
           <div className="flex items-center gap-2">
             <GlobalLanguagePicker />

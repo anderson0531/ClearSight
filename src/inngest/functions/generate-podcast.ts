@@ -11,6 +11,7 @@ import {
 import { renderStoryAnimatic } from '@/lib/animatic'
 import { sendPushToUser } from '@/lib/push'
 import { addCoreTokens } from '@/lib/credits'
+import type { GenerationStage } from '@/lib/generation-progress'
 
 /** The subset of generation params persisted on the Generation row. */
 type StoredParams = Omit<GenerateStoryInput, 'userId' | 'generationId'>
@@ -69,6 +70,12 @@ export const generatePodcast = inngest.createFunction(
   async ({ event, step }) => {
     const { generationId, userId } = event.data as unknown as PodcastGenerationRequested
 
+    // Best-effort live-progress marker. Never let a stage write fail the run.
+    const markStage = (stage: GenerationStage) =>
+      prisma.generation
+        .update({ where: { id: generationId }, data: { stage } })
+        .catch(() => {})
+
     // Load the job, capture its params, and flip it to RUNNING.
     const job = await step.run('start', async () => {
       const generation = await prisma.generation.findUnique({
@@ -96,12 +103,14 @@ export const generatePodcast = inngest.createFunction(
     }
 
     // Phase 1 — research, brief, script, bookends, draft Story (no audio).
-    const brief = (await step.run('compile-brief', () =>
-      compileBriefAndScript(input)
-    )) as unknown as CompiledBrief
+    const brief = (await step.run('compile-brief', async () => {
+      await markStage('analysis')
+      return compileBriefAndScript(input)
+    })) as unknown as CompiledBrief
 
     // Phase 2 — TTS + finalize the Story. Retried independently of the brief.
     const finalized = await step.run('synthesize-audio', async () => {
+      await markStage('audio')
       const story = await synthesizeAndFinalize(brief)
       return { storyId: story.id, audioUrl: story.audioUrl }
     })
@@ -112,6 +121,7 @@ export const generatePodcast = inngest.createFunction(
     // Best-effort: the channel cover-art set at finalize is already a valid
     // thumbnail, so a failure here just leaves that fallback in place.
     await step.run('generate-thumbnail', async () => {
+      await markStage('thumbnail')
       try {
         const url = await generateAndStoreEpisodeThumbnail(brief)
         return { storyId, thumbnailUrl: url }
@@ -126,6 +136,7 @@ export const generatePodcast = inngest.createFunction(
     // deliverable), so we swallow errors and still complete.
     if (job.includeIllustrations) {
       await step.run('render-illustrations', async () => {
+        await markStage('illustrations')
         try {
           await renderStoryAnimatic(storyId)
         } catch (err) {
@@ -139,7 +150,7 @@ export const generatePodcast = inngest.createFunction(
     await step.run('complete', () =>
       prisma.generation.update({
         where: { id: generationId },
-        data: { status: 'COMPLETED', storyId },
+        data: { status: 'COMPLETED', stage: 'complete', storyId },
       })
     )
 

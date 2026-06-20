@@ -36,6 +36,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/me')
+      // Transient failure (e.g. DB blip → 503): keep the prior auth state rather
+      // than bouncing a logged-in user to anonymous over a momentary outage.
+      if (!res.ok) {
+        setState((prev) => ({ ...prev, loading: false }))
+        return
+      }
       const data = (await res.json()) as {
         id?: string | null
         plan?: Plan

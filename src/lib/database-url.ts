@@ -120,6 +120,43 @@ export function getDatabaseUnavailableMessage(error: unknown): string {
   return 'Database unavailable. Please try again shortly.'
 }
 
+/**
+ * Typed error for transient database connectivity failures. Callers can use this
+ * to distinguish "the DB blipped" (retry / keep prior state) from a genuine
+ * "not found" (e.g. no session). Crucial for auth: a connectivity blip must NOT
+ * be treated as "logged out".
+ */
+export class DatabaseUnavailableError extends Error {
+  constructor(message = 'Database temporarily unavailable') {
+    super(message)
+    this.name = 'DatabaseUnavailableError'
+  }
+}
+
+/**
+ * Run a DB operation with a few short retries for transient connectivity errors
+ * (dropped sockets after Neon idle-suspend, brief pool exhaustion, etc.). Other
+ * errors propagate immediately. After exhausting retries on a connectivity
+ * error, throws a {@link DatabaseUnavailableError} so callers can handle it
+ * distinctly from application errors.
+ */
+export async function withDbRetry<T>(fn: () => Promise<T>, retries = 2, baseDelayMs = 150): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (!isDatabaseUnavailableError(error) || attempt === retries) break
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * (attempt + 1)))
+    }
+  }
+  if (isDatabaseUnavailableError(lastError)) {
+    throw new DatabaseUnavailableError(getDatabaseUnavailableMessage(lastError))
+  }
+  throw lastError
+}
+
 async function probeDatabase(url: string, timeoutMs = 8000): Promise<{ ok: true } | { ok: false; error: string }> {
   const client = new Client({
     connectionString: url,

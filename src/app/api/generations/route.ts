@@ -20,6 +20,7 @@ export async function GET() {
       select: {
         id: true,
         status: true,
+        stage: true,
         storyId: true,
         errorMessage: true,
         includeIllustrations: true,
@@ -29,16 +30,21 @@ export async function GET() {
       },
     })
 
-    const generations = rows.map((row) => ({
-      id: row.id,
-      status: row.status,
-      storyId: row.storyId,
-      errorMessage: row.errorMessage,
-      includeIllustrations: row.includeIllustrations,
-      title: (row.params as { title?: string } | null)?.title ?? null,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    }))
+    const generations = rows.map((row) => {
+      const params = row.params as { title?: string; contentType?: string } | null
+      return {
+        id: row.id,
+        status: row.status,
+        stage: row.stage,
+        storyId: row.storyId,
+        errorMessage: row.errorMessage,
+        includeIllustrations: row.includeIllustrations,
+        title: params?.title ?? null,
+        contentType: params?.contentType ?? null,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }
+    })
 
     return NextResponse.json({ generations })
   } catch (err) {

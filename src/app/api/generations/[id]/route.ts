@@ -21,6 +21,7 @@ export async function GET(
       select: {
         id: true,
         status: true,
+        stage: true,
         storyId: true,
         errorMessage: true,
         includeIllustrations: true,
@@ -32,13 +33,16 @@ export async function GET(
 
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+    const params = row.params as { title?: string; contentType?: string } | null
     return NextResponse.json({
       id: row.id,
       status: row.status,
+      stage: row.stage,
       storyId: row.storyId,
       errorMessage: row.errorMessage,
       includeIllustrations: row.includeIllustrations,
-      title: (row.params as { title?: string } | null)?.title ?? null,
+      title: params?.title ?? null,
+      contentType: params?.contentType ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     })
@@ -149,6 +153,7 @@ export async function POST(
       where: { id: row.id },
       data: {
         status: 'QUEUED',
+        stage: 'queued',
         errorMessage: null,
         creditsCharged: row.creditsCharged + retryUnits,
       },

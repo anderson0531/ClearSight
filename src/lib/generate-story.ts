@@ -15,17 +15,19 @@ import { TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
 import { reviewPodcastScript } from '@/lib/editorial-review'
 import { formatBriefingAnalysisBlock, formatPodcastAnalysisBlock } from '@/lib/analysis-frameworks'
 import {
+  buildAnimaticPrompt,
   buildLocaleVisualContext,
+  buildTitleSlidePrompt,
   generateLineImagePrompts,
   illustratesGenerously,
   type FrameDecision,
 } from '@/lib/animatic'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
-import { OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
+import { MUSIC_MOODS, normalizeMusicMood, OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
 import { categoryVisualStyle, resolveShow, showById, type Show } from '@/lib/shows'
 import type { HostProfile } from '@/lib/hosts'
-import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
+import type { AudioSegment, AudioSegmentRole, FrameKind, MusicMood } from '@/types/story'
 
 export type GenerationStage = 'analysis' | 'draft' | 'editorial' | 'podcast' | 'saving' | 'done'
 
@@ -68,6 +70,9 @@ interface TruthLedgerResult {
 const TTS_MODEL = process.env.VERTEX_TTS_MODEL ?? 'gemini-2.5-flash-tts'
 const BRAND_NAME = 'ClearSight'
 
+/** Comma-joined music moods for inline prompt enumeration. */
+const MUSIC_MOODS_INLINE = MUSIC_MOODS.join(', ')
+
 /**
  * The lead/analyst host of a show. For a dialogue show this is the second host
  * (delivers breakdowns + forecast); for a solo show it's the only host.
@@ -109,6 +114,17 @@ interface PodcastTurn {
   /** When true, forces a fresh audio segment boundary (chapter "reset" moment). */
   chapterBreak?: boolean
   role?: AudioSegmentRole
+  /** Underscore mood for this frame (News structured script). */
+  musicMood?: MusicMood
+  /** Whether this turn renders a custom illustration (News). Defaults true. */
+  illustrate?: boolean
+  /** Imagen scene prompt authored by the structured script (News). */
+  scene?: string
+  /**
+   * Span-group key from the script: consecutive turns sharing this key reuse a
+   * single illustration. Resolved to a stable `illustrationGroupId` downstream.
+   */
+  spanGroup?: string
 }
 
 interface PodcastScript {
@@ -132,6 +148,16 @@ interface PreparedLine {
   imageUrl: string | null
   imagePrompt: string | null
   frameKind: FrameKind | null
+  musicMood: MusicMood | null
+  illustrationGroupId: string | null
+  titleSlide: boolean
+}
+
+/** Options for building per-line illustration prompts inline (News path). */
+interface PrepareLineOptions {
+  style?: string
+  localeContext?: string
+  title?: string
 }
 
 // Kept deliberately low: TTS shares a per-minute, per-project quota
@@ -188,12 +214,16 @@ function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[]
   const pieces: PodcastTurn[] = []
   let buffer = ''
 
+  // Carry every framing field (mood, scene, span group, illustrate) onto each
+  // piece so a long line split across frames shares one illustration + mood.
+  const piece = (text: string): PodcastTurn => ({ ...turn, text })
+
   for (const sentence of sentences) {
     const trimmed = sentence.trim()
     if (!trimmed) continue
     const candidate = buffer ? `${buffer} ${trimmed}` : trimmed
     if (byteLength(candidate) > maxBytes && buffer) {
-      pieces.push({ speaker: turn.speaker, text: buffer.trim() })
+      pieces.push(piece(buffer.trim()))
       buffer = trimmed
     } else {
       buffer = candidate
@@ -201,10 +231,10 @@ function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[]
   }
 
   if (buffer.trim()) {
-    pieces.push({ speaker: turn.speaker, text: truncateToBytes(buffer.trim(), maxBytes) })
+    pieces.push(piece(truncateToBytes(buffer.trim(), maxBytes)))
   }
 
-  return pieces.length > 0 ? pieces : [{ ...turn, text: truncateToBytes(turn.text, maxBytes) }]
+  return pieces.length > 0 ? pieces : [piece(truncateToBytes(turn.text, maxBytes))]
 }
 
 function sleep(ms: number): Promise<void> {
@@ -267,22 +297,84 @@ async function mapPool<T, R>(
   return results
 }
 
-function prepareLines(turns: PodcastTurn[], show: Show): PreparedLine[] {
+/**
+ * Flattens script turns into TTS-sized lines and attaches per-line frame
+ * metadata.
+ *
+ * Legacy shows: intro/cta/disclaimer use the studio host frame; body lines are
+ * framed later by the visual-director pass (`generateLineImagePrompts` →
+ * `attachImagePrompts`).
+ *
+ * News: every frame is an illustration (no host/studio frames). The intro is a
+ * title-slide backdrop; other frames use the structured script's `scene` prompt
+ * (falling back to the spoken text). Consecutive pieces/turns sharing a span
+ * group get one `illustrationGroupId` so a single image can span frames.
+ */
+function prepareLines(
+  turns: PodcastTurn[],
+  show: Show,
+  options?: PrepareLineOptions
+): PreparedLine[] {
   const lines: PreparedLine[] = []
+  const isNews = show.contentType === 'News'
+  const promptOptions = { style: options?.style, localeContext: options?.localeContext }
 
-  turns.forEach((turn) => {
+  // Stable per-episode group ids. Turns with the same explicit span group share
+  // one image; a turn without one still groups its own split pieces together.
+  const spanGroupIds = new Map<string, string>()
+  let groupSeq = 0
+  const nextGroupId = () => `g${++groupSeq}`
+
+  turns.forEach((turn, turnIndex) => {
     const role = turn.role ?? 'body'
-    const imageUrl =
-      role === 'intro' || role === 'cta' || role === 'disclaimer' ? show.studioImage : null
+
+    if (!isNews) {
+      const imageUrl =
+        role === 'intro' || role === 'cta' || role === 'disclaimer' ? show.studioImage : null
+      for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
+        lines.push({
+          speaker: piece.speaker,
+          text: piece.text,
+          role,
+          imageUrl,
+          imagePrompt: null,
+          frameKind: null,
+          musicMood: null,
+          illustrationGroupId: null,
+          titleSlide: false,
+        })
+      }
+      return
+    }
+
+    // News: resolve the illustration group shared across this turn's frames.
+    const spanKey = turn.spanGroup?.trim()
+    let groupId: string
+    if (spanKey) {
+      groupId = spanGroupIds.get(spanKey) ?? nextGroupId()
+      spanGroupIds.set(spanKey, groupId)
+    } else {
+      groupId = `t${turnIndex}-${nextGroupId()}`
+    }
+
+    const isTitleSlide = role === 'intro'
+    const sceneText = turn.scene?.trim() || turn.text
+    const imagePrompt = isTitleSlide
+      ? buildTitleSlidePrompt(options?.title ?? turn.text, promptOptions)
+      : buildAnimaticPrompt(sceneText, promptOptions)
+    const musicMood = turn.musicMood ?? null
 
     for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
       lines.push({
         speaker: piece.speaker,
         text: piece.text,
         role,
-        imageUrl,
-        imagePrompt: null,
-        frameKind: null,
+        imageUrl: null,
+        imagePrompt,
+        frameKind: 'scene',
+        musicMood,
+        illustrationGroupId: groupId,
+        titleSlide: isTitleSlide,
       })
     }
   })
@@ -458,6 +550,12 @@ async function compileTruthLedgerMarkdown(
   const analysisBlock = formatBriefingAnalysisBlock(input.category, briefingType)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
   const descriptionBlock = formatUserDescriptionBlock(input.description)
+  // News briefings carry an explicit misconception ledger so the episode can
+  // name and correct prevalent misinformation about the topic.
+  const misconceptionsBlock =
+    briefingType === 'News'
+      ? `\n### COMMON MISCONCEPTIONS\n(List 1-3 prevalent misconceptions, myths, or pieces of misinformation about this topic that the public commonly believes. For EACH: state the misconception plainly, then correct it with the sourced fact. Format each as a bold "Myth:" line followed by a "Reality:" line. If no notable misconception exists, write a single line saying so.)`
+      : ''
 
   const prompt = `Use current web search. Today is ${today}.
 
@@ -495,7 +593,7 @@ Use EXACTLY this Markdown structure and shape, with no extra sections:
 **Sources Verified:**
 {{SOURCES}}
 **Reliability Index:** (number 1.0-10.0 per rubric above)
-${analysisBlock}
+${analysisBlock}${misconceptionsBlock}
 
 LANGUAGE & LOCALIZATION (critical):
 - Write the ENTIRE output in ${input.language}, INCLUDING every heading and bold label.
@@ -751,6 +849,45 @@ Return ONLY compact JSON: {"category":"<one category>","format":"<one format>"}`
   }
 }
 
+/**
+ * Three sharp, viewer-perspective follow-up questions used to prime the episode
+ * Q&A. Surfaced as prefill chips; each must be a single, self-contained sentence
+ * answerable from (or closely related to) the briefing, in the episode language.
+ * Best-effort — returns [] on any failure so generation never blocks on it.
+ */
+async function generateSeedQuestions(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  markdown: string
+): Promise<string[]> {
+  const briefingExcerpt = markdown.slice(0, 2500)
+  const prompt = `You are a sharp viewer of a ${BRAND_NAME} news episode about "${input.title}".
+Write exactly 3 intelligent follow-up questions a curious, informed viewer would ask the hosts after this episode. Each should probe causes, consequences, trade-offs, or what happens next — not trivia. Each must be ONE self-contained sentence, answerable from or closely related to the briefing below.
+
+Write the questions in ${input.language}.
+
+Briefing:
+"""
+${briefingExcerpt}
+"""
+
+Return ONLY a JSON array of 3 strings, e.g. ["...?","...?","...?"]`
+
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.5,
+    maxOutputTokens: 600,
+    model: VERTEX_FAST_MODEL,
+    useSearchGrounding: false,
+  })
+  if (!raw) return []
+
+  const arr = extractJsonArrayLoose(raw)
+  if (!arr) return []
+  return arr
+    .map((q) => (typeof q === 'string' ? q.trim() : ''))
+    .filter((q) => q.length >= 8)
+    .slice(0, 3)
+}
+
 /** Numbered, topic-optimized beats for the show, used to drive the script. */
 function formatStructure(show: Show): string {
   return show.scriptStructure.map((beat, i) => `${i + 1}. ${beat}`).join('\n')
@@ -893,6 +1030,173 @@ ${closingRule}`
   return trimScriptToLimits(parsed)
 }
 
+/** Extracts the first JSON array from raw model output, tolerating fences/prose. */
+function extractJsonArrayLoose(raw: string): unknown[] | null {
+  const text = raw.replace(/```json/gi, '').replace(/```/g, '')
+  const start = text.indexOf('[')
+  if (start === -1) return null
+  const body = text.slice(start)
+  const whole = body.match(/\[[\s\S]*\]/)
+  if (whole) {
+    try {
+      const parsed = JSON.parse(whole[0])
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      /* fall through to salvage */
+    }
+  }
+  const lastBrace = body.lastIndexOf('}')
+  if (lastBrace > 0) {
+    try {
+      const parsed = JSON.parse(`${body.slice(0, lastBrace + 1)}]`)
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      /* unrecoverable */
+    }
+  }
+  return null
+}
+
+/**
+ * Parse the structured News script (a JSON array of frame objects) into turns
+ * carrying per-frame illustration prompts, music moods, and span groups. Falls
+ * back to the plain-text parser when the model didn't return usable JSON, so a
+ * News episode still generates even if structured output fails.
+ */
+function parseNewsScript(raw: string, show: Show): PodcastScript | null {
+  const arr = extractJsonArrayLoose(raw)
+  if (!arr) return parsePodcastScript(raw, show)
+
+  const matchHost = (label: string): HostProfile => {
+    const lower = (label ?? '').toLowerCase()
+    return (
+      show.hosts.find((h) => h.aliases.some((alias) => lower.includes(alias))) ??
+      show.hosts.find((h) => lower.includes(h.name.toLowerCase())) ??
+      show.hosts[0]!
+    )
+  }
+
+  const turns: PodcastTurn[] = []
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue
+    const obj = item as {
+      speaker?: unknown
+      text?: unknown
+      musicMood?: unknown
+      illustrate?: unknown
+      scene?: unknown
+      spanGroup?: unknown
+    }
+    const text = typeof obj.text === 'string' ? obj.text.trim() : ''
+    if (!text) continue
+    const host = matchHost(typeof obj.speaker === 'string' ? obj.speaker : '')
+    const illustrate = obj.illustrate === false ? false : true
+    const scene = typeof obj.scene === 'string' ? obj.scene.trim() : ''
+    const spanGroup =
+      obj.spanGroup == null ? undefined : String(obj.spanGroup).trim() || undefined
+    turns.push({
+      speaker: host.name,
+      text,
+      musicMood: normalizeMusicMood(obj.musicMood),
+      illustrate,
+      ...(scene ? { scene } : {}),
+      ...(spanGroup ? { spanGroup } : {}),
+    })
+  }
+
+  const minTurns = show.format === 'solo' ? 3 : 4
+  if (turns.length < minTurns) return parsePodcastScript(raw, show)
+
+  return {
+    directorNotes: show.sceneDirectorNotes.slice(0, 380),
+    turns,
+    wordCount: turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0),
+  }
+}
+
+/**
+ * News-only structured script generator. Emits a JSON array of frames, each
+ * carrying the spoken line plus its illustration scene prompt, music mood, and
+ * optional span group (so one image can cover several consecutive frames). The
+ * body MUST include a dedicated misconception-clarification beat. The result
+ * feeds the per-frame illustration pipeline directly (no visual-director pass).
+ */
+async function generateNewsPodcastScript(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  markdown: string,
+  show: Show,
+  confidence?: ScriptConfidence | null
+): Promise<PodcastScript | null> {
+  const briefingExcerpt = markdown.slice(0, 3500)
+  const scriptType = input.contentType ?? typeForCategory(input.category)
+  const lead = leadHost(show)
+  const co = coHost(show)
+  const analysisBlock = formatPodcastAnalysisBlock(input.category, lead.name, scriptType)
+  const questionsBlock = formatUserQuestionsBlock(input.questions)
+  const descriptionBlock = formatUserDescriptionBlock(input.description)
+  const localeContext = buildLocaleScriptContext(input)
+  const structure = formatStructure(show)
+  const moods = MUSIC_MOODS_INLINE
+
+  const philosophyBlock = show.scriptPhilosophy?.trim()
+    ? `\n${show.scriptPhilosophy.trim()}\n`
+    : ''
+
+  const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" news episode in ${input.language} about: "${input.title}", as a STRUCTURED, per-frame script.
+${descriptionBlock}${questionsBlock}
+${BRAND_NAME} delivers substance NOT available in standard coverage — go beyond a recap. The energy is sharp, dynamic, and confident.
+${philosophyBlock}
+TWO HOSTS (audio only — there are no on-screen avatars; every frame is an ILLUSTRATION):
+- ${co.name} (${co.role}) — ${co.persona}
+- ${lead.name} (${lead.role}) — ${lead.persona}
+
+Follow this topic-optimized structure, moving the listener forward:
+${structure}
+
+${localeContext ? `${localeContext}\n` : ''}
+Ground factual claims ONLY in this briefing:
+${briefingExcerpt}
+
+${analysisBlock}
+
+INTERPRETATION RULES:
+- Analytical reasoning and forecasts are encouraged when built on briefing facts.
+- Do NOT invent new factual claims beyond the briefing.
+- Do NOT re-litigate whether the story is real — assume the briefing reflects current reporting.
+- Label inference vs. confirmed fact ("based on the reporting…", "if this holds…").
+${confidence ? `\n${buildConfidenceDirective(confidence)}\n` : ''}
+MANDATORY MISCONCEPTION BEAT: somewhere in the middle, include one short exchange that NAMES a common, prevalent misconception or piece of misinformation about this topic and CLEARLY corrects it with a sourced fact from the briefing (e.g. one host: "A lot of people assume X…", the other: "Actually, the reporting shows Y…").
+
+FRAME MODEL (critical):
+- Output a JSON array of FRAMES. Each frame is one spoken line by one host.
+- Every frame is an illustration. For each frame write "scene": ONE vivid, concrete sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue. Honor the localization above. The scene must contain NO text/letters/words.
+- "musicMood": pick the best underscore mood from: ${moods}.
+- "spanGroup": when several CONSECUTIVE frames should share ONE illustration (the same image holds across the lines), give them the SAME spanGroup string (e.g. "scene-A"). Use distinct spanGroup values for distinct images. Omit spanGroup for a frame with its own unique image. Use spanning sparingly and only when it genuinely reads as one continuous visual.
+
+Output ONLY a JSON array (12-18 frames), alternating ${co.name} and ${lead.name}, e.g.:
+[{"speaker":"${co.name}","text":"...","musicMood":"tension","scene":"A ... wide shot of ...","spanGroup":"scene-A"},{"speaker":"${lead.name}","text":"...","musicMood":"reflective","scene":"Close on ..."}]
+
+Rules:
+- Entire spoken text in ${input.language}.
+- Do NOT write a greeting, intro, welcome, or sign-off — this is the MIDDLE of the show only.
+- Every line carries substance; no filler reactions.
+- Use Gemini audio tags sparingly inside "text": [curious], [thoughtful], [short pause], [concerned].
+- No markdown, no commentary outside the JSON array.
+- End with ${lead.name} delivering the forecast and key takeaway.`
+
+  const raw = await vertexGenerateText(prompt, {
+    temperature: 0.6,
+    maxOutputTokens: 8192,
+    useSearchGrounding: false,
+  })
+  if (!raw) return null
+
+  const parsed = parseNewsScript(raw, show)
+  if (!parsed) return null
+
+  return trimScriptToLimits(parsed)
+}
+
 /**
  * One LLM call that returns the dynamic, in-language episode "bookends" that
  * wrap the analytical core: a cold-open hook, a branded intro, an objective
@@ -906,9 +1210,25 @@ async function generateEpisodeBookends(
 ): Promise<EpisodeBookends | null> {
   const briefingExcerpt = markdown.slice(0, 2500)
   const region = geoFocusLabel(input)
+  const isNews = show.contentType === 'News'
   const confidenceBlock = confidence
     ? `\nSOURCE CONFIDENCE: ${buildConfidenceDirective(confidence)}\nThe SUMMARY must honestly reflect this confidence level (especially: if confidence is low, say so plainly rather than overstating certainty).\n`
     : ''
+
+  // News closes by inviting listeners into the on-page Q&A (no liability
+  // disclaimer); other shows keep the Custom-Podcast CTA + spoken disclaimer.
+  const ctaInstruction = isNews
+    ? `CTA: Exactly one warm closing call to action inviting the listener to ask the hosts their OWN question about this story — right here on this episode's Q&A. Make it clear they can pose a follow-up and the hosts will answer. Confident and inviting, not pushy.`
+    : `CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.`
+
+  const disclaimerInstruction = isNews
+    ? ''
+    : `\nDISCLAIMER: A brief spoken liability disclaimer in the show's calm, plain voice, adapted naturally into ${input.language}. Convey ALL of these points: this episode of "${show.name}" was produced with AI and is for general information only; it may contain errors and is not professional, legal, financial, or medical advice; sources were summarized automatically, so listeners should verify independently before relying on any claim. Keep the brand/show names in Latin script. Neutral and non-alarming.`
+
+  const blockCount = isNews ? 'four' : 'five'
+  const labelList = isNews
+    ? 'HOOK:, INTRO:, SUMMARY:, CTA:'
+    : 'HOOK:, INTRO:, SUMMARY:, CTA:, DISCLAIMER:'
 
   const prompt = `You script the spoken "bookends" for an episode of the "${show.name}" podcast on ${BRAND_NAME}, about "${input.title}".
 Write EVERYTHING in ${input.language}. Keep the brand names "${BRAND_NAME}" and "${show.name}" in Latin script.
@@ -921,18 +1241,17 @@ Briefing context (ground all claims here, invent nothing):
 ${briefingExcerpt}
 ${confidenceBlock}
 
-Produce exactly five labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
+Produce exactly ${blockCount} labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
 
 HOOK: A cold-open in the show's voice. Lead with the single most startling fact, stakes, or hook from the briefing. No greeting — drop the listener straight into the tension.
 INTRO: A branded welcome based on the channel's welcome line above, naturally woven together with the real topic ("${input.title}") and, where it fits the tone, the relevant place (${region}). Stay in "${show.name}"'s voice — do NOT use a generic news-network template. Adapt naturally into ${input.language}.
 SUMMARY: A rapid, objective 2-sentence recap of the core finding (and forecast, if relevant), in the show's tone.
-CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.
-DISCLAIMER: A brief spoken liability disclaimer in the show's calm, plain voice, adapted naturally into ${input.language}. Convey ALL of these points: this episode of "${show.name}" was produced with AI and is for general information only; it may contain errors and is not professional, legal, financial, or medical advice; sources were summarized automatically, so listeners should verify independently before relying on any claim. Keep the brand/show names in Latin script. Neutral and non-alarming.
+${ctaInstruction}${disclaimerInstruction}
 
 Rules:
-- Output ONLY the five lines, each beginning with its label (HOOK:, INTRO:, SUMMARY:, CTA:, DISCLAIMER:)
+- Output ONLY the ${blockCount} lines, each beginning with its label (${labelList})
 - No markdown, no stage directions, no speaker names
-- Each block <= 320 characters (the DISCLAIMER may use up to 360)`
+- Each block <= 320 characters${isNews ? '' : ' (the DISCLAIMER may use up to 360)'}`
 
   const raw = await vertexGenerateText(prompt, {
     temperature: 0.5,
@@ -972,6 +1291,7 @@ function assembleEpisode(
   // For a solo show both resolve to the single host.
   const hookSpeaker = coHost(show).name
   const leadSpeaker = leadHost(show).name
+  const isNews = show.contentType === 'News'
   // Bookends come from the model already written in the target language. The
   // canned fallbacks below are English, so they may ONLY be used for English
   // episodes — otherwise a failed bookends call would leak English narration
@@ -981,20 +1301,26 @@ function assembleEpisode(
   const fallbackIntro = isEnglish
     ? `${show.introTagline} Today we're diving into ${input.title}.`
     : ''
+  // News closes with a Q&A invitation; other shows pitch the Custom Podcast.
   const fallbackCta = isEnglish
-    ? `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
+    ? isNews
+      ? `Have a question about this story? Ask the hosts right here on this episode — we'll dig into it.`
+      : `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
     : ''
   // Spoken liability disclaimer. English fallback only — a failed bookends call
-  // must never leak English into a non-English episode.
-  const fallbackDisclaimer = isEnglish
-    ? `This episode of ${show.name} was produced with AI and is for general information only. It may contain errors and isn't professional, legal, financial, or medical advice. Sources were summarized automatically — please verify independently before relying on any claim.`
-    : ''
+  // must never leak English into a non-English episode. News drops it entirely.
+  const fallbackDisclaimer = isNews
+    ? ''
+    : isEnglish
+      ? `This episode of ${show.name} was produced with AI and is for general information only. It may contain errors and isn't professional, legal, financial, or medical advice. Sources were summarized automatically — please verify independently before relying on any claim.`
+      : ''
 
   const hook = bookends?.hook?.trim()
   const intro = (bookends?.intro?.trim() || fallbackIntro).trim()
   const summary = bookends?.summary?.trim()
   const cta = (bookends?.cta?.trim() || fallbackCta).trim()
-  const disclaimer = (bookends?.disclaimer?.trim() || fallbackDisclaimer).trim()
+  // News never carries a spoken disclaimer.
+  const disclaimer = isNews ? '' : (bookends?.disclaimer?.trim() || fallbackDisclaimer).trim()
 
   const turns: PodcastTurn[] = []
 
@@ -1003,6 +1329,7 @@ function assembleEpisode(
       speaker: hookSpeaker,
       text: truncateToBytes(`[serious] ${hook}`, TTS_MAX_TURN_BYTES),
       role: 'hook',
+      ...(isNews ? { musicMood: 'tension' as MusicMood } : {}),
     })
   }
 
@@ -1012,6 +1339,7 @@ function assembleEpisode(
       text: truncateToBytes(`[warm] ${intro}`, TTS_MAX_TURN_BYTES),
       chapterBreak: true,
       role: 'intro',
+      ...(isNews ? { musicMood: 'uplifting' as MusicMood } : {}),
     })
   }
 
@@ -1035,6 +1363,7 @@ function assembleEpisode(
       text: truncateToBytes(`[thoughtful] ${summary}`, TTS_MAX_TURN_BYTES),
       chapterBreak: true,
       role: 'summary',
+      ...(isNews ? { musicMood: 'reflective' as MusicMood } : {}),
     })
   }
 
@@ -1043,6 +1372,7 @@ function assembleEpisode(
       speaker: leadSpeaker,
       text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
       role: 'cta',
+      ...(isNews ? { musicMood: 'hopeful' as MusicMood } : {}),
     })
   }
 
@@ -1255,7 +1585,10 @@ async function uploadAudioSegment(
   title: string,
   index: number,
   fallbackDuration: number,
-  meta: Pick<PreparedLine, 'speaker' | 'role' | 'imageUrl' | 'text' | 'imagePrompt' | 'frameKind'>
+  meta: Pick<
+    PreparedLine,
+    'speaker' | 'role' | 'imageUrl' | 'text' | 'imagePrompt' | 'frameKind' | 'musicMood' | 'illustrationGroupId' | 'titleSlide'
+  >
 ): Promise<AudioSegment> {
   const slug = title.slice(0, 32).replace(/\W/g, '-')
   const blob = await put(
@@ -1275,6 +1608,9 @@ async function uploadAudioSegment(
     text: meta.text,
     ...(meta.imagePrompt ? { imagePrompt: meta.imagePrompt } : {}),
     ...(meta.frameKind ? { frameKind: meta.frameKind } : {}),
+    ...(meta.musicMood ? { musicMood: meta.musicMood } : {}),
+    ...(meta.illustrationGroupId ? { illustrationGroupId: meta.illustrationGroupId } : {}),
+    ...(meta.titleSlide ? { titleSlide: true } : {}),
   }
 }
 
@@ -1292,23 +1628,33 @@ async function synthesizePodcastAudio(
 
   const { language, title } = input
   const locale = getVoiceForLanguage(language)
-  const rawLines = prepareLines(script.turns, show)
-  if (rawLines.length === 0) return null
-
-  const promptInputs = rawLines.map((line, index) => ({
-    index,
-    speaker: line.speaker,
-    text: line.text,
-    role: line.role,
-  }))
+  const isNews = show.contentType === 'News'
   const localeContext = buildLocaleVisualContext(language, geoFocusLabel(input), input.geoCountry)
   const style = [show.visualStyle, categoryVisualStyle(input.category)].filter(Boolean).join(' ')
-  const imagePrompts = await generateLineImagePrompts(promptInputs, {
-    style,
-    localeContext,
-    illustrateGenerously: illustratesGenerously(show.contentType),
-  })
-  const lines = attachImagePrompts(rawLines, imagePrompts)
+
+  // News: per-frame scene prompts + moods come straight from the structured
+  // script (no separate visual-director pass). Other shows still run the
+  // best-effort framing pass that decides scene-vs-host per line.
+  const rawLines = prepareLines(script.turns, show, { style, localeContext, title })
+  if (rawLines.length === 0) return null
+
+  let lines: PreparedLine[]
+  if (isNews) {
+    lines = rawLines
+  } else {
+    const promptInputs = rawLines.map((line, index) => ({
+      index,
+      speaker: line.speaker,
+      text: line.text,
+      role: line.role,
+    }))
+    const imagePrompts = await generateLineImagePrompts(promptInputs, {
+      style,
+      localeContext,
+      illustrateGenerously: illustratesGenerously(show.contentType),
+    })
+    lines = attachImagePrompts(rawLines, imagePrompts)
+  }
 
   const lineBuffers = await mapPool(lines, TTS_CONCURRENCY, async (line) =>
     callGeminiTts(token, buildSingleSpeakerTtsBody(script.directorNotes, line, locale, show))
@@ -1343,6 +1689,9 @@ async function synthesizePodcastAudio(
           text: script.turns.map((turn) => turn.text).join(' ').slice(0, 900),
           imagePrompt: null,
           frameKind: null,
+          musicMood: null,
+          illustrationGroupId: null,
+          titleSlide: false,
         })
       )
     )
@@ -1366,6 +1715,9 @@ export interface LocalizedSegmentInput {
   imageUrl?: string | null
   imagePrompt?: string | null
   frameKind?: FrameKind | null
+  musicMood?: MusicMood | null
+  illustrationGroupId?: string | null
+  titleSlide?: boolean | null
   /** For non-TTS pass-through segments (e.g. baked outro music). */
   url?: string | null
   durationSeconds?: number | null
@@ -1421,6 +1773,9 @@ export async function resynthesizeLocalizedSegments(params: {
         imageUrl: seg.imageUrl ?? null,
         imagePrompt: seg.imagePrompt ?? null,
         frameKind: seg.frameKind ?? null,
+        musicMood: seg.musicMood ?? null,
+        illustrationGroupId: seg.illustrationGroupId ?? null,
+        titleSlide: Boolean(seg.titleSlide),
       },
     }
   })
@@ -1444,6 +1799,9 @@ export async function resynthesizeLocalizedSegments(params: {
         text: line.text,
         imagePrompt: line.imagePrompt,
         frameKind: line.frameKind,
+        musicMood: line.musicMood,
+        illustrationGroupId: line.illustrationGroupId,
+        titleSlide: line.titleSlide,
       })
     })
   )
@@ -1480,6 +1838,8 @@ export interface BriefFinalizeContext {
   thumbnailUrl: string
   scriptRevised: boolean
   resolvedInput: GenerateStoryInput
+  /** Viewer-perspective questions that prime the episode Q&A (News). */
+  seedQuestions: string[]
 }
 
 export interface CompiledBrief {
@@ -1621,16 +1981,27 @@ export async function compileBriefAndScript(
     domainCount: uniqueDomains(sources),
   }
 
-  const [draftScript, bookends] = await Promise.all([
-    generatePodcastScript(resolvedInput, markdownContent, show, confidence),
+  const isNews = podcastType === 'News'
+
+  const [draftScript, bookends, seedQuestions] = await Promise.all([
+    isNews
+      ? generateNewsPodcastScript(resolvedInput, markdownContent, show, confidence)
+      : generatePodcastScript(resolvedInput, markdownContent, show, confidence),
     generateEpisodeBookends(resolvedInput, markdownContent, show, confidence),
+    isNews
+      ? generateSeedQuestions(resolvedInput, markdownContent)
+      : Promise.resolve<string[]>([]),
   ])
 
   report('podcast', 60)
 
   let podcastScript: PodcastScript | null = draftScript
   let scriptRevised = false
-  if (draftScript) {
+  // The editorial review re-parses the script as plain text, which would strip
+  // the News structured frame metadata (scene/mood/spanGroup). News already
+  // folds the editorial self-check into the brief, so we use its structured
+  // script directly; other shows still get the review pass.
+  if (draftScript && !isNews) {
     report('podcast', 66)
     const scriptReview = await reviewPodcastScript(
       {
@@ -1672,6 +2043,7 @@ export async function compileBriefAndScript(
       thumbnailUrl,
       scriptRevised,
       resolvedInput,
+      seedQuestions,
     },
   }
 }
@@ -1710,6 +2082,7 @@ export async function synthesizeAndFinalize(
     thumbnailUrl,
     scriptRevised,
     resolvedInput,
+    seedQuestions,
   } = context
 
   const show = resolveShow({ contentType: podcastType, category: resolvedInput.category })
@@ -1749,6 +2122,7 @@ export async function synthesizeAndFinalize(
         sourceCount: sources.length,
         domainCount,
         audioSegments: audio?.segments ? (serializeAudioSegments(audio.segments) as object[]) : null,
+        ...(seedQuestions.length > 0 ? { seedQuestions } : {}),
         editorialReview: {
           editorialFoldedIntoDraft: true,
           scriptRevised,

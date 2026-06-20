@@ -15,7 +15,7 @@ export function AuthCard({ title, subtitle, children, footer }: AuthCardProps) {
     <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--background)] px-4 py-10">
       <div className="w-full max-w-sm">
         <Link href="/" className="mb-6 flex justify-center">
-          <ClearSightLogo className="!h-28 w-auto" />
+          <ClearSightLogo className="!h-12 !w-auto sm:!h-14" />
         </Link>
         <div className="glass-panel rounded-2xl border border-[var(--border)] p-6 sm:p-8">
           <h1 className="text-xl font-bold text-[var(--foreground)]">{title}</h1>

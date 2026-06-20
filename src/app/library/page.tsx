@@ -47,14 +47,20 @@ import {
 } from '@/lib/playlists'
 import { getShowById } from '@/lib/shows'
 import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
+import {
+  generationProgressPercent,
+  generationStageLabelKey,
+} from '@/lib/generation-progress'
 import { useAudioQueue } from '@/store/useAudioQueue'
 
 interface GenerationJob {
   id: string
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+  stage: string | null
   storyId: string | null
   errorMessage: string | null
   title: string | null
+  contentType: string | null
 }
 
 function LibrarySection({
@@ -226,34 +232,52 @@ export default function LibraryPage() {
           <ul className="space-y-2">
             {generations.map((job) => {
               const isActive = job.status === 'QUEUED' || job.status === 'RUNNING'
-              const statusLabel =
-                job.status === 'QUEUED'
-                  ? t('libraryGenQueued')
-                  : job.status === 'RUNNING'
-                    ? t('libraryGenRunning')
-                    : job.status === 'COMPLETED'
-                      ? t('libraryGenCompleted')
-                      : t('libraryGenFailed')
+              const percent = generationProgressPercent(job.stage, job.status)
+              const activityLabel = t(
+                generationStageLabelKey(job.stage, job.status, job.contentType)
+              )
+              const secondaryText =
+                job.status === 'FAILED'
+                  ? job.errorMessage ?? t('libraryGenFailed')
+                  : activityLabel
               return (
                 <li
                   key={job.id}
                   className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-white/[0.03] px-4 py-3"
                 >
-                  <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
                     {isActive ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--accent)]" />
+                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[var(--accent)]" />
                     ) : job.status === 'COMPLETED' ? (
-                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                     )}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-[var(--foreground)]">
                         {job.title ?? t('libraryInProgress')}
                       </p>
-                      <p className="truncate text-xs text-[var(--muted-strong)]">
-                        {job.status === 'FAILED' && job.errorMessage ? job.errorMessage : statusLabel}
-                      </p>
+                      <p className="truncate text-xs text-[var(--muted-strong)]">{secondaryText}</p>
+                      {isActive ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <div
+                            className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10"
+                            role="progressbar"
+                            aria-valuenow={percent}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label={activityLabel}
+                          >
+                            <div
+                              className="h-full rounded-full bg-[var(--accent)] transition-all duration-700 ease-out"
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                          <span className="shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-strong)]">
+                            {percent}%
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

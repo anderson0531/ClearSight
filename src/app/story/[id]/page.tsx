@@ -112,9 +112,17 @@ export default async function StoryPage({ params }: StoryPageProps) {
   const geoLocal = dbStory?.geoLocal ?? mockStory?.geoLocal
   const sourcesCount = countSources(markdown)
 
-  const meta = (dbStory?.sourcesVerified ?? null) as { showId?: string } | null
+  const meta = (dbStory?.sourcesVerified ?? null) as
+    | { showId?: string; seedQuestions?: unknown }
+    | null
   const showId = meta?.showId && getShowById(meta.showId) ? meta.showId : null
   const musicOnly = dbStory ? isMusicOnlyStory(dbStory.sourcesVerified) : false
+  const seedQuestions = Array.isArray(meta?.seedQuestions)
+    ? (meta!.seedQuestions as unknown[])
+        .map((q) => (typeof q === 'string' ? q.trim() : ''))
+        .filter((q) => q.length > 0)
+        .slice(0, 3)
+    : []
 
   const [{ canDelete, myReaction }, initialQuestions] = dbStory
     ? await Promise.all([getViewerContext(id), getStoryQuestions(id)])
@@ -158,6 +166,7 @@ export default async function StoryPage({ params }: StoryPageProps) {
             language={language ?? 'English'}
             showId={showId}
             initialQuestions={initialQuestions}
+            seedQuestions={seedQuestions}
           />
         ) : null}
       </main>

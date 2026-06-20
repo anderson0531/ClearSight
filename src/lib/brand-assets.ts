@@ -1,6 +1,5 @@
-/** Official ClearSight logo (icon + wordmark) hosted on Vercel Blob. */
-export const CLEARSIGHT_LOGO_URL =
-  'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight-optimized-logo.png'
+/** Official ClearSight logo (icon + wordmark), transparent background. */
+export const CLEARSIGHT_LOGO_URL = '/brand/clearsight-logo-transparent.png'
 
 /** Podcast studio image with hosts and ClearSight logo on the wall. */
 export const CLEARSIGHT_HOSTS_STUDIO_URL =

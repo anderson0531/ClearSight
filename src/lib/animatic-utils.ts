@@ -54,29 +54,57 @@ export function segmentsHaveRenderedImages(segments: AudioSegment[]): boolean {
  * lines vary). Setting `useIllustrations` to false forces the default host
  * portraits even when illustrations exist — that powers the player's toggle.
  */
+/** Options that adjust how a segment's display image is resolved. */
+export interface SegmentDisplayOptions {
+  /**
+   * News episodes are audio-only (no host avatars): every frame is an
+   * illustration. When the illustration isn't ready, fall back to the episode
+   * poster (`posterFallback`) rather than host portraits or the studio frame.
+   */
+  isNews?: boolean
+  posterFallback?: string | null
+}
+
+function isRealIllustration(url?: string | null): boolean {
+  return Boolean(url) && !url!.startsWith('/hosts/')
+}
+
 export function segmentDisplayImage(
   segment: AudioSegment | null | undefined,
   index = 0,
   useIllustrations = true,
-  showId?: string | null
+  showId?: string | null,
+  options?: SegmentDisplayOptions
 ): string {
+  const isNews = options?.isNews === true
+  const posterFallback = options?.posterFallback || null
+
   // Intro/outro use the show's studio frame (stored per-segment so non-News
   // shows keep their own studio image), falling back to the episode's show
-  // studio (by id) and finally the canonical studio.
+  // studio (by id) and finally the canonical studio. News intro/cta are
+  // illustrated backdrops (title slide / Q&A) — never a host studio frame.
   if (segment && roleUsesHostsImage(segment.role)) {
+    if (isNews) {
+      return (
+        (isRealIllustration(segment.imageUrl) ? segment.imageUrl! : null) ||
+        posterFallback ||
+        HOSTS_IMAGE
+      )
+    }
     return segment.imageUrl || studioImageForSpeaker(segment.speaker, showId) || HOSTS_IMAGE
   }
 
   // Lines explicitly framed on the host never show a (stale) illustration.
   const wantsScene = !segment || segment.frameKind !== 'host'
 
-  if (
-    wantsScene &&
-    useIllustrations &&
-    segment?.imageUrl &&
-    !segment.imageUrl.startsWith('/hosts/')
-  ) {
-    return segment.imageUrl
+  if (wantsScene && useIllustrations && isRealIllustration(segment?.imageUrl)) {
+    return segment!.imageUrl!
+  }
+
+  // News never falls back to host portraits — use the episode poster until the
+  // illustration renders.
+  if (isNews) {
+    return posterFallback || HOSTS_IMAGE
   }
 
   const speakingImages = speakingImagesForSpeaker(segment?.speaker)

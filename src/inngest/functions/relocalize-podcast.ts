@@ -147,6 +147,9 @@ export const relocalizePodcast = inngest.createFunction(
           imageUrl: seg.imageUrl ?? null,
           imagePrompt: seg.imagePrompt ?? null,
           frameKind: seg.frameKind ?? null,
+          musicMood: seg.musicMood ?? null,
+          illustrationGroupId: seg.illustrationGroupId ?? null,
+          titleSlide: seg.titleSlide ?? null,
           // Carry pass-through media (baked outro music) so it survives re-localization.
           url: seg.url ?? null,
           durationSeconds: seg.durationSeconds ?? null,

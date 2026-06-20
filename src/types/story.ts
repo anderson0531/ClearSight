@@ -13,6 +13,21 @@ export type AudioSegmentRole =
  */
 export type FrameKind = 'scene' | 'host'
 
+/**
+ * Compact emotional palette for the underscore music played beneath a frame.
+ * Each value maps to one of the existing brand beds (see `musicBedForMood`);
+ * distinct per-mood tracks are a future enhancement. News episodes set this
+ * per-frame from the structured script.
+ */
+export type MusicMood =
+  | 'neutral'
+  | 'tension'
+  | 'somber'
+  | 'hopeful'
+  | 'reflective'
+  | 'urgent'
+  | 'uplifting'
+
 export interface AudioSegment {
   url: string
   durationSeconds: number
@@ -29,6 +44,22 @@ export interface AudioSegment {
    * as 'scene' for backward compatibility).
    */
   frameKind?: FrameKind
+  /**
+   * Emotional palette for the ducked underscore beneath this frame (News).
+   */
+  musicMood?: MusicMood
+  /**
+   * Groups consecutive frames that share ONE generated illustration. All frames
+   * with the same id render a single Imagen image (a long line split into pieces
+   * inherits its parent's group, and the script may mark several lines as one
+   * visual). Absent → the frame gets its own image.
+   */
+  illustrationGroupId?: string
+  /**
+   * Marks the News intro frame whose illustration is an editorial backdrop with
+   * the episode title overlaid client-side (no baked text).
+   */
+  titleSlide?: boolean
 }
 
 export interface StoryCard {

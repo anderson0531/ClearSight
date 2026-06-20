@@ -246,6 +246,7 @@ export function StoryPageHeader({
             audioUrl={audioUrl}
             audioSegments={audioSegments}
             showId={showId}
+            posterImage={thumbnailUrl}
             onStateChange={setAnimaticState}
           />
           ) : null}

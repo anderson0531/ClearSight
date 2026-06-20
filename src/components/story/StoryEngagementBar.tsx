@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, ThumbsUp, ThumbsDown, Trash2, Loader2 } from 'lucide-react'
+import { Eye, ThumbsUp, ThumbsDown, Trash2, Loader2, Check } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { reasonsForValue } from '@/lib/reaction-reasons'
 
 type ReactionValue = 1 | -1 | 0
 
@@ -12,6 +13,7 @@ interface ReactionState {
   likeCount: number
   dislikeCount: number
   myReaction: ReactionValue
+  myReason: string | null
 }
 
 interface StoryEngagementBarProps {
@@ -48,8 +50,11 @@ export function StoryEngagementBar({
     likeCount,
     dislikeCount,
     myReaction,
+    myReason: null,
   })
   const [voting, setVoting] = useState(false)
+  const [savingReason, setSavingReason] = useState(false)
+  const [reasonOpen, setReasonOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -92,12 +97,14 @@ export function StoryEngagementBar({
     const prev = state
     const next = optimisticVote(prev, value)
     setState(next)
+    // Open the reason picker when a vote is active; close it when cleared.
+    setReasonOpen(next.myReaction !== 0)
 
     try {
       const res = await fetch(`/api/stories/${storyId}/reactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
+        body: JSON.stringify({ value, reason: null }),
       })
       if (!res.ok) throw new Error('vote failed')
       const data = (await res.json()) as ReactionState
@@ -106,6 +113,34 @@ export function StoryEngagementBar({
       setState(prev)
     } finally {
       setVoting(false)
+    }
+  }
+
+  // Pick (or toggle off) a reason for the current rating. Single-select.
+  const chooseReason = async (reasonId: string) => {
+    if (savingReason || state.myReaction === 0) return
+    setSavingReason(true)
+    setError(null)
+
+    const prev = state
+    const nextReason = prev.myReason === reasonId ? null : reasonId
+    setState({ ...prev, myReason: nextReason })
+    // Picking a reason collapses the panel; toggling it off keeps it open.
+    if (nextReason) setReasonOpen(false)
+
+    try {
+      const res = await fetch(`/api/stories/${storyId}/reactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: prev.myReaction, reason: nextReason }),
+      })
+      if (!res.ok) throw new Error('reason failed')
+      const data = (await res.json()) as ReactionState
+      setState(data)
+    } catch {
+      setState(prev)
+    } finally {
+      setSavingReason(false)
     }
   }
 
@@ -127,7 +162,8 @@ export function StoryEngagementBar({
   }
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-3">
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center gap-3">
       <span className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)]">
         <Eye className="h-4 w-4" />
         {t('viewsCount', { count: formatCount(state.viewCount) })}
@@ -199,6 +235,45 @@ export function StoryEngagementBar({
       ) : null}
 
       {error ? <span className="text-sm text-red-300">{error}</span> : null}
+      </div>
+
+      {state.myReaction !== 0 && reasonOpen ? (
+        <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {state.myReaction === 1 ? t('reasonPromptUp') : t('reasonPromptDown')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {reasonsForValue(state.myReaction).map((reason) => {
+              const selected = state.myReason === reason.id
+              return (
+                <button
+                  key={reason.id}
+                  type="button"
+                  onClick={() => chooseReason(reason.id)}
+                  disabled={savingReason}
+                  aria-pressed={selected}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    selected
+                      ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]'
+                      : 'border-white/15 bg-white/5 text-[var(--foreground)] hover:bg-white/10'
+                  }`}
+                >
+                  {t(reason.labelKey)}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : state.myReaction !== 0 && state.myReason ? (
+        <button
+          type="button"
+          onClick={() => setReasonOpen(true)}
+          className="mt-3 inline-flex items-center gap-1.5 text-xs text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
+        >
+          <Check className="h-3.5 w-3.5 text-[var(--accent)]" />
+          {t('reasonThanks')}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -211,6 +286,9 @@ function optimisticVote(state: ReactionState, value: 1 | -1): ReactionState {
   return {
     ...state,
     myReaction: next,
+    // Switching or clearing the vote drops any prior reason; the user re-picks
+    // from the list for the new polarity.
+    myReason: null,
     likeCount: Math.max(0, state.likeCount + likeDelta),
     dislikeCount: Math.max(0, state.dislikeCount + dislikeDelta),
   }

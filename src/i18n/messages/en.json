@@ -447,6 +447,7 @@
   "deleteError": "Could not delete the podcast. Please try again.",
   "qaSectionTitle": "Ask the hosts",
   "qaSectionSubtitle": "Ask a question about this episode and a host will answer in audio and text.",
+  "qaSeedTitle": "Questions from viewers",
   "qaAsk": "Ask a question",
   "qaAskCredits": "0.25 cr",
   "qaPlaceholder": "What would you like to ask the hosts about this episode?",

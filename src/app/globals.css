@@ -545,7 +545,7 @@ input[type='search']::-webkit-search-cancel-button {
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.5rem 1rem;
-  min-height: 5rem;
+  min-height: 3.5rem;
   border-bottom: 1px solid var(--border);
   background: rgba(12, 14, 20, 0.92);
   backdrop-filter: blur(16px);
@@ -556,13 +556,13 @@ input[type='search']::-webkit-search-cancel-button {
 
 @media (min-width: 640px) {
   .top-bar {
-    min-height: 7rem;
+    min-height: 3.75rem;
   }
 }
 
 @media (min-width: 1024px) {
   .top-bar {
-    min-height: 8rem;
+    min-height: 4rem;
   }
 }
 

@@ -8,7 +8,7 @@ import { useTranslations } from '@/i18n/I18nProvider'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
-import { AskHostDialog } from '@/components/story/AskHostDialog'
+import { AskHostDialog, type AskHostDialogHandle } from '@/components/story/AskHostDialog'
 import type { AudioTrack } from '@/types/story'
 import type { SerializedStoryQuestion } from '@/lib/qa'
 
@@ -18,6 +18,8 @@ interface StoryQASectionProps {
   language: string
   showId: string | null
   initialQuestions: SerializedStoryQuestion[]
+  /** Viewer-perspective questions that prime the Q&A (prefill chips). */
+  seedQuestions?: string[]
 }
 
 export function StoryQASection({
@@ -25,12 +27,14 @@ export function StoryQASection({
   language,
   showId: _showId,
   initialQuestions,
+  seedQuestions = [],
 }: StoryQASectionProps) {
   const t = useTranslations()
   const playTrack = useAudioQueue((s) => s.playTrack)
   const { plan, loading: userLoading } = useUser()
   const canAsk = canGenerateOnDemand(plan)
   const [questions, setQuestions] = useState<SerializedStoryQuestion[]>(initialQuestions)
+  const askRef = useRef<AskHostDialogHandle>(null)
 
   const toQATrack = (q: SerializedStoryQuestion): AudioTrack => ({
     id: `qa-${q.id}`,
@@ -90,6 +94,7 @@ export function StoryQASection({
         </div>
         {userLoading ? null : canAsk ? (
           <AskHostDialog
+            ref={askRef}
             storyId={storyId}
             defaultLanguage={language}
             creditsLabel={t('qaAskCredits')}
@@ -105,6 +110,27 @@ export function StoryQASection({
           </div>
         )}
       </div>
+
+      {canAsk && seedQuestions.length > 0 ? (
+        <div className="mb-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+            {t('qaSeedTitle')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {seedQuestions.map((seed, index) => (
+              <button
+                key={index}
+                type="button"
+                onClick={() => askRef.current?.openWith(seed)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white/[0.04] px-3 py-1.5 text-left text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-white/10"
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                {seed}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {questions.length === 0 ? (
         <p className="rounded-xl border border-[var(--border)] bg-white/[0.02] p-4 text-sm text-[var(--muted-strong)]">

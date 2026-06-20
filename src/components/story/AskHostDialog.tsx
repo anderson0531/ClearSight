@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useState } from 'react'
 import { MessageCircleQuestion, X, Sparkles, AlertTriangle, Mic2 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { LOCALES } from '@/i18n/locales'
@@ -16,6 +16,11 @@ interface AskHostDialogProps {
   onCreated: (question: SerializedStoryQuestion) => void
 }
 
+/** Imperative handle so the parent can open the dialog prefilled with a seed. */
+export interface AskHostDialogHandle {
+  openWith: (question: string) => void
+}
+
 interface ReviewResponse {
   verdict: 'pass' | 'block'
   issues: string[]
@@ -27,12 +32,8 @@ interface ReviewResponse {
 const MIN_QUESTION = 10
 const MAX_QUESTION = 500
 
-export function AskHostDialog({
-  storyId,
-  defaultLanguage,
-  creditsLabel,
-  onCreated,
-}: AskHostDialogProps) {
+export const AskHostDialog = forwardRef<AskHostDialogHandle, AskHostDialogProps>(
+  function AskHostDialog({ storyId, defaultLanguage, creditsLabel, onCreated }, ref) {
   const t = useTranslations()
   const [open, setOpen] = useState(false)
   const [question, setQuestion] = useState('')
@@ -43,6 +44,23 @@ export function AskHostDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reReviewNote, setReReviewNote] = useState(false)
+
+  // Open the dialog prefilled when a seed-question chip is clicked.
+  useImperativeHandle(
+    ref,
+    () => ({
+      openWith: (seed: string) => {
+        setQuestion(seed)
+        setReview(null)
+        setReframed('')
+        setError(null)
+        setReReviewNote(false)
+        setLanguage(defaultLanguage)
+        setOpen(true)
+      },
+    }),
+    [defaultLanguage]
+  )
 
   const resetForm = () => {
     setQuestion('')
@@ -308,4 +326,4 @@ export function AskHostDialog({
       ) : null}
     </>
   )
-}
+})
