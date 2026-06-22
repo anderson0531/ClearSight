@@ -4,19 +4,16 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
-import { HomeContentSection } from '@/components/discovery/HomeContentSection'
-import { HomeFeaturedSection } from '@/components/discovery/HomeFeaturedSection'
-import { HomeNewsHero } from '@/components/discovery/HomeNewsHero'
+import { HomeContinueListeningRow } from '@/components/discovery/HomeContinueListeningRow'
+import { HomeDiscoveryFeed } from '@/components/discovery/HomeDiscoveryFeed'
 import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
 import { useUser } from '@/components/providers/UserProvider'
-import { newsShow, topShowsForType } from '@/lib/shows'
 import {
   SAVED_SEARCHES_EVENT,
   loadSavedSearches,
   type SavedSearch,
 } from '@/lib/saved-searches'
 import { useI18n } from '@/i18n/I18nProvider'
-import { CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
 
@@ -32,7 +29,6 @@ export default function HomePage() {
   const { plan } = useUser()
   const router = useRouter()
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
-  const news = newsShow()
 
   useEffect(() => {
     const sync = () => setSavedSearches(loadSavedSearches())
@@ -51,23 +47,22 @@ export default function HomePage() {
       languages: [locale.englishName as TaxonomyFilter['languages'][number]],
     }
     persistTaxonomyFilter(restored)
-    router.push('/search')
+    router.push('/discover')
   }
 
   return (
-    <main className="fade-in mx-auto max-w-7xl px-3 py-6 sm:px-4 sm:py-8">
-      <section className="home-hero">
+    <main className="fade-in mx-auto max-w-7xl px-3 py-5 sm:px-4 sm:py-6">
+      <section className="home-hero home-hero-compact">
         <p className="home-greeting">{t(greetingKey())}</p>
         <h1 className="home-hero-title">{t('homeStartBrowsing')}</h1>
-        <Link href="/search" className="home-search-entry">
+        <Link href="/discover" className="home-search-entry">
           <Search className="h-5 w-5 text-[var(--muted)]" />
           <span>{t('homeSearchPrompt')}</span>
         </Link>
       </section>
 
       {savedSearches.length > 0 ? (
-        <section className="mb-8">
-          <h2 className="home-section-title">{t('homeSavedSearches')}</h2>
+        <section className="home-quick-picks">
           <div className="flex flex-wrap gap-2">
             {savedSearches.map((search) => (
               <button
@@ -83,52 +78,18 @@ export default function HomePage() {
         </section>
       ) : null}
 
+      <div className="home-feed space-y-8">
+        <HomeContinueListeningRow />
+        <HomeDiscoveryFeed />
+      </div>
+
       {plan === 'FREE' ? (
         <UpgradeCTA
           title={t('homeUpsellTitle')}
           body={t('homeUpsellBody')}
-          className="mb-8"
+          className="mt-8"
         />
       ) : null}
-
-      <div className="space-y-10">
-        <HomeContentSection
-          title={t(CONTENT_TYPE_MESSAGE_KEYS.News)}
-          contentType="News"
-          seeAllHref="/channels?contentType=News"
-          hero={<HomeNewsHero show={news} />}
-        />
-
-        <HomeFeaturedSection />
-
-        <HomeContentSection
-          title={t(CONTENT_TYPE_MESSAGE_KEYS.Music)}
-          contentType="Music"
-          seeAllHref="/channels?contentType=Music"
-          shows={topShowsForType('Music')}
-        />
-
-        <HomeContentSection
-          title={t(CONTENT_TYPE_MESSAGE_KEYS.Education)}
-          contentType="Education"
-          seeAllHref="/channels?contentType=Education"
-          shows={topShowsForType('Education')}
-        />
-
-        <HomeContentSection
-          title={t(CONTENT_TYPE_MESSAGE_KEYS.Entertainment)}
-          contentType="Entertainment"
-          seeAllHref="/channels?contentType=Entertainment"
-          shows={topShowsForType('Entertainment')}
-        />
-
-        <HomeContentSection
-          title={t(CONTENT_TYPE_MESSAGE_KEYS.Lifestyle)}
-          contentType="Lifestyle"
-          seeAllHref="/channels?contentType=Lifestyle"
-          shows={topShowsForType('Lifestyle')}
-        />
-      </div>
     </main>
   )
 }

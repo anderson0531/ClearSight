@@ -3,6 +3,7 @@ import {
   categoriesForType,
   CONTENT_CATEGORIES,
   isTopCategory,
+  NEWS_CATEGORIES,
   type Category,
   type ContentCategory,
   type ContentType,
@@ -15,6 +16,12 @@ import { vertexGenerateText } from '@/lib/vertex'
 import type { StoryCard } from '@/types/story'
 
 const CACHE_TTL_MS = 60 * 60 * 1000
+
+/** Headlines requested per news category when category filter is Top. */
+export const NEWS_PER_CATEGORY_COUNT = 10
+
+/** Max suggestions returned for News Top (all categories batched). */
+export const MAX_NEWS_PER_CATEGORY_TOTAL = NEWS_CATEGORIES.length * NEWS_PER_CATEGORY_COUNT
 
 /** Last-resort evergreen prompts when grounded search returns too few headlines. */
 const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
@@ -671,7 +678,122 @@ Requirements:
   }
 }
 
-async function fetchVertexSuggestions(filter: TaxonomyFilter, count: number): Promise<TopicSuggestion[]> {
+function buildNewsPerCategoryPrompt(filter: TaxonomyFilter, perCategory: number): string {
+  const language = pickPrimaryLanguage(filter)
+  const geoFocus = resolveGeoFocus(filter)
+  const focusLine = filter.query ? `Additional search focus: ${filter.query}` : ''
+  const cats = [...NEWS_CATEGORIES]
+  const total = cats.length * perCategory
+  const topFormat = `Format EVERY line EXACTLY as: CATEGORY|Title
+The CATEGORY label MUST be one of these exact English values: ${cats.join(', ')}.
+Always write the CATEGORY in English even though the Title is written in ${language}, and make sure the CATEGORY truly matches the subject.`
+
+  return `Use current web search results. List exactly ${perCategory} real, currently trending news headlines in ${language} for EACH of these categories: ${cats.join(', ')}.
+Total: ${total} lines (${perCategory} per category).
+
+Audience geography: ${geoFocus}
+Geo scope setting: ${filter.geoScope}
+${focusLine}
+
+${topFormat}
+
+Within each category, order lines from most popular (#1) to least popular (#${perCategory}).
+
+Requirements:
+- Headlines must be REAL stories from the last ~7 days that are widely read, discussed, or covered in ${geoFocus}
+- Write every headline in ${language}
+- Neutral wording, no partisan framing
+- One headline per line, no numbering, bullets, URLs, source names, or preamble
+- Do NOT include intro lines like "Here are the headlines"
+- Headlines only — no commentary`
+}
+
+async function fillNewsPerCategoryGaps(
+  suggestions: TopicSuggestion[],
+  perCategory: number
+): Promise<TopicSuggestion[]> {
+  const byCategory = new Map<ContentCategory, TopicSuggestion[]>()
+  for (const cat of NEWS_CATEGORIES) {
+    byCategory.set(cat, [])
+  }
+  for (const suggestion of suggestions) {
+    if (byCategory.has(suggestion.category)) {
+      byCategory.get(suggestion.category)!.push(suggestion)
+    }
+  }
+
+  const result: TopicSuggestion[] = []
+  for (const cat of NEWS_CATEGORIES) {
+    let catSuggestions = dedupeSuggestions(byCategory.get(cat) ?? []).slice(0, perCategory)
+    if (catSuggestions.length < perCategory) {
+      const pool = CATEGORY_TOPICS[cat] ?? []
+      const seen = new Set(catSuggestions.map((s) => normalizeTitle(s.title)))
+      for (const title of pool) {
+        const key = normalizeTitle(title)
+        if (!key || seen.has(key)) continue
+        catSuggestions.push({ title, category: cat })
+        seen.add(key)
+        if (catSuggestions.length >= perCategory) break
+      }
+    }
+    result.push(...catSuggestions.slice(0, perCategory))
+  }
+  return result
+}
+
+async function fetchNewsPerCategorySuggestions(
+  filter: TaxonomyFilter,
+  perCategory: number
+): Promise<TopicSuggestion[]> {
+  const prompt = buildNewsPerCategoryPrompt(filter, perCategory)
+  const total = NEWS_CATEGORIES.length * perCategory
+  const cats = typeCategories(filter.contentType)
+  const defaultCategory = cats[0] ?? 'Politics'
+
+  let text = await vertexGenerateText(prompt, {
+    useSearchGrounding: true,
+    temperature: 0.5,
+    maxOutputTokens: 4096,
+  })
+
+  if (!text) {
+    text = await vertexGenerateText(prompt, { temperature: 0.5, maxOutputTokens: 4096 })
+  }
+
+  let suggestions: TopicSuggestion[] = []
+  if (text) {
+    suggestions = dedupeSuggestions(
+      parseTopicSuggestions(text, total, defaultCategory, true, 'News', cats)
+    )
+  }
+
+  return fillNewsPerCategoryGaps(suggestions, perCategory)
+}
+
+async function resolveNewsPerCategorySuggestions(
+  filter: TaxonomyFilter,
+  perCategory: number
+): Promise<TopicSuggestion[]> {
+  const key = `${cacheKey(filter)}|perCategory:${perCategory}`
+  const cached = suggestionCache.get(key)
+  const total = NEWS_CATEGORIES.length * perCategory
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.suggestions.slice(0, total)
+  }
+
+  const suggestions = await fetchNewsPerCategorySuggestions(filter, perCategory)
+  suggestionCache.set(key, {
+    suggestions,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  })
+  return suggestions
+}
+
+async function fetchVertexSuggestions(
+  filter: TaxonomyFilter,
+  count: number,
+  maxOutputTokens = 1024
+): Promise<TopicSuggestion[]> {
   const category = pickPrimaryCategory(filter)
   const isTop = isTopCategory(category)
   const cats = typeCategories(filter.contentType)
@@ -680,11 +802,11 @@ async function fetchVertexSuggestions(filter: TaxonomyFilter, count: number): Pr
   let text = await vertexGenerateText(prompt, {
     useSearchGrounding: true,
     temperature: 0.5,
-    maxOutputTokens: 1024,
+    maxOutputTokens,
   })
 
   if (!text) {
-    text = await vertexGenerateText(prompt, { temperature: 0.5, maxOutputTokens: 1024 })
+    text = await vertexGenerateText(prompt, { temperature: 0.5, maxOutputTokens })
   }
 
   if (!text) return []
@@ -738,4 +860,38 @@ export async function getTopicSuggestions(
     .filter((suggestion) => !exclude.has(normalizeTitle(suggestion.title)))
     .slice(0, count)
     .map((suggestion) => buildSuggestionCard(filter, suggestion))
+}
+
+export interface TopStorySuggestionsOptions {
+  /** When true and News/Top, fetch perCategory headlines for every news domain. */
+  perCategory?: boolean
+  count?: number
+  excludeTitles?: string[]
+}
+
+/**
+ * Discover top ungenerated stories/topics for the Search page.
+ * News + Top uses batched per-category discovery; other modes delegate to getTopicSuggestions.
+ */
+export async function getTopStorySuggestions(
+  filter: TaxonomyFilter,
+  options: TopStorySuggestionsOptions = {}
+): Promise<StoryCard[]> {
+  const { perCategory = false, count = 10, excludeTitles = [] } = options
+  const category = pickPrimaryCategory(filter)
+  const isTop = isTopCategory(category)
+
+  if (filter.contentType === 'News' && perCategory && isTop) {
+    const perCat = NEWS_PER_CATEGORY_COUNT
+    const exclude = new Set(excludeTitles.map((title) => normalizeTitle(title)))
+    const suggestions = dedupeSuggestions(
+      await resolveNewsPerCategorySuggestions(filter, perCat)
+    )
+    return suggestions
+      .filter((suggestion) => !exclude.has(normalizeTitle(suggestion.title)))
+      .map((suggestion) => buildSuggestionCard(filter, suggestion))
+  }
+
+  const effectiveCount = Math.max(1, Math.min(count, filter.contentType === 'News' ? 10 : 12))
+  return getTopicSuggestions(filter, effectiveCount, excludeTitles)
 }

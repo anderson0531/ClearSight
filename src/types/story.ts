@@ -1,3 +1,5 @@
+import type { ContentType } from '@/lib/taxonomy'
+
 export type AudioSegmentRole =
   | 'hook'
   | 'intro'
@@ -12,6 +14,9 @@ export type AudioSegmentRole =
  * with the host's speaking frame. Decided per line by the framing pass.
  */
 export type FrameKind = 'scene' | 'host'
+
+/** News animatic frame medium: still illustration or Veo reenactment clip. */
+export type VisualMedium = 'image' | 'video'
 
 /**
  * Compact emotional palette for the underscore music played beneath a frame.
@@ -38,6 +43,8 @@ export interface AudioSegment {
   text?: string
   /** Imagen 4 prompt for post-hoc animatic rendering. */
   imagePrompt?: string
+  /** One-line scene sentence for subject resolution and lean Imagen prompts. */
+  scene?: string
   /**
    * Framing decision for this line. 'scene' lines render a custom illustration;
    * 'host' lines use the speaking portrait. Absent on legacy segments (treated
@@ -60,7 +67,15 @@ export interface AudioSegment {
    * the episode title overlaid client-side (no baked text).
    */
   titleSlide?: boolean
+  /** News: still Imagen frame (default) or Veo reenactment video clip. */
+  visualMedium?: VisualMedium
+  /** Veo 3.1 Lite MP4 URL when visualMedium is video. */
+  videoUrl?: string | null
+  /** Prompt used to generate the Veo reenactment clip. */
+  videoPrompt?: string | null
 }
+
+export type { VisualSubject, VisualSubjectBible, SubjectAppearance } from '@/lib/visual-subjects'
 
 export interface StoryCard {
   id: string
@@ -79,6 +94,9 @@ export interface StoryCard {
   reliabilityIndex: number | null
   isCached: boolean
   requiresGeneration: boolean
+  /** Channel that produced the episode (from sourcesVerified.showId). */
+  showId?: string
+  contentType?: ContentType
 }
 
 export interface AudioTrack {
@@ -89,6 +107,8 @@ export interface AudioTrack {
   thumbnailUrl?: string | null
   durationSeconds?: number | null
   storyId: string
+  /** When true, the global player skips ducked background underscore beds. */
+  disableBackgroundMusic?: boolean
 }
 
 export interface PlaylistContext {

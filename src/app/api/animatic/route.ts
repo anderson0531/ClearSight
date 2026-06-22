@@ -1,18 +1,18 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { renderStoryAnimatic } from '@/lib/animatic'
+import { animaticFramesIncomplete, resolveAnimaticIsNews } from '@/lib/animatic-utils'
+import { extractAudioSegments } from '@/lib/audio-segments'
 import { consumeCredits, CreditError } from '@/lib/credits'
-import { ILLUSTRATION_UNITS } from '@/lib/credit-units'
+import { fromUnits, ILLUSTRATION_UNITS, VIDEO_FRAME_UNITS } from '@/lib/credit-units'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
+import { prisma } from '@/lib/db'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 
 const bodySchema = z.object({
   storyId: z.string().min(1),
 })
-
-/** Human credit cost for generating animatic illustration frames (display only). */
-const ILLUSTRATION_CREDITS = 2
 
 export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))
@@ -29,13 +29,62 @@ export async function POST(request: Request) {
         { status: 403 }
       )
     }
-    // Charged only when new frames will actually be generated
+
+    let chargedImageGroups = 0
+    let chargedVideoClips = 0
+
+    const story = await prisma.story.findUnique({
+      where: { id: parsed.data.storyId },
+      select: { sourcesVerified: true },
+    })
+    if (!story) {
+      return NextResponse.json({ error: 'Story not found' }, { status: 404 })
+    }
+
+    const segments = extractAudioSegments(story.sourcesVerified)
+    const meta = (story.sourcesVerified ?? {}) as { showId?: string; contentType?: string }
+    const isNews = resolveAnimaticIsNews(meta)
+    const framesStillPending = segments
+      ? animaticFramesIncomplete(segments, { isNews })
+      : false
+
+    const prepaidIllustrations = framesStillPending
+      ? await prisma.generation.findFirst({
+          where: {
+            storyId: parsed.data.storyId,
+            userId,
+            includeIllustrations: true,
+            status: { in: ['COMPLETED', 'RUNNING'] },
+          },
+          select: { id: true },
+        })
+      : null
+
+    const skipIllustrationCharge = Boolean(prepaidIllustrations)
+
     const result = await renderStoryAnimatic(parsed.data.storyId, {
-      onWillRender: async () => {
-        await consumeCredits(userId, ILLUSTRATION_UNITS)
+      onWillRender: async ({ imageGroups, videoClips }) => {
+        if (imageGroups > 0 && !skipIllustrationCharge) {
+          await consumeCredits(userId, ILLUSTRATION_UNITS)
+          chargedImageGroups = 1
+        }
+        if (videoClips > 0) {
+          await consumeCredits(userId, VIDEO_FRAME_UNITS * videoClips)
+          chargedVideoClips = videoClips
+        }
       },
     })
-    return NextResponse.json({ ...result, creditsCharged: result.newlyRendered > 0 ? ILLUSTRATION_CREDITS : 0 })
+
+    const creditsCharged =
+      chargedImageGroups * fromUnits(ILLUSTRATION_UNITS) +
+      chargedVideoClips * fromUnits(VIDEO_FRAME_UNITS)
+
+    return NextResponse.json({
+      ...result,
+      creditsCharged,
+      framesIncomplete: result.framesIncomplete,
+      pendingCounts: result.pendingCounts,
+    })
   } catch (error) {
     if (error instanceof CreditError) {
       const status = error.code === 'INSUFFICIENT_TOKENS' ? 402 : 403

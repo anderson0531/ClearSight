@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sparkles, User, LogIn, LogOut, Menu, X } from 'lucide-react'
 import { ClearSightLogo } from '@/components/layout/ClearSightLogo'
 import { GlobalLanguagePicker } from '@/components/layout/GlobalLanguagePicker'
+import { GlobalGeoFocusPicker } from '@/components/layout/GlobalGeoFocusPicker'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { Plan } from '@/lib/plans'
@@ -65,11 +66,19 @@ export function TopBar() {
 
         {menuOpen ? (
           <div className="dropdown-panel top-bar-menu-panel">
-            <div className="px-3 pt-3 pb-2">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
-                {t('selectLanguage')}
-              </span>
-              <GlobalLanguagePicker className="w-full" />
+            <div className="space-y-3 px-3 pt-3 pb-2">
+              <div>
+                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                  {t('selectLanguage')}
+                </span>
+                <GlobalLanguagePicker className="w-full" />
+              </div>
+              <div>
+                <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                  {t('selectGeoFocus')}
+                </span>
+                <GlobalGeoFocusPicker className="w-full" />
+              </div>
             </div>
 
             <div className="border-t border-white/10 py-1">

@@ -1,9 +1,10 @@
 'use client'
 
-import { forwardRef, useImperativeHandle, useState } from 'react'
-import { MessageCircleQuestion, X, Sparkles, AlertTriangle, Mic2 } from 'lucide-react'
+import { forwardRef, useCallback, useImperativeHandle, useState } from 'react'
+import { MessageCircleQuestion, X, Sparkles, AlertTriangle, Mic, Mic2 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { LOCALES } from '@/i18n/locales'
+import { useSpeechInput, type SpeechInputError } from '@/hooks/useSpeechInput'
 import type { SerializedStoryQuestion } from '@/lib/qa'
 
 interface AskHostDialogProps {
@@ -29,6 +30,15 @@ interface ReviewResponse {
   language: string
 }
 
+const VOICE_ERROR_KEYS: Record<SpeechInputError, 'qaVoiceUnsupported' | 'qaVoicePermissionDenied' | 'qaVoiceNoMicrophone' | 'qaVoiceInUse' | 'qaVoiceSecureContext' | 'qaVoiceNetwork' | 'qaVoiceError'> = {
+  unsupported: 'qaVoiceUnsupported',
+  permission_denied: 'qaVoicePermissionDenied',
+  no_microphone: 'qaVoiceNoMicrophone',
+  in_use: 'qaVoiceInUse',
+  secure_context: 'qaVoiceSecureContext',
+  network: 'qaVoiceNetwork',
+  failed: 'qaVoiceError',
+}
 const MIN_QUESTION = 10
 const MAX_QUESTION = 500
 
@@ -73,10 +83,38 @@ export const AskHostDialog = forwardRef<AskHostDialogHandle, AskHostDialogProps>
     setReReviewNote(false)
   }
 
+  const appendTranscript = useCallback(
+    (text: string) => {
+      setQuestion((prev) => {
+        const next = (prev.trim() ? `${prev.trim()} ${text}` : text).slice(0, MAX_QUESTION)
+        return next
+      })
+      if (review) {
+        setReview(null)
+        setReframed('')
+        setReReviewNote(true)
+      }
+    },
+    [review]
+  )
+
+  const speech = useSpeechInput({
+    language,
+    onFinalTranscript: appendTranscript,
+  })
+
   const handleClose = () => {
+    speech.stopListening()
     setOpen(false)
     resetForm()
   }
+
+  const voiceErrorMessage = speech.error ? t(VOICE_ERROR_KEYS[speech.error]) : null
+  const voiceStatusMessage = speech.isRequestingPermission
+    ? t('qaVoiceRequestingPermission')
+    : speech.isListening
+      ? t('qaVoiceListening')
+      : null
 
   // Any edit invalidates a prior pass so the moderation gate can't be bypassed
   // by editing after a successful review.
@@ -98,6 +136,7 @@ export const AskHostDialog = forwardRef<AskHostDialogHandle, AskHostDialogProps>
       return
     }
 
+    speech.stopListening()
     setReviewing(true)
     try {
       const res = await fetch(`/api/stories/${storyId}/questions/review`, {
@@ -136,6 +175,7 @@ export const AskHostDialog = forwardRef<AskHostDialogHandle, AskHostDialogProps>
     if (!review || review.verdict !== 'pass' || submitting) return
 
     const approved = reframed.trim() || question.trim()
+    speech.stopListening()
     setError(null)
     setSubmitting(true)
     try {
@@ -228,15 +268,56 @@ export const AskHostDialog = forwardRef<AskHostDialogHandle, AskHostDialogProps>
                   <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
                     {t('qaAsk')}
                   </span>
-                  <textarea
-                    value={question}
-                    onChange={(event) => handleQuestionChange(event.target.value)}
-                    placeholder={t('qaPlaceholder')}
-                    maxLength={MAX_QUESTION}
-                    rows={3}
-                    autoFocus
-                    className="dialog-textarea w-full resize-y"
-                  />
+                  <div className="dialog-textarea-wrap">
+                    <textarea
+                      value={question}
+                      onChange={(event) => handleQuestionChange(event.target.value)}
+                      placeholder={t('qaPlaceholder')}
+                      maxLength={MAX_QUESTION}
+                      rows={3}
+                      autoFocus
+                      className="dialog-textarea w-full resize-y"
+                    />
+                    {speech.isSupported ? (
+                      <button
+                        type="button"
+                        onClick={speech.toggleListening}
+                        disabled={speech.isRequestingPermission}
+                        className={`voice-input-btn${speech.isListening ? ' voice-input-btn--active' : ''}${speech.isRequestingPermission ? ' voice-input-btn--pending' : ''}`}
+                        aria-label={
+                          speech.isRequestingPermission
+                            ? t('qaVoiceRequestingPermission')
+                            : speech.isListening
+                              ? t('qaVoiceListening')
+                              : t('qaVoiceInput')
+                        }
+                        aria-pressed={speech.isListening}
+                        aria-busy={speech.isRequestingPermission}
+                        title={
+                          speech.isRequestingPermission
+                            ? t('qaVoiceRequestingPermission')
+                            : speech.isListening
+                              ? t('qaVoiceListening')
+                              : t('qaVoiceInput')
+                        }
+                      >
+                        <Mic className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                  {voiceStatusMessage ? (
+                    <p
+                      className={`mt-1.5 text-xs${speech.isListening || speech.isRequestingPermission ? ' text-[var(--accent)]' : ' text-[var(--muted-strong)]'}`}
+                    >
+                      {voiceStatusMessage}
+                    </p>
+                  ) : null}
+                  {voiceErrorMessage ? (
+                    <p className="mt-1.5 text-xs text-amber-300">{voiceErrorMessage}</p>
+                  ) : null}
+                  {!speech.isSupported && !speech.error ? (
+                    <p className="mt-1.5 text-xs text-[var(--muted-strong)]">{t('qaVoiceUnsupported')}</p>
+                  ) : null}
                 </label>
 
                 <label className="mb-4 block">

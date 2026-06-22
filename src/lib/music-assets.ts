@@ -15,16 +15,13 @@ export const MUSIC_ASSETS: {
 }
 
 /**
- * Background beds for the three episode phases, played as a ducked underscore
- * beneath dialogue (client overlay). `content` loops continuously under the body
- * so the music never restarts between frames. Reuses the two existing brand
- * tracks (no new audio generation); a dedicated content bed can be produced
- * later via `npm run generate:music`.
+ * Instrumental background beds for episode phases (client overlay). Regenerate
+ * beds with: npm run generate:music -- --beds-only
  */
 export const BACKGROUND_MUSIC = {
-  intro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_Morning_Brief.mp3',
-  content: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_ClearSight_Brief.mp3',
-  outro: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/The_ClearSight_Brief.mp3',
+  intro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-intro.wav",
+  content: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav",
+  outro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-outro.wav",
 } as const
 
 /**
@@ -32,6 +29,12 @@ export const BACKGROUND_MUSIC = {
  * so the underscore enhances engagement without competing with the hosts.
  */
 export const BACKGROUND_MUSIC_VOLUME_RATIO = 0.15
+
+/**
+ * Veo reenactment ambient audio, relative to dialogue volume. Kept low so
+ * documentary ambience supports the hosts without competing with TTS.
+ */
+export const VIDEO_FRAME_VOLUME_RATIO = 0.2
 
 /**
  * Duration of the baked outro music segment that closes every episode. Players
@@ -104,7 +107,6 @@ export function musicBedForRole(
     case 'music':
       return null
     default:
-      // body, summary, and any other spoken frame share the continuous content bed.
       return { url: BACKGROUND_MUSIC.content, loop: true }
   }
 }

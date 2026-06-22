@@ -13,6 +13,8 @@ import {
 
 const STORAGE_KEY = 'clearsight:taxonomy-filter'
 
+export const TAXONOMY_FILTER_EVENT = 'clearsight:taxonomy-filter'
+
 const VALID_LANGUAGES = new Set<string>(getLanguageEnglishNames())
 
 function isCategory(value: unknown): value is Category {
@@ -88,6 +90,7 @@ export function persistTaxonomyFilter(filter: TaxonomyFilter): void {
 
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filter))
+    window.dispatchEvent(new CustomEvent(TAXONOMY_FILTER_EVENT, { detail: filter }))
   } catch {
     /* storage full or blocked */
   }

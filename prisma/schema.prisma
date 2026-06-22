@@ -27,6 +27,7 @@ enum GenerationStatus {
   RUNNING
   COMPLETED
   FAILED
+  CANCELLED
 }
 
 model User {
@@ -107,6 +108,15 @@ model Story {
   reliabilityIndex Float?
   sourcesVerified  Json?
   isCached         Boolean  @default(true)
+
+  // Link to the original story that this was updated from
+  originalStoryId    String?
+  originalStory      Story?    @relation("StoryLineage", fields: [originalStoryId], references: [id])
+  updatedVersions    Story[]   @relation("StoryLineage")
+
+  // Stores the calculated accuracy score (e.g., 85.0) from the previous briefing's claims
+  priorAccuracyScore Float?
+
   // Shared engagement counters (YouTube-style). likeCount/dislikeCount are
   // denormalized and kept in sync with StoryReaction rows transactionally.
   viewCount        Int      @default(0)

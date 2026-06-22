@@ -33,6 +33,9 @@ export async function GET(request: Request) {
     sortParam === 'top' ? 'top' : sortParam === 'trending' ? 'trending' : 'recent'
   const sinceParam = Number(searchParams.get('since'))
   const sinceDays = Number.isFinite(sinceParam) && sinceParam > 0 ? sinceParam : undefined
+  const limitParam = Number(searchParams.get('limit'))
+  const limit =
+    Number.isFinite(limitParam) && limitParam > 0 ? Math.min(50, Math.floor(limitParam)) : undefined
   const stream = searchParams.get('stream') === '1'
 
   if (stream && !playableOnly) {
@@ -68,6 +71,7 @@ export async function GET(request: Request) {
         try {
           const stories = await listStories(filter, {
             onProgress: (progress: StoriesFetchProgress) => send({ type: 'progress', ...progress }),
+            ...(limit ? { limit } : {}),
           })
           send({ type: 'done', stories })
         } catch (error) {
@@ -91,6 +95,6 @@ export async function GET(request: Request) {
     })
   }
 
-  const stories = await listStories(filter, { playableOnly, sort, sinceDays })
+  const stories = await listStories(filter, { playableOnly, sort, sinceDays, ...(limit ? { limit } : {}) })
   return NextResponse.json({ stories })
 }

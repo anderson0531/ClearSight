@@ -413,10 +413,11 @@ export async function generateMusicThumbnail(args: {
       .filter((part) => part && String(part).trim())
       .join('\n\n')
 
-    const buffer = await vertexGenerateImage(prompt, {
+    const result = await vertexGenerateImage(prompt, {
       aspectRatio: '1:1',
       personGeneration: 'allow_adult',
     })
+    const buffer = result.buffer
     if (!buffer) return null
 
     const slug = args.title.slice(0, 32).replace(/\W/g, '-')

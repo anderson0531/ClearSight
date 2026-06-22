@@ -273,6 +273,38 @@ export function isTopCategory(category: Category): boolean {
   return category === 'Top'
 }
 
+/** Content categories valid for a given type (excludes Top). */
+export function categoriesForContentType(type: ContentType): readonly string[] {
+  return CATEGORIES_BY_TYPE[type]
+}
+
+export interface GeoTags {
+  geoScope: GeoScope
+  geoRegion?: string
+  geoCountry?: string
+  geoState?: string
+  geoLocal?: string
+}
+
+/** Trim geo fields and enforce scope hierarchy consistency. */
+export function normalizeGeoTags(tags: GeoTags): GeoTags {
+  const trim = (value?: string) => value?.trim() || undefined
+  let geoScope = tags.geoScope
+  const geoLocal = trim(tags.geoLocal)
+  const geoState = trim(tags.geoState)
+  const geoCountry = trim(tags.geoCountry)
+  const geoRegion = trim(tags.geoRegion)
+
+  if (!GEO_SCOPES.includes(geoScope)) geoScope = 'Worldwide'
+
+  if (geoLocal) geoScope = 'Local'
+  else if (geoState && geoScope !== 'Local') geoScope = 'State/Province'
+  else if (geoCountry && geoScope !== 'Local' && geoScope !== 'State/Province') geoScope = 'Country'
+  else if (geoRegion && geoScope === 'Worldwide') geoScope = 'Region'
+
+  return { geoScope, geoRegion, geoCountry, geoState, geoLocal }
+}
+
 export function buildTaxonomyKey(filter: Pick<TaxonomyFilter, 'languages' | 'categories' | 'geoScope'> & {
   geoRegion?: string
   geoCountry?: string
@@ -297,4 +329,37 @@ export const DEFAULT_TAXONOMY: TaxonomyFilter = {
   languages: ['English'],
   geoScope: 'Worldwide',
   categories: ['Top'],
+}
+
+/** Geo fields extracted from a taxonomy filter. */
+export type TaxonomyGeoFields = Pick<
+  TaxonomyFilter,
+  'geoScope' | 'geoRegion' | 'geoCountry' | 'geoState' | 'geoLocal'
+>
+
+export function pickGeoFields(filter: TaxonomyGeoFields): TaxonomyGeoFields {
+  return {
+    geoScope: filter.geoScope,
+    geoRegion: filter.geoRegion,
+    geoCountry: filter.geoCountry,
+    geoState: filter.geoState,
+    geoLocal: filter.geoLocal,
+  }
+}
+
+/** Strip geo criteria — used for non-News discovery lanes (language-only). */
+export function withoutGeoFilter<T extends TaxonomyFilter>(filter: T): T {
+  return {
+    ...filter,
+    geoScope: 'Worldwide',
+    geoRegion: undefined,
+    geoCountry: undefined,
+    geoState: undefined,
+    geoLocal: undefined,
+  }
+}
+
+/** News uses language + geo; other types use language only. */
+export function effectiveDiscoveryFilter(filter: TaxonomyFilter): TaxonomyFilter {
+  return filter.contentType === 'News' ? filter : withoutGeoFilter(filter)
 }

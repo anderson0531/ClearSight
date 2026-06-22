@@ -110,12 +110,14 @@ export default async function StoryPage({ params }: StoryPageProps) {
   const geoCountry = dbStory?.geoCountry ?? mockStory?.geoCountry
   const geoState = dbStory?.geoState ?? mockStory?.geoState
   const geoLocal = dbStory?.geoLocal ?? mockStory?.geoLocal
+  const priorAccuracyScore = dbStory?.priorAccuracyScore ?? null
   const sourcesCount = countSources(markdown)
 
   const meta = (dbStory?.sourcesVerified ?? null) as
-    | { showId?: string; seedQuestions?: unknown }
+    | { showId?: string; contentType?: string; seedQuestions?: unknown }
     | null
   const showId = meta?.showId && getShowById(meta.showId) ? meta.showId : null
+  const contentType = meta?.contentType ?? null
   const musicOnly = dbStory ? isMusicOnlyStory(dbStory.sourcesVerified) : false
   const seedQuestions = Array.isArray(meta?.seedQuestions)
     ? (meta!.seedQuestions as unknown[])
@@ -136,6 +138,11 @@ export default async function StoryPage({ params }: StoryPageProps) {
         category={category}
         language={language}
         geoLabel={geoLabel({ geoScope, geoRegion, geoCountry, geoState, geoLocal })}
+        geoScope={geoScope}
+        geoRegion={geoRegion}
+        geoCountry={geoCountry}
+        geoState={geoState}
+        geoLocal={geoLocal}
         reliabilityIndex={reliabilityIndex}
         durationSeconds={durationSeconds}
         sourcesCount={sourcesCount}
@@ -143,12 +150,14 @@ export default async function StoryPage({ params }: StoryPageProps) {
         audioSegments={audioSegments}
         thumbnailUrl={thumbnailUrl}
         showId={showId}
+        contentType={contentType}
         canDelete={canDelete}
         viewCount={dbStory?.viewCount ?? 0}
         likeCount={dbStory?.likeCount ?? 0}
         dislikeCount={dbStory?.dislikeCount ?? 0}
         myReaction={myReaction}
         musicOnly={musicOnly}
+        priorAccuracyScore={priorAccuracyScore}
       />
       <main className="fade-in mx-auto max-w-3xl px-4 py-8">
         {musicOnly ? (

@@ -10,9 +10,9 @@ export interface PrimaryNavItem {
 
 /**
  * Primary navigation differs per plan:
- * - FREE:    Home, Search, Your Library, Premium
- * - PREMIUM: Home, Search, Your Library
- * - CREATOR: Home, Search, Your Library, Studio
+ * - FREE:    Home, Discover, Your Library, Premium
+ * - PREMIUM: Home, Discover, Your Library
+ * - CREATOR: Home, Discover, Your Library, Studio
  *
  * On-demand generation is intentionally not a top-level destination: it lives
  * on each ClearSight podcast channel page instead.
@@ -20,7 +20,7 @@ export interface PrimaryNavItem {
 export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
   const items: PrimaryNavItem[] = [
     { href: '/', key: 'navHome', icon: Home },
-    { href: '/search', key: 'navSearch', icon: Search },
+    { href: '/discover', key: 'navSearch', icon: Search },
     { href: '/library', key: 'navLibrary', icon: Library },
   ]
 

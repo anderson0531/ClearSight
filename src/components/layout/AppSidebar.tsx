@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { User, HelpCircle, LogIn } from 'lucide-react'
 import { GlobalLanguagePicker } from '@/components/layout/GlobalLanguagePicker'
+import { GlobalGeoFocusPicker } from '@/components/layout/GlobalGeoFocusPicker'
 import { buildPrimaryNav } from '@/components/layout/primaryNav'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
@@ -36,7 +37,18 @@ export function AppSidebar() {
       </nav>
 
       <div className="mt-auto space-y-3 border-t border-[var(--border)] pt-4">
-        <GlobalLanguagePicker className="w-full" />
+        <div className="space-y-1.5">
+          <span className="block px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+            {t('selectLanguage')}
+          </span>
+          <GlobalLanguagePicker className="w-full" />
+        </div>
+        <div className="space-y-1.5">
+          <span className="block px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+            {t('selectGeoFocus')}
+          </span>
+          <GlobalGeoFocusPicker className="w-full" />
+        </div>
 
         {coreTokens != null ? (
           <Link href="/premium" className="credits-pill w-full justify-center">

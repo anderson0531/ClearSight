@@ -1,4 +1,4 @@
-import { vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
+import { vertexGenerateGrounded, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
 import { resolveShow, showById, speakingImagesForSpeaker, type Show } from '@/lib/shows'
 import { extractAudioSegments } from '@/lib/audio-segments'
 import type { HostProfile } from '@/lib/hosts'
@@ -127,6 +127,24 @@ export interface HostAnswerResult {
 }
 
 const BRIEFING_EXCERPT_CHARS = 3000
+const RESEARCH_MAX_TOKENS = 4096
+const FORMAT_CONTENT_MIN_RATIO = 0.8
+
+/** True when prose ends with sentence-ending punctuation (incl. CJK / Arabic). */
+function isCompleteProse(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return false
+  return /[.!?。؟…]["')\]]*\s*$/.test(trimmed)
+}
+
+function cleanProse(raw: string | null | undefined): string {
+  return raw?.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim() ?? ''
+}
+
+function segmentsPreserveProse(segments: HostAnswerSegment[], prose: string): boolean {
+  const combined = segments.reduce((sum, seg) => sum + seg.text.length, 0)
+  return combined >= prose.length * FORMAT_CONTENT_MIN_RATIO
+}
 
 /** The lead/analyst host (last in the array); the natural expert responder. */
 function leadHost(show: Show): HostProfile {
@@ -387,25 +405,51 @@ function resolveAnswerSpeaker(show: Show, label: string): HostProfile {
   )
 }
 
-/** Pass 1: research-grounded prose answer, with a non-grounded retry. */
+/** Pass 1: research-grounded prose answer with retry/continuation on truncation. */
 async function researchAnswer(input: GenerateHostAnswerInput): Promise<string | null> {
-  const prompt = buildResearchPrompt(input)
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const raw = await vertexGenerateText(prompt, {
+  const basePrompt = buildResearchPrompt(input)
+  let partial = ''
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const useGrounding = attempt === 1
+    const prompt =
+      attempt === 3 && partial
+        ? `${basePrompt}
+
+Continue and finish the spoken answer naturally from where you left off. Do not repeat what was already said.
+
+PARTIAL ANSWER SO FAR:
+"""
+${partial}
+"""`
+        : basePrompt
+
+    const result = await vertexGenerateGrounded(prompt, {
       temperature: 0.6,
-      maxOutputTokens: 1536,
-      // Research the topic on the first pass; drop grounding on retry so a
-      // rate-limited grounded call still yields a knowledge-based answer.
-      useSearchGrounding: attempt === 1,
+      maxOutputTokens: RESEARCH_MAX_TOKENS,
+      useSearchGrounding: useGrounding,
     })
-    const text = raw
-      ?.replace(/```[a-z]*\n?/gi, '')
-      .replace(/```/g, '')
-      .trim()
-    if (text && text.length > 0) return text
-    if (attempt < 2) await sleep(1500)
+
+    const text = cleanProse(result.text)
+    if (!text) {
+      if (attempt < 3) await sleep(1500)
+      continue
+    }
+
+    if (attempt === 3 && partial) {
+      const merged = `${partial} ${text}`.replace(/\s{2,}/g, ' ').trim()
+      if (isCompleteProse(merged)) return merged
+      if (merged.length > partial.length) return merged
+    }
+
+    const hitTokenLimit = result.finishReason === 'MAX_TOKENS'
+    if (!hitTokenLimit && isCompleteProse(text)) return text
+
+    partial = text
+    if (attempt < 3) await sleep(1500)
   }
-  return null
+
+  return partial.length > 0 ? partial : null
 }
 
 /**
@@ -438,7 +482,11 @@ async function formatAnswerSegments(
         const host = resolveAnswerSpeaker(show, typeof obj.speaker === 'string' ? obj.speaker : '')
         segments.push({ speaker: host.name, text })
       }
-      if (segments.length > 0) return segments
+      if (segments.length > 0 && segmentsPreserveProse(segments, prose)) return segments
+      if (segments.length > 0) {
+        console.warn('[qa] format pass dropped substantial content, using single-host fallback')
+        return [{ speaker: lead.name, text: prose }]
+      }
     }
     if (attempt < 2) await sleep(1000)
   }

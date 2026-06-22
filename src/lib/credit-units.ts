@@ -38,6 +38,15 @@ export function formatCredits(units: number): string {
 export const BASE_GENERATION_UNITS = toUnits(1)
 /** Illustration add-on: 2 credits. */
 export const ILLUSTRATION_UNITS = toUnits(2)
+/** Veo reenactment clip add-on: 1 credit per clip (News). */
+export const VIDEO_FRAME_UNITS = toUnits(1)
+/** Max Veo clips charged per News episode with illustrations. */
+export const MAX_VIDEO_FRAMES = 4
+
+/** Illustration add-on units for News episodes (Imagen stills only). */
+export function newsIllustrationUnits(): number {
+  return ILLUSTRATION_UNITS
+}
 /** Topic search: 1 credit. */
 export const TOPIC_SEARCH_UNITS = toUnits(1)
 /** Re-localize an existing podcast into another language: 0.5 credit. */

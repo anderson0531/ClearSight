@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Shield,
   Users,
   Volume2,
   VolumeX,
@@ -17,12 +18,16 @@ import {
 import { useTranslations } from '@/i18n/I18nProvider'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { hostBySpeaker, showById } from '@/lib/shows'
-import { BACKGROUND_MUSIC, BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole } from '@/lib/music-assets'
+import { BACKGROUND_MUSIC, BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole, VIDEO_FRAME_VOLUME_RATIO } from '@/lib/music-assets'
 import {
   segmentDisplayImage,
+  segmentDisplayVideo,
   segmentHasAnimaticMetadata,
   segmentsHaveRenderedImages,
+  countPendingAnimaticFrames,
+  resolveAnimaticIsNews,
 } from '@/lib/animatic-utils'
+import type { ContentType } from '@/lib/taxonomy'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import type { AudioSegment } from '@/types/story'
 
@@ -41,17 +46,24 @@ interface AnimaticStageProps {
   audioSegments?: AudioSegment[] | null
   /** The episode's resolved channel id — drives cast names and the studio frame. */
   showId?: string | null
+  /** Stored content type — aligns pending-frame counts with server render path. */
+  contentType?: ContentType | string | null
+  category?: string | null
   /** Episode cover, used as the News poster/fallback (no host frames). */
   posterImage?: string | null
   hideInlineControls?: boolean
   /** Reports player capability/state up to the header so it can drive controls. */
   onStateChange?: (state: AnimaticStageState) => void
+  /** The prior briefing's accuracy score to display as a visual tag (e.g. 85.0) */
+  priorAccuracyScore?: number | null
 }
 
 export interface AnimaticStageState {
   canView: boolean
   isGenerating: boolean
   hasIllustrations: boolean
+  framesIncomplete: boolean
+  pendingFrameCount: number
 }
 
 export interface AnimaticStageHandle {
@@ -60,6 +72,8 @@ export interface AnimaticStageHandle {
   canView: boolean
   isGenerating: boolean
   hasIllustrations: boolean
+  framesIncomplete: boolean
+  pendingFrameCount: number
 }
 
 function formatTime(seconds: number): string {
@@ -91,7 +105,19 @@ function frameAnimationClass(effect: TransitionEffect, index: number): string {
  * effects, synced audio, captions, and volume + effect controls.
  */
 export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>(function AnimaticStage(
-  { storyId, title, audioUrl, audioSegments, showId, posterImage, hideInlineControls = false, onStateChange },
+  {
+    storyId,
+    title,
+    audioUrl,
+    audioSegments,
+    showId,
+    contentType,
+    category,
+    posterImage,
+    hideInlineControls = false,
+    priorAccuracyScore,
+    onStateChange,
+  },
   ref
 ) {
   const t = useTranslations()
@@ -99,6 +125,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const musicRef = useRef<HTMLAudioElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const outroTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
 
@@ -107,6 +134,10 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const [segments, setSegments] = useState<AudioSegment[] | null>(audioSegments ?? null)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSegments(audioSegments ?? null)
+  }, [audioSegments])
 
   const [started, setStarted] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -126,10 +157,26 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     return segments.every(segmentHasAnimaticMetadata)
   }, [audioUrl, segments])
 
+  const show = useMemo(() => showById(showId), [showId])
+  const isNews = useMemo(
+    () => resolveAnimaticIsNews({ contentType, showId: showId ?? undefined }, category),
+    [contentType, showId, category]
+  )
+
   const hasRenderedImages = useMemo(
     () => (segments?.length ? segmentsHaveRenderedImages(segments) : false),
     [segments]
   )
+
+  const pendingFrameCounts = useMemo(
+    () =>
+      segments?.length
+        ? countPendingAnimaticFrames(segments, { isNews })
+        : { imageGroups: 0, videoClips: 0, total: 0 },
+    [segments, isNews]
+  )
+
+  const framesIncomplete = pendingFrameCounts.total > 0
 
   // Episodes synthesized with a baked outro-music segment carry their own
   // closing music, so we skip the legacy synthetic outro tail for them.
@@ -151,11 +198,6 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const currentSegment = segments?.[segmentIndex]
   const frameClass = frameAnimationClass(effect, segmentIndex)
 
-  // The episode's resolved channel is the source of truth for host identity.
-  const show = useMemo(() => showById(showId), [showId])
-  // News episodes are audio-only: every frame is an illustration (no host
-  // avatars), and the intro is a title slide with the title overlaid.
-  const isNews = show?.contentType === 'News'
   const displayOptions = useMemo(
     () => ({ isNews, posterFallback: posterImage ?? null }),
     [isNews, posterImage]
@@ -167,6 +209,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     showId,
     displayOptions
   )
+  const frameVideo = segmentDisplayVideo(currentSegment, useIllustrations)
   // Overlay the episode title on the News title-slide frame (intro) and on the
   // pre-play poster.
   const showTitleOverlay = isNews && (!started || currentSegment?.titleSlide === true)
@@ -267,6 +310,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }, [clearOutroTimer])
 
   const musicVolume = (muted ? 0 : volume) * BACKGROUND_MUSIC_VOLUME_RATIO
+  const videoVolume = (muted ? 0 : volume) * VIDEO_FRAME_VOLUME_RATIO
 
   const playOutroTail = useCallback(() => {
     const music = musicRef.current
@@ -330,6 +374,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const stopAnimatic = useCallback(() => {
     const audio = audioRef.current
     audio?.pause()
+    videoRef.current?.pause()
     stopOutroMusic()
     setStarted(false)
     setIsPlaying(false)
@@ -365,6 +410,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       const data = (await res.json().catch(() => null)) as {
         error?: string
         segments?: AudioSegment[]
+        framesIncomplete?: boolean
+        pendingCounts?: { total?: number }
       } | null
 
       if (!res.ok) {
@@ -373,7 +420,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       }
       if (data?.segments?.length) {
         setSegments(data.segments)
-        startAnimatic()
+        const incomplete = data.framesIncomplete ?? false
+        if (!incomplete) startAnimatic()
       }
     } catch {
       setError(t('animaticRenderFailed'))
@@ -397,8 +445,10 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       canView: Boolean(audioUrl && canUseAnimatic),
       isGenerating: generating,
       hasIllustrations: hasRenderedImages,
+      framesIncomplete,
+      pendingFrameCount: pendingFrameCounts.total,
     }),
-    [openView, handleGenerate, audioUrl, canUseAnimatic, generating, hasRenderedImages]
+    [openView, handleGenerate, audioUrl, canUseAnimatic, generating, hasRenderedImages, framesIncomplete, pendingFrameCounts.total]
   )
 
   // Mirror player state up to the header so it can render the View / Illustrate
@@ -408,8 +458,10 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       canView: Boolean(audioUrl && canUseAnimatic),
       isGenerating: generating,
       hasIllustrations: hasRenderedImages,
+      framesIncomplete,
+      pendingFrameCount: pendingFrameCounts.total,
     })
-  }, [onStateChange, audioUrl, canUseAnimatic, generating, hasRenderedImages])
+  }, [onStateChange, audioUrl, canUseAnimatic, generating, hasRenderedImages, framesIncomplete, pendingFrameCounts.total])
 
   // Drive the per-segment audio + background music while playing inline.
   useEffect(() => {
@@ -429,13 +481,38 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     else audio.pause()
   }, [started, segmentIndex, isPlaying, segments, syncBackgroundMusic, outroPlaying, volume, muted])
 
+  // Sync Veo reenactment clips to dialogue playback at reduced ambient volume.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !started || outroPlaying) return
+    const segment = segments?.[segmentIndex]
+    const src = segmentDisplayVideo(segment, useIllustrations)
+
+    if (!src) {
+      video.pause()
+      video.removeAttribute('src')
+      return
+    }
+
+    if (video.src !== src) {
+      video.src = src
+      video.load()
+    }
+    video.loop = true
+    video.volume = videoVolume
+    if (isPlaying) void video.play().catch(() => {})
+    else video.pause()
+  }, [started, segmentIndex, isPlaying, segments, useIllustrations, outroPlaying, videoVolume])
+
   // Keep element volumes in sync with the controls.
   useEffect(() => {
     const audio = audioRef.current
     if (audio) audio.volume = muted ? 0 : volume
     const music = musicRef.current
     if (music) music.volume = musicVolume
-  }, [volume, muted, musicVolume])
+    const video = videoRef.current
+    if (video) video.volume = videoVolume
+  }, [volume, muted, musicVolume, videoVolume])
 
   // Advance the progress clock during the outro music tail.
   useEffect(() => {
@@ -486,6 +563,15 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
             className={isFullscreen ? 'object-contain' : 'object-cover object-top'}
+          />
+        ) : frameVideo ? (
+          <video
+            ref={videoRef}
+            src={frameVideo}
+            poster={frameSrc}
+            playsInline
+            loop
+            className={`absolute inset-0 h-full w-full ${isFullscreen ? 'object-contain' : 'object-cover'}`}
           />
         ) : (
           <Image
@@ -591,6 +677,14 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             >
               <X className="h-4 w-4" />
             </button>
+
+            {/* Visual Accuracy Tag */}
+            {priorAccuracyScore !== undefined && priorAccuracyScore !== null ? (
+              <div className="absolute start-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-semibold text-green-100 shadow-sm backdrop-blur-md">
+                <Shield className="h-3.5 w-3.5 text-green-400" />
+                Accuracy Tracking: {priorAccuracyScore}%
+              </div>
+            ) : null}
 
             {/* Captions */}
             <div className="absolute inset-x-0 bottom-14 px-4 text-center sm:bottom-16">

@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AudioTrack, PlaylistContext } from '@/types/story'
+import { isQaAudioTrack } from '@/lib/audio-tracks'
 
 interface AudioQueueState {
   currentTrack: AudioTrack | null
@@ -61,10 +62,12 @@ export const useAudioQueue = create<AudioQueueState>()(
 
       playTrack: (track, queue) => {
         set((state) => {
-          const recent = [
-            track,
-            ...state.recentTracks.filter((t) => t.id !== track.id),
-          ].slice(0, 10)
+          const recent = isQaAudioTrack(track)
+            ? state.recentTracks
+            : [
+                track,
+                ...state.recentTracks.filter((t) => t.id !== track.id),
+              ].slice(0, 20)
           return {
             currentTrack: track,
             queue: queue ?? [track],

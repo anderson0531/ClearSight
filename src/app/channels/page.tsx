@@ -2,10 +2,11 @@
 
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { CategoryLanding } from '@/components/category/CategoryLanding'
 import { ShowCard } from '@/components/discovery/ShowCard'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { channelsForFilter, SHOWS } from '@/lib/shows'
-import { DEFAULT_CONTENT_TYPE, isContentType } from '@/lib/taxonomy'
+import { categoriesForType, DEFAULT_CONTENT_TYPE, isContentType, type Category } from '@/lib/taxonomy'
 import { CATEGORY_MESSAGE_KEYS, CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
 
 function ChannelsContent() {
@@ -20,6 +21,15 @@ function ChannelsContent() {
   const unfiltered = !contentTypeParam && !category
   const contentType = isContentType(contentTypeParam) ? contentTypeParam : DEFAULT_CONTENT_TYPE
   const channels = unfiltered ? SHOWS : channelsForFilter(contentType, category)
+
+  const isCategoryLanding =
+    !!category &&
+    category !== 'Top' &&
+    categoriesForType(contentType).includes(category as Category)
+
+  if (isCategoryLanding) {
+    return <CategoryLanding contentType={contentType} category={category as Category} />
+  }
 
   const typeKey = CONTENT_TYPE_MESSAGE_KEYS[contentType]
   const typeLabel = typeKey ? t(typeKey) : contentType

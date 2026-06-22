@@ -182,11 +182,13 @@ export function topicMatchesFilter(topic: UserTopic, filter: TaxonomyFilter): bo
   const category = filter.categories[0]
   if (category && !isTopCategory(category) && topic.category !== category) return false
 
-  if (topic.geoScope !== filter.geoScope) return false
-  if (!geoFieldMatches(filter.geoRegion, topic.geoRegion)) return false
-  if (!geoFieldMatches(filter.geoCountry, topic.geoCountry)) return false
-  if (!geoFieldMatches(filter.geoState, topic.geoState)) return false
-  if (!geoFieldMatches(filter.geoLocal, topic.geoLocal)) return false
+  if (filter.contentType === 'News') {
+    if (topic.geoScope !== filter.geoScope) return false
+    if (!geoFieldMatches(filter.geoRegion, topic.geoRegion)) return false
+    if (!geoFieldMatches(filter.geoCountry, topic.geoCountry)) return false
+    if (!geoFieldMatches(filter.geoState, topic.geoState)) return false
+    if (!geoFieldMatches(filter.geoLocal, topic.geoLocal)) return false
+  }
 
   if (filter.query && !topic.title.toLowerCase().includes(filter.query.toLowerCase())) {
     return false

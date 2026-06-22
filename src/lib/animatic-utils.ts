@@ -1,6 +1,28 @@
 import { HOSTS_IMAGE } from '@/lib/hosts'
-import { speakingImagesForSpeaker, studioImageForSpeaker } from '@/lib/shows'
+import { speakingImagesForSpeaker, studioImageForSpeaker, showById } from '@/lib/shows'
+import { typeForCategory, type ContentType } from '@/lib/taxonomy'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
+
+export interface AnimaticLastRender {
+  at: string
+  model: string
+  usedSubjectRefs: boolean
+  failedGroups: number
+  sampleError?: string
+}
+
+/** Match server renderStoryAnimatic News vs grouped frame logic. */
+export function resolveAnimaticIsNews(
+  meta: { contentType?: ContentType | string | null; showId?: string | null },
+  category?: string | null | undefined
+): boolean {
+  const show = meta.showId ? showById(meta.showId) : undefined
+  const contentType =
+    (meta.contentType as ContentType | undefined) ??
+    show?.contentType ??
+    (category ? typeForCategory(category) : undefined)
+  return contentType === 'News'
+}
 
 function roleUsesHostsImage(role?: AudioSegmentRole): boolean {
   return role === 'intro' || role === 'cta' || role === 'disclaimer'
@@ -27,7 +49,7 @@ export function segmentHasAnimaticMetadata(segment: AudioSegment): boolean {
   if (segment.role === 'music') return true
   // Host-framed lines are valid without an image prompt.
   if (segment.frameKind === 'host') return true
-  return Boolean(segment.text?.trim() || segment.imagePrompt?.trim())
+  return Boolean(segment.text?.trim() || segment.imagePrompt?.trim() || segment.scene?.trim())
 }
 
 export function segmentsHaveRenderedImages(segments: AudioSegment[]): boolean {
@@ -113,4 +135,66 @@ export function segmentDisplayImage(
   }
 
   return studioImageForSpeaker(segment?.speaker, showId) || HOSTS_IMAGE
+}
+
+/** Veo MP4 URL for a News video frame, when rendered and illustrations are on. */
+export function segmentDisplayVideo(
+  segment: AudioSegment | null | undefined,
+  useIllustrations = true
+): string | null {
+  if (!segment || segment.visualMedium !== 'video' || !useIllustrations) return null
+  const url = segment.videoUrl?.trim()
+  return url ? url : null
+}
+
+export interface AnimaticPendingCounts {
+  imageGroups: number
+  videoClips: number
+  total: number
+}
+
+function isRealIllustrationUrl(url?: string | null): boolean {
+  return Boolean(url) && !url!.startsWith('/hosts/')
+}
+
+/** Count image groups and video clips that still need rendering. */
+export function countPendingAnimaticFrames(
+  segments: AudioSegment[],
+  options: { isNews: boolean }
+): AnimaticPendingCounts {
+  if (options.isNews) {
+    const groups = new Map<string, { hasImage: boolean; needsPrompt: boolean }>()
+
+    segments.forEach((segment, index) => {
+      if (segment.role === 'music' || segment.frameKind === 'host') return
+
+      const key = segment.illustrationGroupId || `__seg-${index}`
+      const entry = groups.get(key) ?? { hasImage: false, needsPrompt: false }
+      if (isRealIllustrationUrl(segment.imageUrl)) entry.hasImage = true
+      if (segment.imagePrompt?.trim() || segment.scene?.trim() || segment.text?.trim()) entry.needsPrompt = true
+      groups.set(key, entry)
+    })
+
+    let imageGroups = 0
+    for (const group of groups.values()) {
+      if (!group.hasImage && group.needsPrompt) imageGroups += 1
+    }
+
+    return { imageGroups, videoClips: 0, total: imageGroups }
+  }
+
+  let imageGroups = 0
+  for (const segment of segments) {
+    if (!segmentWantsScene(segment)) continue
+    if (!isRealIllustrationUrl(segment.imageUrl)) imageGroups += 1
+  }
+
+  return { imageGroups, videoClips: 0, total: imageGroups }
+}
+
+export function animaticFramesIncomplete(
+  segments: AudioSegment[],
+  options: { isNews: boolean }
+): boolean {
+  return countPendingAnimaticFrames(segments, options).total > 0
 }

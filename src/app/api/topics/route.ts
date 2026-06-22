@@ -1,18 +1,23 @@
 import { NextResponse } from 'next/server'
 import { consumeCredits, CreditError } from '@/lib/credits'
 import { TOPIC_SEARCH_UNITS } from '@/lib/credit-units'
-import { getTopicSuggestions } from '@/lib/topic-suggestions'
+import {
+  getTopStorySuggestions,
+  MAX_NEWS_PER_CATEGORY_TOTAL,
+  NEWS_PER_CATEGORY_COUNT,
+} from '@/lib/topic-suggestions'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import {
   DEFAULT_TAXONOMY,
   isContentType,
+  isTopCategory,
   type Category,
   type TaxonomyFilter,
 } from '@/lib/taxonomy'
 
-const DEFAULT_COUNT = 8
+const DEFAULT_COUNT = 10
 const MAX_COUNT = 12
 
 interface TopicsRequestBody {
@@ -26,10 +31,17 @@ interface TopicsRequestBody {
   geoLocal?: unknown
   query?: unknown
   count?: unknown
+  perCategory?: unknown
+  excludeTitles?: unknown
 }
 
 function str(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function strArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
 }
 
 function buildFilter(body: TopicsRequestBody): TaxonomyFilter {
@@ -60,8 +72,17 @@ export async function POST(request: Request) {
   }
 
   const filter = buildFilter(body)
+  const primaryCategory = filter.categories[0] ?? 'Top'
+  const newsTop =
+    filter.contentType === 'News' && isTopCategory(primaryCategory as Category)
+  const perCategory = body.perCategory === true || (newsTop && body.perCategory !== false)
+
   const requested = typeof body.count === 'number' ? Math.floor(body.count) : DEFAULT_COUNT
-  const count = Math.min(MAX_COUNT, Math.max(1, requested || DEFAULT_COUNT))
+  const count = perCategory
+    ? MAX_NEWS_PER_CATEGORY_TOTAL
+    : Math.min(MAX_COUNT, Math.max(1, requested || DEFAULT_COUNT))
+
+  const excludeTitles = strArray(body.excludeTitles)
 
   const userId = await getCurrentUserId()
 
@@ -91,7 +112,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const stories = await getTopicSuggestions(filter, count)
+    const stories = await getTopStorySuggestions(filter, {
+      perCategory,
+      count: perCategory ? NEWS_PER_CATEGORY_COUNT : count,
+      excludeTitles,
+    })
     return NextResponse.json({ stories })
   } catch (err) {
     // The credit was already consumed; surface partial failure without crashing.

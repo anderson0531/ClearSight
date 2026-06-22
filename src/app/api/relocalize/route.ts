@@ -7,7 +7,8 @@ import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
 import { getLanguageEnglishNames } from '@/i18n/locales'
-import { inngest, PODCAST_RELOCALIZE_REQUESTED } from '@/inngest/client'
+import { PODCAST_RELOCALIZE_REQUESTED } from '@/inngest/client'
+import { InngestUnavailableError, sendInngestEvent } from '@/lib/inngest-enqueue'
 
 const relocalizeSchema = z.object({
   storyId: z.string().min(1),
@@ -97,13 +98,26 @@ export async function POST(request: Request) {
       throw createErr
     }
 
-    await inngest.send({
-      name: PODCAST_RELOCALIZE_REQUESTED,
-      data: { generationId, userId, sourceStoryId: storyId, targetLanguage },
-    })
+    await sendInngestEvent(
+      {
+        name: PODCAST_RELOCALIZE_REQUESTED,
+        data: { generationId, userId, sourceStoryId: storyId, targetLanguage },
+      },
+      { userId, generationId, creditsCharged: RELOCALIZE_UNITS }
+    )
 
     return NextResponse.json({ generationId, status: 'QUEUED' }, { status: 202 })
   } catch (err) {
+    if (err instanceof InngestUnavailableError) {
+      return NextResponse.json(
+        {
+          error:
+            'Background worker unavailable. In development, run npm run dev:inngest in a second terminal.',
+          code: 'INNGEST_UNAVAILABLE',
+        },
+        { status: 503 }
+      )
+    }
     if (err instanceof CreditError) {
       const status = err.code === 'INSUFFICIENT_TOKENS' ? 402 : 403
       return NextResponse.json({ error: err.message, code: err.code }, { status })

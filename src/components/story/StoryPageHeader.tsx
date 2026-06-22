@@ -1,13 +1,15 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Clapperboard, Clock, Globe, Images, Languages, Loader2, Shield, Sparkles, Tv } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Clapperboard, Clock, Globe, Images, Languages, Loader2, RefreshCw, Shield, Sparkles, Tv } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
 import { ShareBriefingButton } from '@/components/story/ShareBriefingButton'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
 import { TranslatePodcastDialog } from '@/components/story/TranslatePodcastDialog'
+import { ResynthesizeAudioButton } from '@/components/story/ResynthesizeAudioButton'
 import { StoryEngagementBar } from '@/components/story/StoryEngagementBar'
 import {
   AnimaticStage,
@@ -17,6 +19,7 @@ import {
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { showById } from '@/lib/shows'
+import { isChannelOrGenericThumbnail, isStorySpecificThumbnail } from '@/lib/episode-thumbnail'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
 import type { AudioSegment } from '@/types/story'
@@ -29,6 +32,11 @@ interface StoryHeaderProps {
   category: string
   language: string | null
   geoLabel: string
+  geoScope?: string
+  geoRegion?: string | null
+  geoCountry?: string | null
+  geoState?: string | null
+  geoLocal?: string | null
   reliabilityIndex: number | null
   durationSeconds: number | null
   sourcesCount: number
@@ -36,12 +44,14 @@ interface StoryHeaderProps {
   audioSegments?: AudioSegment[] | null
   thumbnailUrl: string | null
   showId: string | null
+  contentType?: string | null
   canDelete: boolean
   viewCount: number
   likeCount: number
   dislikeCount: number
   myReaction: ReactionValue
   musicOnly?: boolean
+  priorAccuracyScore?: number | null
 }
 
 function formatDuration(seconds: number | null): string {
@@ -57,6 +67,11 @@ export function StoryPageHeader({
   category,
   language,
   geoLabel,
+  geoScope,
+  geoRegion,
+  geoCountry,
+  geoState,
+  geoLocal,
   reliabilityIndex,
   durationSeconds,
   sourcesCount,
@@ -64,12 +79,14 @@ export function StoryPageHeader({
   audioSegments,
   thumbnailUrl,
   showId,
+  contentType,
   canDelete,
   viewCount,
   likeCount,
   dislikeCount,
   myReaction,
   musicOnly = false,
+  priorAccuracyScore,
 }: StoryHeaderProps) {
   const t = useTranslations()
   const { plan } = useUser()
@@ -80,10 +97,109 @@ export function StoryPageHeader({
     canView: false,
     isGenerating: false,
     hasIllustrations: false,
+    framesIncomplete: false,
+    pendingFrameCount: 0,
   })
   const categoryKey = CATEGORY_MESSAGE_KEYS[category]
   const categoryLabel = categoryKey ? t(categoryKey) : category
   const show = useMemo(() => (showId ? showById(showId) : undefined), [showId])
+  const isNews = show?.contentType === 'News'
+
+  const introHero = show ? (show.introImage ?? show.coverImage) : null
+  const episodeCover = isStorySpecificThumbnail(thumbnailUrl) ? thumbnailUrl : null
+  const briefingThumbnail =
+    episodeCover ??
+    (thumbnailUrl && !isChannelOrGenericThumbnail(thumbnailUrl) ? thumbnailUrl : null)
+
+  const illustrationsNeedWork =
+    !animaticState.hasIllustrations || animaticState.framesIncomplete
+  const showCompleteMissingButton = canIllustrate && illustrationsNeedWork
+
+  const completeMissingCredits = useMemo(() => {
+    if (animaticState.pendingFrameCount > 0) {
+      return 2
+    }
+    return !animaticState.hasIllustrations ? 2 : 0
+  }, [animaticState.hasIllustrations, animaticState.pendingFrameCount])
+
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [liveAudioSegments, setLiveAudioSegments] = useState<AudioSegment[] | null>(
+    audioSegments ?? null
+  )
+  const router = useRouter()
+
+  useEffect(() => {
+    setLiveAudioSegments(audioSegments ?? null)
+  }, [audioSegments])
+
+  useEffect(() => {
+    if (!animaticState.framesIncomplete || animaticState.isGenerating) return
+
+    let active = true
+    const pollSegments = async () => {
+      try {
+        const res = await fetch(`/api/stories/${id}/segments`)
+        if (!res.ok || !active) return
+        const data = (await res.json()) as { audioSegments?: AudioSegment[] | null }
+        if (active) {
+          setLiveAudioSegments(data.audioSegments ?? null)
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    void pollSegments()
+    const timer = setInterval(() => void pollSegments(), 10_000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [animaticState.framesIncomplete, animaticState.isGenerating, id])
+
+  const handleUpdateBriefing = async () => {
+    if (isUpdating) return
+    setIsUpdating(true)
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          category,
+          language: language || 'English',
+          geoScope: geoScope || 'Worldwide',
+          geoRegion,
+          geoCountry,
+          geoState,
+          geoLocal,
+          originalStoryId: id,
+          contentType: isNews ? 'News' : undefined,
+        }),
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { code?: string; error?: string } | null
+        if (res.status === 402 || data?.code === 'INSUFFICIENT_TOKENS') {
+          alert(t('onDemandInsufficientCredits'))
+        } else if (res.status === 403 || data?.code === 'PLAN_REQUIRED') {
+          alert(t('upgradeRequiredBody'))
+        } else if (data?.code === 'INNGEST_UNAVAILABLE') {
+          alert(t('onDemandWorkerUnavailable'))
+        } else {
+          alert(data?.error ?? t('onDemandEnqueueError'))
+        }
+        return
+      }
+      await res.json()
+      alert('Update requested. We will notify you when it is ready.')
+      router.push('/library')
+    } catch (err) {
+      console.error(err)
+      alert(t('onDemandEnqueueError'))
+    } finally {
+      setIsUpdating(false)
+    }
+  }
 
   const handleView = () => {
     animaticRef.current?.openView()
@@ -92,6 +208,11 @@ export function StoryPageHeader({
   const handleIllustrate = () => {
     animaticRef.current?.generateIllustrations()
   }
+
+  const completeMissingLabel =
+    animaticState.pendingFrameCount > 0
+      ? t('completeFramesMissing', { count: animaticState.pendingFrameCount })
+      : t('completeMissing')
 
   return (
     <header className="border-b border-[var(--border)] bg-[var(--surface)]">
@@ -103,11 +224,11 @@ export function StoryPageHeader({
           ← {t('backToHome')}
         </Link>
 
-        {show?.coverImage ? (
+        {introHero && show ? (
           <div className="channel-hero-bleed mt-4">
             <Link href={`/channel/${show.id}`} className="block channel-hero" title={t('goToChannel')}>
               <Image
-                src={show.coverImage}
+                src={introHero}
                 alt={show.name}
                 fill
                 priority
@@ -126,10 +247,10 @@ export function StoryPageHeader({
         ) : null}
 
           <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
-            {thumbnailUrl ? (
+            {briefingThumbnail ? (
               <div className="relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
                 <ExpandableThumbnail
-                  src={thumbnailUrl}
+                  src={briefingThumbnail}
                   alt={title}
                   sizes="(max-width: 640px) 90vw, 256px"
                   wrapperClassName="relative h-full w-full"
@@ -139,7 +260,7 @@ export function StoryPageHeader({
             ) : null}
 
             <div className="min-w-0 flex-1 space-y-4">
-              {show?.coverImage ? null : (
+              {!introHero ? (
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
                     {categoryLabel}
@@ -148,7 +269,7 @@ export function StoryPageHeader({
                     {title}
                   </h1>
                 </div>
-              )}
+              ) : null}
 
               <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
@@ -180,7 +301,7 @@ export function StoryPageHeader({
                   title={title}
                   audioUrl={audioUrl}
                   audioSegments={audioSegments}
-                  thumbnailUrl={thumbnailUrl}
+                  thumbnailUrl={briefingThumbnail ?? thumbnailUrl}
                   durationSeconds={durationSeconds}
                 />
                 {!musicOnly ? (
@@ -195,23 +316,23 @@ export function StoryPageHeader({
                   <Clapperboard className="h-4 w-4" />
                   {t('viewBriefing')}
                 </button>
-                {canIllustrate && (!animaticState.hasIllustrations || animaticState.isGenerating) ? (
+                {showCompleteMissingButton ? (
                   <button
                     type="button"
                     onClick={handleIllustrate}
                     disabled={!audioUrl || animaticState.isGenerating}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={!audioUrl ? t('animaticUnavailable') : t('illustrateHint')}
+                    className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={t('completeFramesHint')}
                   >
                     {animaticState.isGenerating ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Images className="h-4 w-4" />
                     )}
-                    {animaticState.isGenerating ? t('illustrating') : t('illustrate')}
-                    {!animaticState.isGenerating ? (
+                    {animaticState.isGenerating ? t('illustrating') : completeMissingLabel}
+                    {!animaticState.isGenerating && completeMissingCredits > 0 ? (
                       <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
-                        {t('illustrateCredits', { count: 2 })}
+                        {t('illustrateCredits', { count: completeMissingCredits })}
                       </span>
                     ) : null}
                   </button>
@@ -250,8 +371,24 @@ export function StoryPageHeader({
                     {t('goToChannel')}
                   </Link>
                 ) : null}
+                {isNews ? (
+                  <button
+                    type="button"
+                    onClick={handleUpdateBriefing}
+                    disabled={isUpdating}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Request an update on this topic"
+                  >
+                    {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Update Briefing
+                  </button>
+                ) : null}
                 <ShareBriefingButton title={title} storyId={id} />
               </div>
+
+              {!audioUrl && canDelete && !musicOnly ? (
+                <ResynthesizeAudioButton storyId={id} />
+              ) : null}
 
               <StoryEngagementBar
                 storyId={id}
@@ -271,9 +408,12 @@ export function StoryPageHeader({
             storyId={id}
             title={title}
             audioUrl={audioUrl}
-            audioSegments={audioSegments}
+            audioSegments={liveAudioSegments}
             showId={showId}
-            posterImage={thumbnailUrl}
+            contentType={contentType}
+            category={category}
+            posterImage={briefingThumbnail ?? thumbnailUrl}
+            priorAccuracyScore={priorAccuracyScore}
             onStateChange={setAnimaticState}
           />
           ) : null}

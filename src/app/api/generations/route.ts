@@ -30,8 +30,23 @@ export async function GET() {
       },
     })
 
+    const storyIds = rows.map((row) => row.storyId).filter((id): id is string => Boolean(id))
+    const stories =
+      storyIds.length > 0
+        ? await prisma.story.findMany({
+            where: { id: { in: storyIds } },
+            select: { id: true, thumbnailUrl: true, title: true },
+          })
+        : []
+    const storyById = new Map(stories.map((story) => [story.id, story]))
+
     const generations = rows.map((row) => {
-      const params = row.params as { title?: string; contentType?: string } | null
+      const params = row.params as { title?: string; contentType?: string; description?: string } | null
+      const story = row.storyId ? storyById.get(row.storyId) : undefined
+      const illustrationsInProgress =
+        row.status === 'COMPLETED' &&
+        row.includeIllustrations &&
+        row.stage === 'illustrations'
       return {
         id: row.id,
         status: row.status,
@@ -39,7 +54,10 @@ export async function GET() {
         storyId: row.storyId,
         errorMessage: row.errorMessage,
         includeIllustrations: row.includeIllustrations,
-        title: params?.title ?? null,
+        illustrationsInProgress,
+        title: params?.title ?? story?.title ?? null,
+        description: params?.description?.trim() || null,
+        thumbnailUrl: story?.thumbnailUrl ?? null,
         contentType: params?.contentType ?? null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,

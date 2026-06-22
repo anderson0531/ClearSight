@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Loader2, MessageCircleQuestion, Play, Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronUp, Loader2, MessageCircleQuestion, Play, Sparkles } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
+import { formatQAAnswerBlocks } from '@/lib/qa-format'
 import { AskHostDialog, type AskHostDialogHandle } from '@/components/story/AskHostDialog'
 import type { AudioTrack } from '@/types/story'
 import type { SerializedStoryQuestion } from '@/lib/qa'
@@ -22,6 +23,105 @@ interface StoryQASectionProps {
   seedQuestions?: string[]
 }
 
+function QAAudioControl({
+  question,
+  storyId,
+  onPlay,
+}: {
+  question: SerializedStoryQuestion
+  storyId: string
+  onPlay: (track: AudioTrack) => void
+}) {
+  const t = useTranslations()
+
+  const toQATrack = (): AudioTrack => ({
+    id: `qa-${question.id}`,
+    title: question.question,
+    audioUrl: question.audioUrl!,
+    audioSegments: question.segments.length > 0 ? question.segments : null,
+    thumbnailUrl: question.responderImage,
+    durationSeconds: question.durationSeconds,
+    storyId,
+    disableBackgroundMusic: true,
+  })
+
+  if (question.audioStatus === 'ready' && question.audioUrl) {
+    return (
+      <button
+        type="button"
+        onClick={() => onPlay(toQATrack())}
+        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-white/10"
+      >
+        <Play className="h-3.5 w-3.5" />
+        {t('qaListen')}
+      </button>
+    )
+  }
+
+  if (question.audioStatus === 'pending') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-[var(--muted-strong)]">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        {t('qaAudioGenerating')}
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-[var(--muted)]">
+      {t('qaAudioUnavailable')}
+    </span>
+  )
+}
+
+function QAAnswerPanel({ question }: { question: SerializedStoryQuestion }) {
+  const t = useTranslations()
+  const blocks = formatQAAnswerBlocks(question)
+
+  return (
+    <div className="qa-answer-panel mt-4 border-t border-[var(--border)] pt-4">
+      <div className="flex items-start gap-3">
+        <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full bg-[var(--surface)]">
+          {question.responderImage ? (
+            <Image
+              src={question.responderImage}
+              alt={question.responderName}
+              fill
+              unoptimized
+              sizes="40px"
+              className="object-cover"
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-xs text-[var(--muted)]">
+              {question.responderShortName.slice(0, 2)}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-[var(--accent)]">
+            {t('qaRespondedBy', { name: question.responderShortName })}
+          </p>
+          <p className="text-[11px] text-[var(--muted-strong)]">{question.responderRole}</p>
+          <div className="qa-answer-body mt-3">
+            {blocks.map((block, index) => (
+              <p key={index}>
+                {block.speaker ? (
+                  <>
+                    <span className="font-semibold text-[var(--foreground)]">{block.speaker}: </span>
+                    {block.text}
+                  </>
+                ) : (
+                  block.text
+                )}
+              </p>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function StoryQASection({
   storyId,
   language,
@@ -34,24 +134,29 @@ export function StoryQASection({
   const { plan, loading: userLoading } = useUser()
   const canAsk = canGenerateOnDemand(plan)
   const [questions, setQuestions] = useState<SerializedStoryQuestion[]>(initialQuestions)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const askRef = useRef<AskHostDialogHandle>(null)
 
-  const toQATrack = (q: SerializedStoryQuestion): AudioTrack => ({
-    id: `qa-${q.id}`,
-    title: q.question,
-    audioUrl: q.audioUrl!,
-    audioSegments: q.segments.length > 0 ? q.segments : null,
-    thumbnailUrl: q.responderImage,
-    durationSeconds: q.durationSeconds,
-    storyId,
-  })
+  const handlePlay = useCallback(
+    (track: AudioTrack) => {
+      playTrack(track, [track])
+    },
+    [playTrack]
+  )
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const handleCreated = (created: SerializedStoryQuestion) => {
     setQuestions((prev) => [created, ...prev.filter((q) => q.id !== created.id)])
   }
 
-  // While any answer's audio is still being synthesized in the background, poll
-  // the public list to swap in the audio (and stop once nothing is pending).
   const hasPending = questions.some((q) => q.audioStatus === 'pending')
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -61,7 +166,6 @@ export function StoryQASection({
       if (!res.ok) return
       const data = (await res.json()) as { questions?: SerializedStoryQuestion[] }
       if (!data.questions) return
-      // Merge by id so a just-created item isn't dropped before the list catches up.
       setQuestions((prev) => {
         const byId = new Map(prev.map((q) => [q.id, q]))
         for (const incoming of data.questions!) byId.set(incoming.id, incoming)
@@ -138,61 +242,41 @@ export function StoryQASection({
         </p>
       ) : (
         <ul className="space-y-4">
-          {questions.map((q) => (
-            <li
-              key={q.id}
-              className="rounded-2xl border border-[var(--border)] bg-white/[0.03] p-4"
-            >
-              <p className="text-sm font-semibold text-[var(--foreground)]">{q.question}</p>
+          {questions.map((q) => {
+            const expanded = expandedIds.has(q.id)
+            return (
+              <li
+                key={q.id}
+                className="rounded-2xl border border-[var(--border)] bg-white/[0.03] p-4"
+              >
+                <p className="text-sm font-semibold text-[var(--foreground)]">{q.question}</p>
 
-              <div className="mt-3 flex items-start gap-3">
-                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full bg-[var(--surface)]">
-                  {q.responderImage ? (
-                    <Image
-                      src={q.responderImage}
-                      alt={q.responderName}
-                      fill
-                      unoptimized
-                      sizes="40px"
-                      className="object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-full w-full items-center justify-center text-xs text-[var(--muted)]">
-                      {q.responderShortName.slice(0, 2)}
-                    </span>
-                  )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <QAAudioControl question={q} storyId={storyId} onPlay={handlePlay} />
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(q.id)}
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-[var(--muted-strong)] transition-colors hover:bg-white/[0.06] hover:text-[var(--foreground)]"
+                    aria-expanded={expanded}
+                  >
+                    {expanded ? (
+                      <>
+                        {t('qaHideAnswer')}
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </>
+                    ) : (
+                      <>
+                        {t('qaShowAnswer')}
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </>
+                    )}
+                  </button>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-[var(--accent)]">
-                    {t('qaRespondedBy', { name: q.responderShortName })}
-                  </p>
-                  <p className="text-[11px] text-[var(--muted-strong)]">{q.responderRole}</p>
-                  <p className="mt-2 whitespace-pre-line text-sm text-[var(--muted-strong)]">
-                    {q.answerText}
-                  </p>
-                  {q.audioStatus === 'ready' && q.audioUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => playTrack(toQATrack(q), [toQATrack(q)])}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-white/10"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      {t('qaListen')}
-                    </button>
-                  ) : q.audioStatus === 'pending' ? (
-                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-white/[0.02] px-3 py-1.5 text-xs font-medium text-[var(--muted-strong)]">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      {t('qaAudioGenerating')}
-                    </span>
-                  ) : (
-                    <span className="mt-3 inline-block text-xs text-[var(--muted)]">
-                      {t('qaAudioUnavailable')}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </li>
-          ))}
+
+                {expanded ? <QAAnswerPanel question={q} /> : null}
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>

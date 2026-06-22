@@ -4,8 +4,8 @@ import {
   VERTEX_FAST_MODEL,
   type GroundedSource,
 } from '@/lib/vertex'
-import { formatPodcastReviewAnalysisBlock } from '@/lib/analysis-frameworks'
 import { HOST_ANDERSON, HOST_SARAH } from '@/lib/hosts'
+import { formatPodcastReviewAnalysisBlock } from '@/lib/analysis-frameworks'
 
 export interface BriefingReviewInput {
   title: string

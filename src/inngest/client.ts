@@ -8,6 +8,15 @@ export interface PodcastGenerationRequested {
   userId: string
 }
 
+/** Background frame illustrations after episode audio is ready. */
+export const PODCAST_ILLUSTRATIONS_REQUESTED = 'podcast/illustrations.requested' as const
+
+export interface PodcastIllustrationsRequested {
+  generationId: string
+  userId: string
+  storyId: string
+}
+
 /**
  * Event name + payload for re-localizing an existing podcast into another
  * language. The source episode's frame images are reused verbatim; only the

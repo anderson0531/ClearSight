@@ -15,6 +15,7 @@ import {
 import { resolveShow, showById } from '@/lib/shows'
 import { addCoreTokens } from '@/lib/credits'
 import { sendPushToUser } from '@/lib/push'
+import { assertGenerationActive } from '@/lib/generation-cancel'
 import type { ContentType } from '@/lib/taxonomy'
 import type { AudioSegment } from '@/types/story'
 
@@ -45,6 +46,12 @@ export const relocalizePodcast = inngest.createFunction(
       if (!generationId) return
 
       try {
+        const existing = await prisma.generation.findUnique({
+          where: { id: generationId },
+          select: { status: true, creditsCharged: true },
+        })
+        if (!existing || existing.status === 'CANCELLED') return
+
         const generation = await prisma.generation.update({
           where: { id: generationId },
           data: {
@@ -77,6 +84,7 @@ export const relocalizePodcast = inngest.createFunction(
     const { generationId, userId } = event.data as unknown as PodcastRelocalizeRequested
 
     const job = await step.run('start', async () => {
+      await assertGenerationActive(generationId)
       const generation = await prisma.generation.findUnique({
         where: { id: generationId },
         select: { params: true, status: true },
@@ -93,6 +101,7 @@ export const relocalizePodcast = inngest.createFunction(
 
     // Load the source episode and its existing segments (frames live here).
     const source = await step.run('load-source', async () => {
+      await assertGenerationActive(generationId)
       const story = await prisma.story.findUnique({ where: { id: job.sourceStoryId } })
       if (!story) {
         throw new NonRetriableError(`Source story ${job.sourceStoryId} not found`)
@@ -125,6 +134,7 @@ export const relocalizePodcast = inngest.createFunction(
 
     // Culturally adapt + translate each line and the briefing markdown.
     const translated = await step.run('translate', async () => {
+      await assertGenerationActive(generationId)
       const { texts, translatedCount, translatableCount } = await localizeSegmentTexts(
         source.segments as AudioSegment[],
         job.targetLanguage,
@@ -146,6 +156,7 @@ export const relocalizePodcast = inngest.createFunction(
           role: seg.role,
           imageUrl: seg.imageUrl ?? null,
           imagePrompt: seg.imagePrompt ?? null,
+          scene: seg.scene ?? null,
           frameKind: seg.frameKind ?? null,
           musicMood: seg.musicMood ?? null,
           illustrationGroupId: seg.illustrationGroupId ?? null,
@@ -160,6 +171,7 @@ export const relocalizePodcast = inngest.createFunction(
 
     // Create the new Story row up front so a retry of synthesis never duplicates.
     const draft = await step.run('create-draft', async () => {
+      await assertGenerationActive(generationId)
       const sourcesVerified: Record<string, unknown> = {
         ...source.sourcesVerified,
         generating: true,
@@ -189,6 +201,7 @@ export const relocalizePodcast = inngest.createFunction(
 
     // Regenerate audio in the target language, reusing every frame image.
     const finalized = await step.run('synthesize', async () => {
+      await assertGenerationActive(generationId)
       const show =
         showById(source.showId) ??
         resolveShow({ category: source.category, contentType: source.contentType })
@@ -222,14 +235,16 @@ export const relocalizePodcast = inngest.createFunction(
       return { storyId: draft.storyId }
     })
 
-    await step.run('complete', () =>
-      prisma.generation.update({
+    await step.run('complete', async () => {
+      await assertGenerationActive(generationId)
+      return prisma.generation.update({
         where: { id: generationId },
         data: { status: 'COMPLETED', storyId: finalized.storyId },
       })
-    )
+    })
 
     await step.run('notify', async () => {
+      await assertGenerationActive(generationId)
       await sendPushToUser(userId, {
         title: 'Your translated podcast is ready',
         body: `${source.title} — ${job.targetLanguage}`,

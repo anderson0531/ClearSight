@@ -2,7 +2,13 @@ import { prisma } from '@/lib/db'
 import { normalizeTitle } from '@/lib/normalize-title'
 import { getTopicSuggestions } from '@/lib/topic-suggestions'
 import { extractAudioSegments } from '@/lib/generate-story'
-import { isTopCategory, type TaxonomyFilter } from '@/lib/taxonomy'
+import {
+  effectiveDiscoveryFilter,
+  isTopCategory,
+  isContentType,
+  typeForCategory,
+  type TaxonomyFilter,
+} from '@/lib/taxonomy'
 import type { StoryCard } from '@/types/story'
 
 export type StoriesFetchStage = 'catalog' | 'discovery' | 'done'
@@ -15,6 +21,22 @@ export interface StoriesFetchProgress {
 export type StoriesFetchProgressFn = (progress: StoriesFetchProgress) => void
 
 const TARGET_COUNT = 10
+
+function storyMatchesContentType(
+  row: { category: string; sourcesVerified?: unknown },
+  contentType: TaxonomyFilter['contentType']
+): boolean {
+  const meta = row.sourcesVerified as { contentType?: string } | null | undefined
+  if (isContentType(meta?.contentType)) return meta.contentType === contentType
+  return typeForCategory(row.category) === contentType
+}
+
+function filterRowsByContentType<T extends { category: string; sourcesVerified?: unknown }>(
+  rows: T[],
+  contentType: TaxonomyFilter['contentType']
+): T[] {
+  return rows.filter((row) => storyMatchesContentType(row, contentType))
+}
 
 export { normalizeTitle } from '@/lib/normalize-title'
 
@@ -35,6 +57,9 @@ function mapStory(row: {
   isCached: boolean
   sourcesVerified?: unknown
 }): StoryCard {
+  const meta = row.sourcesVerified as { showId?: string; contentType?: string } | null | undefined
+  const contentType = isContentType(meta?.contentType) ? meta.contentType : undefined
+
   return {
     id: row.id,
     title: row.title,
@@ -52,6 +77,8 @@ function mapStory(row: {
     reliabilityIndex: row.reliabilityIndex,
     isCached: row.isCached,
     requiresGeneration: false,
+    ...(meta?.showId ? { showId: meta.showId } : {}),
+    ...(contentType ? { contentType } : {}),
   }
 }
 
@@ -105,32 +132,38 @@ function dedupeDbRows<
 async function padWithSuggestions(
   filter: TaxonomyFilter,
   generated: StoryCard[],
-  onProgress?: StoriesFetchProgressFn
+  onProgress?: StoriesFetchProgressFn,
+  limit = TARGET_COUNT
 ): Promise<StoryCard[]> {
   const dedupedGenerated = dedupeStories(generated)
-  const remaining = TARGET_COUNT - dedupedGenerated.length
+  const remaining = limit - dedupedGenerated.length
   if (remaining <= 0) {
-    return dedupedGenerated.slice(0, TARGET_COUNT)
+    return dedupedGenerated.slice(0, limit)
   }
 
   onProgress?.({ stage: 'discovery', percent: 42 })
 
   const excludeTitles = dedupedGenerated.map((story) => story.title)
-  const suggestions = await getTopicSuggestions(filter, remaining, excludeTitles)
+  const suggestions = await getTopicSuggestions(effectiveDiscoveryFilter(filter), remaining, excludeTitles)
 
   onProgress?.({ stage: 'discovery', percent: 88 })
-  return dedupeStories([...dedupedGenerated, ...suggestions]).slice(0, TARGET_COUNT)
+  return dedupeStories([...dedupedGenerated, ...suggestions]).slice(0, limit)
 }
 
 function buildWhereClause(filter: TaxonomyFilter, topCategory: boolean, sinceDays?: number) {
+  const scoped = effectiveDiscoveryFilter(filter)
   return {
-    language: { in: filter.languages },
-    ...(topCategory ? {} : { category: { in: filter.categories } }),
-    geoScope: filter.geoScope,
-    ...(filter.geoRegion ? { geoRegion: filter.geoRegion } : {}),
-    ...(filter.geoCountry ? { geoCountry: filter.geoCountry } : {}),
-    ...(filter.geoState ? { geoState: filter.geoState } : {}),
-    ...(filter.geoLocal ? { geoLocal: filter.geoLocal } : {}),
+    language: { in: scoped.languages },
+    ...(topCategory ? {} : { category: { in: scoped.categories } }),
+    ...(scoped.contentType === 'News'
+      ? {
+          geoScope: scoped.geoScope,
+          ...(scoped.geoRegion ? { geoRegion: scoped.geoRegion } : {}),
+          ...(scoped.geoCountry ? { geoCountry: scoped.geoCountry } : {}),
+          ...(scoped.geoState ? { geoState: scoped.geoState } : {}),
+          ...(scoped.geoLocal ? { geoLocal: scoped.geoLocal } : {}),
+        }
+      : {}),
     ...(filter.query
       ? { title: { contains: filter.query, mode: 'insensitive' as const } }
       : {}),
@@ -166,10 +199,13 @@ export async function listStories(
      * the model.
      */
     discover?: boolean
+    /** Max generated stories to return (default 10, cap 50). */
+    limit?: number
     onProgress?: StoriesFetchProgressFn
   } = {}
 ): Promise<StoryCard[]> {
   const { playableOnly = false, sort = 'recent', sinceDays, discover = false, onProgress } = options
+  const limit = Math.min(50, Math.max(1, options.limit ?? TARGET_COUNT))
   // "Top"/"trending" ranking only makes sense for finished, playable episodes.
   const wantPlayable = playableOnly || sort === 'top' || sort === 'trending'
   const primaryCategory = filter.categories[0]
@@ -194,42 +230,43 @@ export async function listStories(
     const rows = await prisma.story.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      take: wantPlayable ? 50 : TARGET_COUNT * 2,
+      take: wantPlayable ? 50 : limit * 2,
     })
 
     report('catalog', 32)
 
     const dedupedRows = dedupeDbRows(rows)
+    const typeFilteredRows = filterRowsByContentType(dedupedRows, filter.contentType)
 
     if (wantPlayable) {
       const now = Date.now()
       const rankedRows =
         sort === 'top'
-          ? [...dedupedRows].sort(
+          ? [...typeFilteredRows].sort(
               (a, b) => (b.reliabilityIndex ?? 0) - (a.reliabilityIndex ?? 0)
             )
           : sort === 'trending'
-            ? [...dedupedRows].sort(
+            ? [...typeFilteredRows].sort(
                 (a, b) =>
                   trendingScore(mapStory(b), now, b.createdAt.getTime()) -
                   trendingScore(mapStory(a), now, a.createdAt.getTime())
               )
-            : dedupedRows
+            : typeFilteredRows
       report('done', 100)
       return rankedRows.slice(0, 50).map(mapStory)
     }
 
-    const generated = dedupedRows.map(mapStory)
+    const generated = typeFilteredRows.map(mapStory)
 
     // Browsing returns only real, already-generated podcasts. Topic discovery
     // (AI padding) is a separate, paid action handled by the topics endpoint.
-    if (!discover || generated.length >= TARGET_COUNT) {
+    if (!discover || generated.length >= limit) {
       report('discovery', 55)
       report('done', 100)
-      return generated.slice(0, TARGET_COUNT)
+      return generated.slice(0, limit)
     }
 
-    const result = await padWithSuggestions(filter, generated, onProgress)
+    const result = await padWithSuggestions(filter, generated, onProgress, limit)
     report('done', 100)
     return result
   } catch {

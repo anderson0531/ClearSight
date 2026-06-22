@@ -1,10 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon, Music2 } from 'lucide-react'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import { ensurePushSubscription } from '@/lib/push-client'
+import { getAllCountries } from '@/lib/geo-catalog'
+import { GeoSelect } from '@/components/layout/GeoSelect'
 import {
   getMusicVocalLanguageGroups,
   isMusicVocalLanguage,
@@ -15,6 +17,7 @@ import {
   type MusicVoiceTone,
   type MusicVoiceType,
 } from '@/lib/taxonomy'
+import { resolveShow } from '@/lib/shows'
 import type { TopicReviewResult } from '@/lib/topic-review'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { MessageKey } from '@/i18n/messages/en'
@@ -27,16 +30,6 @@ interface AddTopicDialogProps {
   showName?: string
   showDescription?: string
   showFocus?: string
-}
-
-function geoFocusSummary(filter: TaxonomyFilter): string {
-  return (
-    filter.geoLocal ??
-    filter.geoState ??
-    filter.geoCountry ??
-    filter.geoRegion ??
-    filter.geoScope
-  )
 }
 
 function resolveCategory(filter: TaxonomyFilter): string {
@@ -79,6 +72,16 @@ function defaultMusicLanguage(filter: TaxonomyFilter): string {
   return active && isMusicVocalLanguage(active) ? active : 'English'
 }
 
+function geoFromFilter(filter: TaxonomyFilter) {
+  return {
+    geoScope: filter.geoScope,
+    ...(filter.geoRegion ? { geoRegion: filter.geoRegion } : {}),
+    ...(filter.geoCountry ? { geoCountry: filter.geoCountry } : {}),
+    ...(filter.geoState ? { geoState: filter.geoState } : {}),
+    ...(filter.geoLocal ? { geoLocal: filter.geoLocal } : {}),
+  }
+}
+
 export function AddTopicDialog({
   filter,
   buttonLabel,
@@ -88,6 +91,15 @@ export function AddTopicDialog({
 }: AddTopicDialogProps) {
   const t = useTranslations()
   const router = useRouter()
+  const resolvedCategory = resolveCategory(filter)
+  const resolvedShow = useMemo(() => {
+    if (showName) {
+      return { name: showName, description: showDescription, focus: showFocus }
+    }
+    const category = isTopCategory(resolvedCategory as Category) ? undefined : resolvedCategory
+    const show = resolveShow({ contentType: filter.contentType, category })
+    return { name: show.name, description: show.description, focus: show.focus }
+  }, [filter.contentType, resolvedCategory, showName, showDescription, showFocus])
   const [open, setOpen] = useState(false)
   const [description, setDescription] = useState(filter.query ?? '')
   const [reviewing, setReviewing] = useState(false)
@@ -96,6 +108,9 @@ export function AddTopicDialog({
   const [error, setError] = useState<string | null>(null)
   const [reReviewNote, setReReviewNote] = useState(false)
   const [includeIllustrations, setIncludeIllustrations] = useState(false)
+  const [countryPerspective, setCountryPerspective] = useState('')
+  const [detectedCountry, setDetectedCountry] = useState<string | null>(null)
+  const countryOptions = useMemo(() => getAllCountries(), [])
   const [musicMode, setMusicMode] = useState<'full' | 'instrumental'>('full')
   const [musicLanguage, setMusicLanguage] = useState<string>(() => defaultMusicLanguage(filter))
   const [voiceType, setVoiceType] = useState<MusicVoiceType>('auto')
@@ -111,6 +126,8 @@ export function AddTopicDialog({
     setError(null)
     setReReviewNote(false)
     setIncludeIllustrations(false)
+    setCountryPerspective('')
+    setDetectedCountry(null)
     setMusicMode('full')
     setMusicLanguage(defaultMusicLanguage(filter))
     setVoiceType('auto')
@@ -190,10 +207,10 @@ export function AddTopicDialog({
           description: trimmed,
           language: filter.contentType === 'Music' ? musicLanguage : filter.languages[0] ?? 'English',
           contentType: filter.contentType,
-          category: resolveCategory(filter),
-          showName,
-          showDescription,
-          showFocus,
+          category: resolvedCategory,
+          showName: resolvedShow.name,
+          showDescription: resolvedShow.description,
+          showFocus: resolvedShow.focus,
           ...(filter.contentType === 'Music'
             ? {
                 musicMode,
@@ -232,6 +249,18 @@ export function AddTopicDialog({
   const canReview = description.trim().length >= MIN_DESCRIPTION && !reviewing
   const passed = review?.verdict === 'pass'
   const isMusic = filter.contentType === 'Music'
+  const isNews = filter.contentType === 'News'
+
+  useEffect(() => {
+    if (!open || isMusic) return
+    void fetch('/api/geo')
+      .then((res) => res.json())
+      .then((data: { defaults?: { geoCountry?: string } }) => {
+        const country = data.defaults?.geoCountry?.trim()
+        if (country) setDetectedCountry(country)
+      })
+      .catch(() => {})
+  }, [open, isMusic])
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -245,30 +274,24 @@ export function AddTopicDialog({
     void ensurePushSubscription()
 
     try {
-      const category = resolveCategory(filter)
       const payload = isMusic
         ? {
             title,
             description: approved,
             language: musicLanguage,
-            category,
-            contentType: 'Music' as const,
             musicMode,
             ...(musicMode === 'full' ? { voiceType, voiceTone } : {}),
-            geoScope: 'Worldwide',
           }
         : {
             title,
             description: approved,
             language: filter.languages[0] ?? 'English',
-            category,
-            contentType: filter.contentType,
-            geoScope: filter.geoScope,
-            geoRegion: filter.geoRegion,
-            geoCountry: filter.geoCountry,
-            geoState: filter.geoState,
-            geoLocal: filter.geoLocal,
+            category: resolvedCategory,
+            contentType:
+              filter.contentType !== 'Music' ? filter.contentType : undefined,
+            ...geoFromFilter(filter),
             includeIllustrations,
+            ...(countryPerspective.trim() ? { countryPerspective: countryPerspective.trim() } : {}),
           }
 
       const res = await fetch(isMusic ? '/api/generate/music' : '/api/generate', {
@@ -283,6 +306,8 @@ export function AddTopicDialog({
           setError(t('onDemandInsufficientCredits'))
         } else if (res.status === 403 || data?.code === 'PLAN_REQUIRED') {
           setError(t('topicReviewPlanRequired'))
+        } else if (data?.code === 'INNGEST_UNAVAILABLE') {
+          setError(t('onDemandWorkerUnavailable'))
         } else {
           setError(t('onDemandEnqueueError'))
         }
@@ -360,11 +385,6 @@ export function AddTopicDialog({
                 <p className="mt-1 text-xs text-[var(--muted-strong)]">
                   {isMusic ? t('onDemandMusicSubtitle') : t('onDemandPodcastSubtitle')}
                 </p>
-                {!isMusic ? (
-                <p className="mt-1 text-xs text-[var(--muted-strong)]">
-                  {t('addTopicGeoHint', { geo: geoFocusSummary(filter) })}
-                </p>
-                ) : null}
               </div>
               <button
                 type="button"
@@ -566,6 +586,29 @@ export function AddTopicDialog({
                 </label>
 
                 {!isMusic ? (
+                <>
+                <div className="rounded-xl border border-[var(--border)] bg-white/[0.03] p-3">
+                  <GeoSelect
+                    label={t('topicCountryPerspectiveLabel')}
+                    value={countryPerspective}
+                    options={countryOptions}
+                    placeholder={t('topicCountryPerspectiveNeutral')}
+                    onChange={setCountryPerspective}
+                  />
+                  <p className="mt-1.5 text-xs text-[var(--muted-strong)]">
+                    {t('topicCountryPerspectiveHint')}
+                  </p>
+                  {detectedCountry ? (
+                    <button
+                      type="button"
+                      onClick={() => setCountryPerspective(detectedCountry)}
+                      className="mt-2 text-xs font-medium text-[var(--accent)] transition-colors hover:text-[var(--foreground)]"
+                    >
+                      {t('topicCountryPerspectiveUseDetected', { country: detectedCountry })}
+                    </button>
+                  ) : null}
+                </div>
+
                 <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--border)] bg-white/[0.03] p-3">
                   <input
                     type="checkbox"
@@ -579,10 +622,11 @@ export function AddTopicDialog({
                       {t('topicIllustrationsLabel')}
                     </span>
                     <span className="mt-0.5 block text-xs text-[var(--muted-strong)]">
-                      {t('topicIllustrationsHint')}
+                      {t(isNews ? 'topicIllustrationsNewsHint' : 'topicIllustrationsHint')}
                     </span>
                   </span>
                 </label>
+                </>
                 ) : null}
               </div>
             ) : null}

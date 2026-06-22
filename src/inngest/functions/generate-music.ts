@@ -16,6 +16,7 @@ import { LyriaError } from '@/lib/lyria'
 import { sendPushToUser } from '@/lib/push'
 import { addCoreTokens } from '@/lib/credits'
 import type { GenerationStage } from '@/lib/generation-progress'
+import { assertGenerationActive } from '@/lib/generation-cancel'
 import { reviewTopic } from '@/lib/topic-review'
 import { resolveShow } from '@/lib/shows'
 
@@ -44,6 +45,12 @@ export const generateMusic = inngest.createFunction(
           : 'Music generation failed after multiple attempts.'
 
       try {
+        const existing = await prisma.generation.findUnique({
+          where: { id: generationId },
+          select: { status: true, creditsCharged: true },
+        })
+        if (!existing || existing.status === 'CANCELLED') return
+
         const generation = await prisma.generation.update({
           where: { id: generationId },
           data: {
@@ -80,6 +87,7 @@ export const generateMusic = inngest.createFunction(
         .catch(() => {})
 
     const job = await step.run('start', async () => {
+      await assertGenerationActive(generationId)
       const generation = await prisma.generation.findUnique({
         where: { id: generationId },
         select: { params: true, status: true },
@@ -103,6 +111,7 @@ export const generateMusic = inngest.createFunction(
     const show = resolveShow({ contentType: 'Music', category: input.category })
 
     await step.run('moderate', async () => {
+      await assertGenerationActive(generationId)
       await markStage('moderation')
       const result = await reviewTopic({
         description: input.description,
@@ -126,12 +135,14 @@ export const generateMusic = inngest.createFunction(
     // For non-English (especially experimental) languages, ensure the sung
     // Lyrics: block is in the target language before it reaches Lyria.
     const localizedDescription = await step.run('localize-lyrics', async () => {
+      await assertGenerationActive(generationId)
       await markStage('composition')
       return ensureLyricsInLanguage(input.description, input.language)
     })
 
-    const lyriaPrompt = await step.run('compose-prompt', () =>
-      composeLyriaPromptWithLLM({
+    const lyriaPrompt = await step.run('compose-prompt', async () => {
+      await assertGenerationActive(generationId)
+      return composeLyriaPromptWithLLM({
         genre: input.category,
         userBrief: localizedDescription,
         mode: input.musicMode as MusicMode,
@@ -140,9 +151,10 @@ export const generateMusic = inngest.createFunction(
         voiceType: input.voiceType,
         voiceTone: input.voiceTone,
       })
-    )
+    })
 
     const draftStoryId = await step.run('draft-story', async () => {
+      await assertGenerationActive(generationId)
       const existing = await prisma.generation.findUnique({
         where: { id: generationId },
         select: { storyId: true },
@@ -173,6 +185,7 @@ export const generateMusic = inngest.createFunction(
     })
 
     const track = await step.run('generate', async () => {
+      await assertGenerationActive(generationId)
       await markStage('audio')
       const fallbackPrompt = buildLyriaPrompt({
         genre: input.category,
@@ -213,6 +226,7 @@ export const generateMusic = inngest.createFunction(
     })
 
     const linerNotes = await step.run('liner-notes', async () => {
+      await assertGenerationActive(generationId)
       await markStage('liner_notes')
       return generateMusicLinerNotes({
         title: input.title,
@@ -225,6 +239,7 @@ export const generateMusic = inngest.createFunction(
 
     // Best-effort album art; falls back to the channel cover when null.
     const thumbnailUrl = await step.run('thumbnail', async () => {
+      await assertGenerationActive(generationId)
       await markStage('thumbnail')
       return generateMusicThumbnail({
         title: input.title,
@@ -235,6 +250,7 @@ export const generateMusic = inngest.createFunction(
     })
 
     const finalized = await step.run('finalize', async () => {
+      await assertGenerationActive(generationId)
       await markStage('finalizing')
       return finalizeMusicStory({
         input,
@@ -247,14 +263,16 @@ export const generateMusic = inngest.createFunction(
       })
     })
 
-    await step.run('complete', () =>
-      prisma.generation.update({
+    await step.run('complete', async () => {
+      await assertGenerationActive(generationId)
+      return prisma.generation.update({
         where: { id: generationId },
         data: { status: 'COMPLETED', stage: 'complete', storyId: finalized.storyId },
       })
-    )
+    })
 
     await step.run('notify', async () => {
+      await assertGenerationActive(generationId)
       await sendPushToUser(userId, {
         title: 'Your track is ready',
         body: input.title,

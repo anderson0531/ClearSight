@@ -6,7 +6,8 @@ import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
-import { inngest, MUSIC_GENERATION_REQUESTED } from '@/inngest/client'
+import { MUSIC_GENERATION_REQUESTED } from '@/inngest/client'
+import { InngestUnavailableError, sendInngestEvent } from '@/lib/inngest-enqueue'
 import { MUSIC_CATEGORIES, MUSIC_VOICE_TONES, MUSIC_VOICE_TYPES } from '@/lib/taxonomy'
 
 const musicGenerateSchema = z.object({
@@ -62,13 +63,26 @@ export async function POST(request: Request) {
       },
     })
 
-    await inngest.send({
-      name: MUSIC_GENERATION_REQUESTED,
-      data: { generationId, userId },
-    })
+    await sendInngestEvent(
+      {
+        name: MUSIC_GENERATION_REQUESTED,
+        data: { generationId, userId },
+      },
+      { userId, generationId, creditsCharged: MUSIC_GENERATION_UNITS }
+    )
 
     return NextResponse.json({ generationId, status: 'QUEUED' }, { status: 202 })
   } catch (err) {
+    if (err instanceof InngestUnavailableError) {
+      return NextResponse.json(
+        {
+          error:
+            'Background worker unavailable. In development, run npm run dev:inngest in a second terminal.',
+          code: 'INNGEST_UNAVAILABLE',
+        },
+        { status: 503 }
+      )
+    }
     if (err instanceof CreditError) {
       const status = err.code === 'INSUFFICIENT_TOKENS' ? 402 : 403
       return NextResponse.json({ error: err.message, code: err.code }, { status })

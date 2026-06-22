@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { Plan } from '@/lib/plans'
+import { fetchWithTimeout } from '@/lib/client-fetch'
 
 export interface UserContextValue {
   id: string | null
@@ -35,7 +36,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/me')
+      const res = await fetchWithTimeout('/api/me', {}, 15_000)
       // Transient failure (e.g. DB blip → 503): keep the prior auth state rather
       // than bouncing a logged-in user to anonymous over a momentary outage.
       if (!res.ok) {

@@ -3,8 +3,14 @@ import { prisma } from '@/lib/db'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
 import { getCurrentUserId } from '@/lib/session'
 import { addCoreTokens, consumeCredits, CreditError } from '@/lib/credits'
-import { BASE_GENERATION_UNITS, ILLUSTRATION_UNITS, MUSIC_GENERATION_UNITS } from '@/lib/credit-units'
-import { inngest, MUSIC_GENERATION_REQUESTED, PODCAST_GENERATION_REQUESTED } from '@/inngest/client'
+import { BASE_GENERATION_UNITS, ILLUSTRATION_UNITS, MUSIC_GENERATION_UNITS, newsIllustrationUnits } from '@/lib/credit-units'
+import { MUSIC_GENERATION_REQUESTED, PODCAST_GENERATION_REQUESTED } from '@/inngest/client'
+import { InngestUnavailableError, sendInngestEvent } from '@/lib/inngest-enqueue'
+import {
+  cancelGenerationForUser,
+  GenerationNotCancellableError,
+  GenerationNotFoundError,
+} from '@/lib/generation-cancel'
 
 /** Single generation job status, scoped to the current user. */
 export async function GET(
@@ -52,6 +58,44 @@ export async function GET(
     }
     console.error('[generations] get', err)
     return NextResponse.json({ error: 'Failed to load generation' }, { status: 500 })
+  }
+}
+
+/**
+ * Cancel a queued or running generation. Queued jobs are removed and refunded;
+ * running jobs are marked CANCELLED so the worker stops on its next step.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  try {
+    const body = (await request.json().catch(() => null)) as { action?: string } | null
+    if (body?.action !== 'cancel') {
+      return NextResponse.json({ error: 'Invalid request', code: 'INVALID_REQUEST' }, { status: 400 })
+    }
+
+    const userId = await getCurrentUserId()
+    if (!userId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    const result = await cancelGenerationForUser(id, userId)
+    return NextResponse.json({ ok: true, result })
+  } catch (err) {
+    if (err instanceof GenerationNotFoundError) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+    if (err instanceof GenerationNotCancellableError) {
+      return NextResponse.json(
+        { error: 'Only queued or running jobs can be canceled', code: 'NOT_CANCELLABLE' },
+        { status: 409 }
+      )
+    }
+    if (isDatabaseUnavailableError(err)) {
+      return NextResponse.json({ error: 'Database unavailable', code: 'DB_UNAVAILABLE' }, { status: 503 })
+    }
+    console.error('[generations] cancel', err)
+    return NextResponse.json({ error: 'Failed to cancel generation' }, { status: 500 })
   }
 }
 
@@ -140,7 +184,8 @@ export async function POST(
     const isMusic = stored.contentType === 'Music'
     let retryUnits = isMusic ? MUSIC_GENERATION_UNITS : BASE_GENERATION_UNITS
     if (!isMusic && row.includeIllustrations) {
-      retryUnits += ILLUSTRATION_UNITS
+      retryUnits +=
+        stored.contentType === 'News' ? newsIllustrationUnits() : ILLUSTRATION_UNITS
     }
 
     await consumeCredits(
@@ -159,13 +204,26 @@ export async function POST(
       },
     })
 
-    await inngest.send({
-      name: isMusic ? MUSIC_GENERATION_REQUESTED : PODCAST_GENERATION_REQUESTED,
-      data: { generationId: row.id, userId },
-    })
+    await sendInngestEvent(
+      {
+        name: isMusic ? MUSIC_GENERATION_REQUESTED : PODCAST_GENERATION_REQUESTED,
+        data: { generationId: row.id, userId },
+      },
+      { userId, generationId: row.id, creditsCharged: retryUnits }
+    )
 
     return NextResponse.json({ generationId: row.id, status: 'QUEUED' }, { status: 202 })
   } catch (err) {
+    if (err instanceof InngestUnavailableError) {
+      return NextResponse.json(
+        {
+          error:
+            'Background worker unavailable. In development, run npm run dev:inngest in a second terminal.',
+          code: 'INNGEST_UNAVAILABLE',
+        },
+        { status: 503 }
+      )
+    }
     if (err instanceof CreditError) {
       const status = err.code === 'INSUFFICIENT_TOKENS' ? 402 : 403
       return NextResponse.json({ error: err.message, code: err.code }, { status })

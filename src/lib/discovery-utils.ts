@@ -8,7 +8,8 @@ export function filterMockStories(filter: TaxonomyFilter): StoryCard[] {
     const catMatch =
       filter.categories.includes('Top') ||
       filter.categories.includes(story.category as TaxonomyFilter['categories'][number])
-    const geoMatch = story.geoScope === filter.geoScope
+    const geoMatch =
+      filter.contentType !== 'News' || story.geoScope === filter.geoScope
     const queryMatch = filter.query
       ? story.title.toLowerCase().includes(filter.query.toLowerCase())
       : true

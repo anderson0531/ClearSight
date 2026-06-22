@@ -11,6 +11,8 @@ export const VERTEX_TEXT_MODEL = process.env.VERTEX_TEXT_MODEL ?? 'gemini-2.5-fl
 export const VERTEX_FAST_MODEL = process.env.VERTEX_FAST_MODEL ?? 'gemini-2.5-flash-lite'
 const TEXT_MODEL = VERTEX_TEXT_MODEL
 const IMAGE_MODEL = process.env.VERTEX_IMAGE_MODEL ?? 'imagen-4.0-generate-001'
+const IMAGE_CUSTOMIZATION_MODEL =
+  process.env.VERTEX_IMAGE_CUSTOMIZATION_MODEL ?? 'imagen-3.0-capability-001'
 const MUSIC_MODEL = process.env.VERTEX_MUSIC_MODEL ?? 'lyria-002'
 
 export interface GroundedSource {
@@ -22,6 +24,7 @@ export interface GroundedSource {
 export interface GroundedGenerationResult {
   text: string | null
   sources: GroundedSource[]
+  finishReason?: string
 }
 
 let authClient: GoogleAuth | null = null
@@ -208,6 +211,7 @@ export async function vertexGenerateGrounded(
 
     const data = (await res.json()) as {
       candidates?: Array<{
+        finishReason?: string
         content?: { parts?: Array<{ text?: string }> }
         groundingMetadata?: {
           groundingChunks?: Array<{
@@ -217,15 +221,26 @@ export async function vertexGenerateGrounded(
       }>
     }
 
+    const candidate = data.candidates?.[0]
+    const finishReason = candidate?.finishReason
+
     // Concatenate every text part: thinking models and grounded responses can
     // split the answer across multiple parts, and reading only the first would
     // truncate or drop the payload entirely.
-    const parts = data.candidates?.[0]?.content?.parts ?? []
+    const parts = candidate?.content?.parts ?? []
     const joined = parts.map((p) => p.text ?? '').join('')
     const text = joined.length > 0 ? joined : null
     const sources = extractGroundingSources(data)
 
-    return { text, sources }
+    if (finishReason === 'MAX_TOKENS') {
+      console.warn('[vertex] generateContent hit MAX_TOKENS', {
+        model: options?.model ?? TEXT_MODEL,
+        grounding: useGrounding,
+        textLength: text?.length ?? 0,
+      })
+    }
+
+    return { text, sources, finishReason }
   } catch (error) {
     console.error('[vertex] generateContent error:', error)
     return { text: null, sources: [] }
@@ -245,25 +260,81 @@ export async function vertexGenerateText(
   return result.text
 }
 
+/** Imagen 3 subject-customization reference (requires imagen-3.0-capability-001). */
+export interface ImagenSubjectReference {
+  referenceId: number
+  bytesBase64Encoded: string
+  subjectType?: 'SUBJECT_TYPE_PERSON'
+  /** Describes the subject in the reference photo for the customization model. */
+  subjectDescription?: string
+}
+
+export interface ImagenGenerateResult {
+  buffer: Buffer | null
+  model: string
+  usedSubjectRefs: boolean
+  error?: string
+  httpStatus?: number
+  raiFilteredReason?: string
+}
+
+function imagenSubjectCustomizationEnabled(): boolean {
+  return process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION === '1'
+}
+
 export async function vertexGenerateImage(
   prompt: string,
   options?: {
     aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
     personGeneration?: 'dont_allow' | 'allow_adult' | 'allow_all'
+    /**
+     * Likeness via Imagen 3 subject customization. Opt-in only:
+     * set VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION=1.
+     */
+    subjectReferences?: ImagenSubjectReference[]
+    /** When true, never pass subject references (Imagen 4 text-only path). */
+    skipSubjectRefs?: boolean
   }
-): Promise<Buffer | null> {
+): Promise<ImagenGenerateResult> {
   const token = await getVertexAccessToken()
-  if (!token) return null
+  if (!token) {
+    return {
+      buffer: null,
+      model: IMAGE_MODEL,
+      usedSubjectRefs: false,
+      error: 'no_vertex_token',
+    }
+  }
+
+  const hasReferences =
+    !options?.skipSubjectRefs && (options?.subjectReferences?.length ?? 0) > 0
+  const useSubjectCustomization = hasReferences && imagenSubjectCustomizationEnabled()
+
+  const instance: Record<string, unknown> = { prompt }
+  if (useSubjectCustomization && options?.subjectReferences) {
+    instance.referenceImages = options.subjectReferences.map((ref) => ({
+      referenceType: 'REFERENCE_TYPE_SUBJECT',
+      referenceId: ref.referenceId,
+      referenceImage: { bytesBase64Encoded: ref.bytesBase64Encoded },
+      subjectImageConfig: {
+        subjectType: ref.subjectType ?? 'SUBJECT_TYPE_PERSON',
+        ...(ref.subjectDescription ? { subjectDescription: ref.subjectDescription } : {}),
+      },
+    }))
+  }
+
+  const model = useSubjectCustomization ? IMAGE_CUSTOMIZATION_MODEL : IMAGE_MODEL
+  const endpoint = imagenEndpoint(model)
 
   try {
-    const res = await fetch(imagenEndpoint(), {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        instances: [{ prompt }],
+        instances: [instance],
         parameters: {
           sampleCount: 1,
           aspectRatio: options?.aspectRatio ?? '1:1',
@@ -273,8 +344,15 @@ export async function vertexGenerateImage(
     })
 
     if (!res.ok) {
-      console.error('[vertex] imagen predict failed:', res.status, await res.text().catch(() => ''))
-      return null
+      const body = await res.text().catch(() => '')
+      console.error('[vertex] imagen predict failed:', res.status, body)
+      return {
+        buffer: null,
+        model,
+        usedSubjectRefs: useSubjectCustomization,
+        error: body.slice(0, 200) || `http_${res.status}`,
+        httpStatus: res.status,
+      }
     }
 
     const data = (await res.json()) as {
@@ -290,12 +368,29 @@ export async function vertexGenerateImage(
     }
 
     const encoded = prediction?.bytesBase64Encoded
-    if (!encoded) return null
+    if (!encoded) {
+      return {
+        buffer: null,
+        model,
+        usedSubjectRefs: useSubjectCustomization,
+        error: prediction?.raiFilteredReason ? 'rai_filtered' : 'empty_prediction',
+        raiFilteredReason: prediction?.raiFilteredReason,
+      }
+    }
 
-    return Buffer.from(encoded, 'base64')
+    return {
+      buffer: Buffer.from(encoded, 'base64'),
+      model,
+      usedSubjectRefs: useSubjectCustomization,
+    }
   } catch (error) {
     console.error('[vertex] imagen predict error:', error)
-    return null
+    return {
+      buffer: null,
+      model,
+      usedSubjectRefs: useSubjectCustomization,
+      error: error instanceof Error ? error.message : 'imagen_exception',
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import { vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
-import type { ContentType } from '@/lib/taxonomy'
+import { NEWS_CATEGORIES, type ContentType } from '@/lib/taxonomy'
 
 export interface TopicReviewInput {
   /** The creator's free-text podcast description. */
@@ -108,6 +108,106 @@ function voiceToneNote(voiceTone?: TopicReviewInput['voiceTone']): string {
   }
 }
 
+function isConcreteNewsCategory(category: string): boolean {
+  return category !== 'Top' && (NEWS_CATEGORIES as readonly string[]).includes(category)
+}
+
+function newsCategoryGuidance(input: TopicReviewInput): string {
+  if (input.contentType !== 'News' || !isConcreteNewsCategory(input.category)) return ''
+  const sportsNote =
+    input.category === 'Sports'
+      ? `
+SPORTS SCOPE: Under News → Sports, single-player and single-team stories ARE on-theme — injury updates, recovery timelines, return-to-play decisions, roster moves, and season performance outlooks for named athletes (e.g. a WNBA/NBA/ NFL star). Do NOT reject for being "too narrow", "too specific", or "individual-focused"; that is normal sports journalism.`
+      : ''
+  return `
+NEWS CATEGORY RULE: This episode is filed under News → "${input.category}". Any timely, factual story squarely within ${input.category} is ON-THEME for The ClearSight Brief — the category defines scope. Do NOT reject for category mismatch or for being too narrow when the topic belongs in "${input.category}".${sportsNote}`
+}
+
+function isWrongContentTypeRejection(issues: string[]): boolean {
+  return issues.some((issue) =>
+    /different kind of channel|(?:education|entertainment|music|lifestyle) channel|true crime channel|academy channel/i.test(
+      issue
+    )
+  )
+}
+
+/** In-guidelines News topics pass unless clearly meant for another content type. */
+function isForcedNewsCategoryPass(
+  input: TopicReviewInput,
+  withinGuidelines: boolean,
+  fitsChannelRaw: boolean,
+  issues: string[]
+): boolean {
+  if (fitsChannelRaw || !withinGuidelines || input.contentType !== 'News') return false
+  if (isWrongContentTypeRejection(issues)) return false
+  if (isConcreteNewsCategory(input.category)) return true
+  return input.category === 'Top'
+}
+
+function buildOptimizeBriefPrompt(input: TopicReviewInput): string {
+  return `You are a podcast brief editor. The following on-demand episode is APPROVED. Rewrite the creator's description into a strong 2-5 sentence production brief in ${input.language}.
+
+Content type: ${input.contentType ?? 'News'}. Category: ${input.category}.
+Channel: ${input.showName ?? 'ClearSight'}${input.showFocus ? ` — ${input.showFocus}` : ''}.
+
+The brief should state what to cover, why it matters for listeners, and any angles worth steel-manning. Keep it factual and on-topic.
+
+Respond with STRICT JSON only:
+{
+  "recommendedDescription": string,
+  "suggestedTitle": string,
+  "clarifyingQuestions": string[]
+}
+
+CREATOR DESCRIPTION:
+"""
+${input.description}
+"""`
+}
+
+async function optimizeTopicBrief(input: TopicReviewInput): Promise<{
+  recommendedDescription: string
+  suggestedTitle: string
+  clarifyingQuestions: string[]
+}> {
+  const fallback = {
+    recommendedDescription: input.description.trim(),
+    suggestedTitle: input.description.trim().split(/[.!?]/)[0]?.trim().slice(0, 200) || input.description.trim().slice(0, 200),
+    clarifyingQuestions: [] as string[],
+  }
+
+  const raw = await vertexGenerateText(buildOptimizeBriefPrompt(input), {
+    temperature: 0.4,
+    maxOutputTokens: 900,
+    model: VERTEX_FAST_MODEL,
+    useSearchGrounding: false,
+  })
+  if (!raw) return fallback
+
+  const jsonText = extractJsonObject(raw)
+  if (!jsonText) return fallback
+
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>
+    const recommendedDescription =
+      typeof parsed.recommendedDescription === 'string'
+        ? parsed.recommendedDescription.trim()
+        : fallback.recommendedDescription
+    const suggestedTitle =
+      typeof parsed.suggestedTitle === 'string'
+        ? parsed.suggestedTitle.trim().slice(0, 200)
+        : fallback.suggestedTitle
+    const clarifyingQuestions = asStringArray(parsed.clarifyingQuestions).slice(0, 4)
+    return {
+      recommendedDescription: recommendedDescription || fallback.recommendedDescription,
+      suggestedTitle: suggestedTitle || fallback.suggestedTitle,
+      clarifyingQuestions,
+    }
+  } catch {
+    return fallback
+  }
+}
+
 function buildPrompt(input: TopicReviewInput): string {
   const channelLine = input.showName
     ? `Channel: "${input.showName}"${input.showDescription ? ` — ${input.showDescription}` : ''}`
@@ -133,6 +233,7 @@ This is a MUSIC track brief for a FULL track WITH SUNG VOCALS${voiceTypeNote(inp
 
   return `You are the editorial gatekeeper for a podcast platform. Evaluate a creator's proposed episode description for ONE specific channel and respond with STRICT JSON only.
 ${musicGuidance}
+${newsCategoryGuidance(input)}
 
 ${channelLine}
 ${focusLine}
@@ -146,7 +247,11 @@ ${input.description}
 """
 
 Assess all of the following:
-1. fitsChannel: Does this episode fit THIS channel's area of focus and theme? Be generous about breadth: ACCEPT any topic with broad interest that genuinely fits the channel's area of focus, even if it is a fresh angle. Only mark fitsChannel=false when the topic clearly belongs on a different kind of channel (off-theme).
+1. fitsChannel: Does this episode fit THIS channel's area of focus and theme? Be generous about breadth: ACCEPT any topic with broad interest that genuinely fits the channel's area of focus, even if it is a fresh angle. Only mark fitsChannel=false when the topic clearly belongs on a different kind of channel (off-theme).${
+    input.contentType === 'News' && isConcreteNewsCategory(input.category)
+      ? ` For News → "${input.category}", set fitsChannel=true whenever the topic is a legitimate ${input.category} story — including single-athlete or single-team sports coverage. Never block for being "too narrow" or "too specific".`
+      : ''
+  }
 2. withinGuidelines: Is it within community guidelines? Reject hate or harassment, sexual/explicit content, instructions for illegal or dangerous acts, graphic gore, defamation of real private individuals, or disallowed content.
 3. effective: Is the description a clear, specific, and effective brief for producing a strong episode?
 
@@ -207,28 +312,64 @@ export async function reviewTopic(input: TopicReviewInput): Promise<TopicReviewR
     return blockedFallback('Could not review this description right now. Please try again.', true)
   }
 
-  const fitsChannel = parsed.fitsChannel === true
+  const fitsChannelRaw = parsed.fitsChannel === true
   const withinGuidelines = parsed.withinGuidelines === true
   const effective = parsed.effective === true
+
+  const issues = asStringArray(parsed.issues)
+  const forcedNewsPass = isForcedNewsCategoryPass(input, withinGuidelines, fitsChannelRaw, issues)
+  const fitsChannel = fitsChannelRaw || forcedNewsPass
+
   // The verdict is derived from the hard checks so a malformed/over-eager
   // "pass" can never bypass the gate.
   const verdict: 'pass' | 'block' = fitsChannel && withinGuidelines ? 'pass' : 'block'
 
-  const issues = asStringArray(parsed.issues)
-  const clarifyingQuestions = asStringArray(parsed.clarifyingQuestions).slice(0, 4)
-  const recommendedDescription =
+  let clarifyingQuestions = asStringArray(parsed.clarifyingQuestions).slice(0, 4)
+  let recommendedDescription =
     verdict === 'pass' && typeof parsed.recommendedDescription === 'string'
       ? parsed.recommendedDescription.trim()
       : ''
-  const suggestedTitle =
+  let suggestedTitle =
     typeof parsed.suggestedTitle === 'string' ? parsed.suggestedTitle.trim().slice(0, 200) : ''
+
+  if (verdict === 'pass' && forcedNewsPass && !recommendedDescription) {
+    const optimized = await optimizeTopicBrief(input)
+    recommendedDescription = optimized.recommendedDescription
+    suggestedTitle = optimized.suggestedTitle
+    if (clarifyingQuestions.length === 0) {
+      clarifyingQuestions = optimized.clarifyingQuestions
+    }
+  }
+  if (verdict === 'pass' && !recommendedDescription) {
+    recommendedDescription = input.description.trim()
+  }
+  if (verdict === 'pass' && !suggestedTitle) {
+    suggestedTitle =
+      recommendedDescription.split(/[.!?]/)[0]?.trim().slice(0, 200) ||
+      input.description.trim().slice(0, 200)
+  }
+
+  const displayIssues =
+    verdict === 'pass' && forcedNewsPass
+      ? issues.filter(
+          (issue) =>
+            !/too narrow|too specific|individual athlete|single athlete|single player|does not align|off-theme|contradict|not .{0,40}broad|focuses on a single/i.test(
+              issue
+            )
+        )
+      : issues
 
   return {
     verdict,
     fitsChannel,
     withinGuidelines,
     effective,
-    issues: issues.length > 0 ? issues : verdict === 'block' ? ['This description cannot be used as written.'] : [],
+    issues:
+      displayIssues.length > 0
+        ? displayIssues
+        : verdict === 'block'
+          ? ['This description cannot be used as written.']
+          : [],
     clarifyingQuestions,
     recommendedDescription,
     suggestedTitle,

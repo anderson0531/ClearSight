@@ -52,7 +52,7 @@ export function HomeFeaturedSection() {
     <section className="home-content-section">
       <div className="home-section-header">
         <h2 className="home-section-title mb-0">{t('homeFeaturedTitle')}</h2>
-        <Link href="/search" className="see-all-link">
+        <Link href="/discover" className="see-all-link">
           {t('homeBrowseAll')}
           <ArrowRight className="h-3.5 w-3.5" />
         </Link>

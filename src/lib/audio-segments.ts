@@ -1,4 +1,8 @@
-import type { AudioSegment } from '@/types/story'
+import type { AudioSegment, VisualMedium } from '@/types/story'
+
+function normalizeVisualMedium(value: unknown): VisualMedium | undefined {
+  return value === 'video' ? 'video' : value === 'image' ? 'image' : undefined
+}
 
 export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] | null {
   if (!sourcesVerified || typeof sourcesVerified !== 'object') return null
@@ -18,6 +22,7 @@ export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] |
     }
 
     const segment = item as AudioSegment
+    const visualMedium = normalizeVisualMedium(segment.visualMedium)
     segments.push({
       url: segment.url,
       durationSeconds: segment.durationSeconds,
@@ -26,10 +31,14 @@ export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] |
       ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
       ...(segment.text ? { text: segment.text } : {}),
       ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
+      ...(segment.scene ? { scene: segment.scene } : {}),
       ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
       ...(segment.musicMood ? { musicMood: segment.musicMood } : {}),
       ...(segment.illustrationGroupId ? { illustrationGroupId: segment.illustrationGroupId } : {}),
       ...(segment.titleSlide ? { titleSlide: true } : {}),
+      ...(visualMedium ? { visualMedium } : {}),
+      ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
+      ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
     })
   }
 
@@ -44,10 +53,14 @@ export function serializeAudioSegments(segments: AudioSegment[]): Record<string,
     ...(segment.role ? { role: segment.role } : {}),
     ...(segment.text ? { text: segment.text } : {}),
     ...(segment.imagePrompt ? { imagePrompt: segment.imagePrompt } : {}),
+    ...(segment.scene ? { scene: segment.scene } : {}),
     ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
     ...(segment.musicMood ? { musicMood: segment.musicMood } : {}),
     ...(segment.illustrationGroupId ? { illustrationGroupId: segment.illustrationGroupId } : {}),
     ...(segment.titleSlide ? { titleSlide: true } : {}),
     ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
+    ...(segment.visualMedium ? { visualMedium: segment.visualMedium } : {}),
+    ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
+    ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
   }))
 }

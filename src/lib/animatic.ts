@@ -1,26 +1,48 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
 import { extractAudioSegments, serializeAudioSegments } from '@/lib/audio-segments'
-import { segmentHasAnimaticMetadata, segmentWantsScene } from '@/lib/animatic-utils'
+import { segmentHasAnimaticMetadata, segmentWantsScene, countPendingAnimaticFrames } from '@/lib/animatic-utils'
 import { resolveShow, showById } from '@/lib/shows'
-import { vertexGenerateImage, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
-import type { AudioSegment, AudioSegmentRole, FrameKind } from '@/types/story'
+import { vertexGenerateImage, getVertexAccessToken } from '@/lib/vertex'
+import type { AudioSegment, AudioSegmentRole } from '@/types/story'
+import type { AnimaticPendingCounts } from '@/lib/animatic-utils'
 import type { ContentType } from '@/lib/taxonomy'
+import {
+  applySubjectReferenceTags,
+  formatSubjectBibleForPrompt,
+  IMAGEN_PRIMARY_SCENE_MARKER,
+  NO_TEXT_SPELLING_GUARDRAILS,
+  readVisualSubjectBible,
+  refineImagenScenePrompt,
+  referencesForPrompt,
+  resolveSubjectReferences,
+  scenePromptNeedsRefinement,
+  promptForImagenRender,
+  extractImagenSceneCore,
+  resolveFrameSubjects,
+  stripSubjectReferenceTags,
+  SUBJECT_PRECISION_GUARDRAILS,
+  type ResolvedSubjectReference,
+  type VisualSubject,
+} from '@/lib/visual-subjects'
+import type { ImagenGenerateResult, ImagenSubjectReference } from '@/lib/vertex'
+import type { AnimaticLastRender } from '@/lib/animatic-utils'
+import { deserializeEpisodeScriptDraft } from '@/lib/episode-script-draft'
 
 const RENDER_CONCURRENCY = 3
 
-/** Per-Type visual direction so illustrations match the podcast's mode. */
-export function illustrationStyleForType(type?: ContentType): string {
-  switch (type) {
-    case 'Education':
-      return 'Style: clear, instructional editorial illustration — diagrammatic, labeled-feeling, explanatory.'
-    case 'Entertainment':
-      return 'Style: cinematic, dramatic, moody editorial illustration with strong atmosphere.'
-    case 'Lifestyle':
-      return 'Style: warm, inviting lifestyle editorial illustration — bright natural light, friendly and aspirational.'
-    default:
-      return ''
-  }
+/** Unified infographic look for all generated episode frame illustrations. */
+export const INFOGRAPHIC_ILLUSTRATION_STYLE =
+  'Style: modern editorial infographic illustration — clean flat-vector shapes, clear visual hierarchy, diagrammatic composition, symbolic icons and flows, limited professional palette. Not photorealistic, not cinematic.'
+
+/** Style string passed into Imagen prompts for podcast frame illustrations. */
+export function frameIllustrationStyle(): string {
+  return INFOGRAPHIC_ILLUSTRATION_STYLE
+}
+
+/** Per-Type visual direction — all frame images use the infographic style. */
+export function illustrationStyleForType(_type?: ContentType): string {
+  return INFOGRAPHIC_ILLUSTRATION_STYLE
 }
 
 // Lightweight country → visual-hint map for the most common locales, used to
@@ -68,35 +90,80 @@ export function buildLocaleVisualContext(
     language && language.trim().toLowerCase() !== 'english'
       ? ` Audience language: ${language}.`
       : ''
-  return `Localization (critical): depict people, clothing, signage, vehicles, architecture, and environment authentic to ${place}.${langNote} Any visible text or signage should suit ${place}. Do NOT default to US/Western characters or settings unless the story is specifically about the US/West.${hint ? ` ${hint}` : ''}`
+  return `Localization (critical): depict people, clothing, signage, architecture, and environment authentic to ${place}.${langNote} Any visible text or signage should suit ${place}. Do NOT default to US/Western characters or settings unless the story is specifically about the US/West.${hint ? ` ${hint}` : ''}`
+}
+
+/** Visual localization from optional audience perspective only — never listener IP geo. */
+export function buildAudienceVisualContext(options: {
+  language?: string
+  countryPerspective?: string | null
+}): string {
+  const place = options.countryPerspective?.trim()
+  return buildLocaleVisualContext(options.language, place, place)
 }
 
 export interface AnimaticPromptOptions {
   style?: string
   localeContext?: string
-  /**
-   * When true, the visual director illustrates generously — every concrete
-   * step, ingredient, tool, technique, place, or object gets its own scene.
-   * Used for instructional/how-to content (Education, Lifestyle) where step-by-
-   * step visuals materially help the listener.
-   */
-  illustrateGenerously?: boolean
-}
-
-/** Instructional content benefits from a scene on (almost) every concrete step. */
-export function illustratesGenerously(type?: ContentType): boolean {
-  return type === 'Education' || type === 'Lifestyle'
+  /** Spoken dialogue at this frame (News storyboard alignment). */
+  spokenDialogue?: string
+  /** 1-based beat index in the episode visual arc (News). */
+  visualBeat?: number
+  /** Primary people/places for this episode — anchors Imagen prompts. */
+  subjectBible?: VisualSubject[]
+  /** Episode title — used to resolve protagonist for subject anchoring. */
+  episodeTitle?: string
 }
 
 /**
- * Direct, high-yield illustration prompt. We feed the dialogue (or a scene
- * description) straight to Imagen with the show's visual style and a locale
- * context block so frames render localized rather than US-default.
+ * Imagen-facing prompt: one concrete scene description plus style/locale
+ * guardrails. No meta labels, quoted dialogue, or director instructions.
  */
-export function buildAnimaticPrompt(lineText: string, options?: AnimaticPromptOptions): string {
-  const dialogue = lineText.replace(/\[[^\]]+\]/g, '').trim().slice(0, 900)
-  const parts = [`Create an image that effectively illustrates the following:\n\n${dialogue}`]
+export function buildImagenScenePrompt(scene: string, options?: AnimaticPromptOptions): string {
+  const visual = scene.replace(/\[[^\]]+\]/g, '').trim().slice(0, 900)
+  const parts: string[] = []
+
+  parts.push(`${IMAGEN_PRIMARY_SCENE_MARKER} ${visual}`)
+
+  if (options?.spokenDialogue?.trim()) {
+    parts.push(
+      `Frame dialogue context (depict what is being discussed): ${options.spokenDialogue.replace(/\[[^\]]+\]/g, '').trim().slice(0, 300)}`
+    )
+  }
+
+  const frameSubjects = resolveFrameSubjects(
+    options?.subjectBible ?? [],
+    visual,
+    options?.spokenDialogue,
+    options?.episodeTitle
+  )
+  const bibleBlock = formatSubjectBibleForPrompt(frameSubjects)
+  if (bibleBlock) parts.push(bibleBlock)
+
+  parts.push('Infographic editorial still illustration for a podcast frame.')
+  parts.push(NO_TEXT_SPELLING_GUARDRAILS)
+  parts.push(SUBJECT_PRECISION_GUARDRAILS)
+  parts.push(options?.style?.trim() || frameIllustrationStyle())
+  if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
+  return parts.join('\n\n')
+}
+
+/**
+ * Wraps a News `videoScene` with documentary guardrails for Veo 3.1 Lite:
+ * motion-first reenactment, ambient sound only, no speech or on-screen text.
+ */
+export function buildVeoReenactmentPrompt(
+  videoScene: string,
+  options?: AnimaticPromptOptions
+): string {
+  const motion = videoScene.replace(/\[[^\]]+\]/g, '').trim().slice(0, 900)
+  const parts = [
+    `Cinematic documentary reenactment, 16:9, motion-first: ${motion}`,
+    'Ambient environmental sound only — no spoken words, dialogue, narration, or on-screen text, captions, logos, or watermarks.',
+    'No host faces, avatars, or news anchors.',
+  ]
   if (options?.style?.trim()) parts.push(options.style.trim())
+  else parts.push(illustrationStyleForType('News'))
   if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
   return parts.join('\n\n')
 }
@@ -109,9 +176,9 @@ export function buildAnimaticPrompt(lineText: string, options?: AnimaticPromptOp
 export function buildTitleSlidePrompt(title: string, options?: AnimaticPromptOptions): string {
   const subject = title.replace(/\[[^\]]+\]/g, '').trim().slice(0, 300)
   const parts = [
-    `Create a cinematic, editorial title-card backdrop for a news episode about: "${subject}". Wide establishing composition with clear negative space (especially lower third) for an overlaid title. Premium, modern broadcast look. Absolutely NO text, letters, words, captions, logos, or watermarks anywhere in the image.`,
+    `Create an infographic editorial title-card backdrop for a news episode about: "${subject}". Wide establishing composition with clear negative space (especially lower third) for an overlaid title. Clean vector shapes, diagrammatic motifs, modern broadcast infographic look. Absolutely NO text, letters, words, captions, logos, or watermarks anywhere in the image.`,
   ]
-  if (options?.style?.trim()) parts.push(options.style.trim())
+  parts.push(options?.style?.trim() || frameIllustrationStyle())
   if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
   return parts.join('\n\n')
 }
@@ -129,124 +196,158 @@ function roleNeedsImagePrompt(role?: AudioSegmentRole): boolean {
   )
 }
 
-interface LineForPrompt {
-  index: number
-  speaker: string
-  text: string
-  role: AudioSegmentRole
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Per-line framing decision: a custom scene illustration or the host frame. */
-export interface FrameDecision {
-  kind: FrameKind
-  /** Full localized Imagen prompt — present only when kind === 'scene'. */
-  prompt?: string
-}
-
-function extractJsonArray(raw: string): unknown[] | null {
-  const match = raw.match(/\[[\s\S]*\]/)
+/** Map illustrationGroupId `t{N}` back to the authored script scene. */
+function sceneFromEpisodeDraft(
+  sourcesVerified: unknown,
+  illustrationGroupId?: string | null
+): string | null {
+  const match = illustrationGroupId?.match(/^t(\d+)$/)
   if (!match) return null
-  try {
-    const parsed = JSON.parse(match[0])
-    return Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
-  }
+  const turnIndex = Number(match[1])
+  if (!Number.isFinite(turnIndex)) return null
+  const script = deserializeEpisodeScriptDraft(
+    (sourcesVerified as { episodeScriptDraft?: unknown } | null)?.episodeScriptDraft
+  )
+  const scene = script?.turns[turnIndex]?.scene
+  return typeof scene === 'string' && scene.trim() ? scene.trim() : null
+}
+
+function looksLikeSpokenDialogue(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed) return true
+  if (/^\[[^\]]+\]/.test(trimmed)) return true
+  return trimmed.length < 100 && /[?!]/.test(trimmed) && !/\b(illustration|scene|depict|wide shot|establishing)\b/i.test(trimmed)
 }
 
 /**
- * Decides, per illustratable line, whether a custom scene illustration adds
- * value (significant event/place/action/data) or whether the host speaking
- * frame is enough. One cheap LLM call covers all lines; for scene lines the
- * model also writes the localized scene description. On any failure we fall
- * back to illustrating every line directly (the previous behavior), so framing
- * is best-effort and never blocks generation.
+ * Best scene sentence for Imagen — prefers persisted scene, then script draft,
+ * then stored prompt core. Spoken dialogue is only used as a last resort.
  */
-export async function generateLineImagePrompts(
-  lines: LineForPrompt[],
-  options?: AnimaticPromptOptions
-): Promise<Map<number, FrameDecision>> {
-  const map = new Map<number, FrameDecision>()
+export function resolveSegmentSceneText(
+  segment: AudioSegment,
+  sourcesVerified?: unknown
+): string {
+  const fromSegment = segment.scene?.trim()
+  if (fromSegment) return fromSegment
 
-  const illustratable = lines.filter(
-    (line) => roleNeedsImagePrompt(line.role) && Boolean(line.text?.trim())
-  )
-  if (illustratable.length === 0) return map
-
-  const fallbackAllScenes = () => {
-    for (const line of illustratable) {
-      map.set(line.index, {
-        kind: 'scene',
-        prompt: buildAnimaticPrompt(line.text, options),
-      })
-    }
-    return map
+  if (sourcesVerified) {
+    const fromDraft = sceneFromEpisodeDraft(sourcesVerified, segment.illustrationGroupId)
+    if (fromDraft) return fromDraft
   }
 
-  const numbered = illustratable
-    .map((line, i) => `${i + 1}. ${line.text.replace(/\[[^\]]+\]/g, '').trim().slice(0, 240)}`)
-    .join('\n')
+  const fromPrompt = extractImagenSceneCore(segment.imagePrompt ?? '').trim()
+  if (fromPrompt && !looksLikeSpokenDialogue(fromPrompt)) return fromPrompt
 
-  const localeBlock = options?.localeContext?.trim()
-    ? `\nWhen you write a scene description, honor this localization:\n${options.localeContext.trim()}\n`
-    : ''
+  const dialogue = segment.text?.replace(/\[[^\]]+\]/g, '').trim() ?? ''
+  if (dialogue && !looksLikeSpokenDialogue(dialogue)) return dialogue
 
-  const guidance = options?.illustrateGenerously
-    ? `Illustrate (illustrate=true) GENEROUSLY: this is instructional, step-by-step content, so depict every concrete step, ingredient, tool, technique, place, object, or result. Most lines that describe something the listener should picture SHOULD get their own scene. Use the host frame (illustrate=false) only for purely conversational, reactive, or transitional lines. Favor a rich sequence of distinct scenes over repetition.`
-    : `Illustrate (illustrate=true) ONLY when the line describes a concrete event, place, action, scene, object, or notable data point worth depicting. Use the host frame (illustrate=false) for abstract, reactive, transitional, opinion, or meta lines. Aim for a balanced mix — not every line needs a scene.`
-
-  const prompt = `You are the visual director for an illustrated podcast. For EACH numbered line, decide whether a custom full-scene illustration genuinely adds value, or whether the shot should simply show the host speaking.
-
-${guidance}
-
-For illustrate=true lines, write "scene": one vivid, concrete sentence describing the IMAGE to render (subjects, setting, action), not the dialogue itself. When the lines form a sequence of steps, make each scene visually distinct so the progression is clear.${localeBlock}
-Lines:
-${numbered}
-
-Return ONLY a JSON array, one object per line, in order, e.g.:
-[{"i":1,"illustrate":true,"scene":"..."},{"i":2,"illustrate":false}]`
-
-  let raw: string | null = null
-  try {
-    raw = await vertexGenerateText(prompt, {
-      temperature: 0.2,
-      maxOutputTokens: 2048,
-      model: VERTEX_FAST_MODEL,
-      useSearchGrounding: false,
-    })
-  } catch {
-    raw = null
-  }
-
-  if (!raw) return fallbackAllScenes()
-
-  const parsed = extractJsonArray(raw)
-  if (!parsed) return fallbackAllScenes()
-
-  const byPosition = new Map<number, { illustrate?: boolean; scene?: string }>()
-  for (const item of parsed) {
-    if (!item || typeof item !== 'object') continue
-    const obj = item as { i?: number; illustrate?: boolean; scene?: string }
-    if (typeof obj.i === 'number') byPosition.set(obj.i, obj)
-  }
-
-  illustratable.forEach((line, i) => {
-    const decision = byPosition.get(i + 1)
-    const illustrate = decision?.illustrate
-    if (illustrate === false) {
-      map.set(line.index, { kind: 'host' })
-      return
-    }
-    // Default to a scene when the model omitted/affirmed the line.
-    const sceneText = decision?.scene?.trim() || line.text
-    map.set(line.index, { kind: 'scene', prompt: buildAnimaticPrompt(sceneText, options) })
-  })
-
-  return map
+  return dialogue
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+interface FrameImagenPrompts {
+  stored: string
+  lean: string
+  frameSubjects: VisualSubject[]
+}
+
+function buildFrameImagenPrompts(params: {
+  sceneText: string
+  segment: AudioSegment
+  subjectBible: VisualSubject[]
+  episodeTitle: string
+  style?: string
+  localeContext?: string
+}): FrameImagenPrompts | null {
+  const sceneText =
+    params.sceneText.trim() ||
+    (params.segment.titleSlide ? params.episodeTitle.trim() : '')
+  if (!sceneText) return null
+
+  const frameSubjects = resolveFrameSubjects(
+    params.subjectBible,
+    sceneText,
+    params.segment.text,
+    params.episodeTitle
+  )
+
+  const stored = params.segment.titleSlide
+    ? buildTitleSlidePrompt(params.episodeTitle, {
+        style: params.style,
+        localeContext: params.localeContext,
+        subjectBible: frameSubjects,
+      })
+    : buildImagenScenePrompt(sceneText, {
+        subjectBible: frameSubjects,
+        spokenDialogue: params.segment.text,
+        style: params.style,
+        localeContext: params.localeContext,
+        episodeTitle: params.episodeTitle,
+      })
+
+  const lean = promptForImagenRender(stored, {
+    style: params.style,
+    localeContext: params.localeContext,
+    subjects: frameSubjects,
+  })
+
+  return { stored, lean, frameSubjects }
+}
+
+/** Resolve stored + lean Imagen prompts; falls back to segment.imagePrompt when scene rebuild fails. */
+function resolveFrameImagenPrompts(params: {
+  segment: AudioSegment
+  subjectBible: VisualSubject[]
+  episodeTitle: string
+  style?: string
+  localeContext?: string
+  sourcesVerified?: unknown
+}): FrameImagenPrompts | null {
+  const sceneText = resolveSegmentSceneText(params.segment, params.sourcesVerified)
+  const fromScene = buildFrameImagenPrompts({
+    sceneText,
+    segment: params.segment,
+    subjectBible: params.subjectBible,
+    episodeTitle: params.episodeTitle,
+    style: params.style,
+    localeContext: params.localeContext,
+  })
+  if (fromScene) return fromScene
+
+  const stored = params.segment.imagePrompt?.trim()
+  if (!stored) {
+    console.warn('[animatic] frame missing scene and imagePrompt', {
+      role: params.segment.role,
+      illustrationGroupId: params.segment.illustrationGroupId,
+      titleSlide: params.segment.titleSlide,
+    })
+    return null
+  }
+
+  const core =
+    extractImagenSceneCore(stored).trim() ||
+    sceneText ||
+    params.episodeTitle.trim() ||
+    params.segment.text?.replace(/\[[^\]]+\]/g, '').trim() ||
+    ''
+  const frameSubjects = resolveFrameSubjects(
+    params.subjectBible,
+    core,
+    params.segment.text,
+    params.episodeTitle
+  )
+  return {
+    stored,
+    lean: promptForImagenRender(stored, {
+      style: params.style,
+      localeContext: params.localeContext,
+      subjects: frameSubjects,
+    }),
+    frameSubjects,
+  }
 }
 
 async function mapPool<T, R>(
@@ -270,25 +371,77 @@ async function mapPool<T, R>(
 }
 
 /** Render an Imagen 16:9 frame from a prompt and upload it, with retries. */
+interface RenderImageOptions {
+  subjectReferences?: ImagenSubjectReference[]
+  skipSubjectRefs?: boolean
+  onImagenAttempt?: (result: ImagenGenerateResult) => void
+  style?: string
+  localeContext?: string
+  frameSubjects?: VisualSubject[]
+}
+
 async function renderImageFromPrompt(
   prompt: string,
   title: string,
   index: number,
+  options?: RenderImageOptions,
   attempt = 1
 ): Promise<string | null> {
-  const buffer = await vertexGenerateImage(prompt, {
-    aspectRatio: '16:9',
-    personGeneration: 'allow_adult',
+  const subjectRefs = options?.skipSubjectRefs ? undefined : options?.subjectReferences
+  const hadRefs = (subjectRefs?.length ?? 0) > 0
+
+  const leanPrompt = promptForImagenRender(prompt, {
+    style: options?.style,
+    localeContext: options?.localeContext,
+    subjects: options?.frameSubjects,
   })
-  if (!buffer) {
+  const sceneCore = extractImagenSceneCore(prompt).trim() || leanPrompt
+
+  const generate = async (promptText: string, skipRefs: boolean) => {
+    const result = await vertexGenerateImage(promptText, {
+      aspectRatio: '16:9',
+      personGeneration: 'allow_adult',
+      subjectReferences: skipRefs ? undefined : subjectRefs,
+      skipSubjectRefs: skipRefs || options?.skipSubjectRefs,
+    })
+    options?.onImagenAttempt?.(result)
+    return result
+  }
+
+  let imagenPrompt = leanPrompt
+  let result = await generate(imagenPrompt, Boolean(options?.skipSubjectRefs))
+
+  if (!result.buffer && hadRefs && !options?.skipSubjectRefs) {
+    const plainPrompt = stripSubjectReferenceTags(imagenPrompt)
+    console.warn(
+      `[animatic] frame ${index}: subject customization failed (model=${result.model}), falling back to Imagen 4`
+    )
+    result = await generate(plainPrompt, true)
+    imagenPrompt = plainPrompt
+  }
+
+  if (!result.buffer && sceneCore && sceneCore !== imagenPrompt) {
+    console.warn(`[animatic] frame ${index}: retrying with scene core only`)
+    result = await generate(sceneCore.slice(0, 900), true)
+  }
+
+  if (!result.buffer) {
     if (attempt < 3) {
       await sleep(attempt * 5000)
-      return renderImageFromPrompt(prompt, title, index, attempt + 1)
+      return renderImageFromPrompt(prompt, title, index, options, attempt + 1)
     }
+    console.error(
+      `[animatic] Imagen returned no image for frame ${index} (model=${result.model}, refs=${hadRefs}, prompt ${imagenPrompt.length} chars, title: ${title.slice(0, 40)}, error: ${result.error ?? 'unknown'})`
+    )
     return null
   }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
+  const buffer = result.buffer
+
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[animatic] BLOB_READ_WRITE_TOKEN not configured — cannot store frame image')
+    return null
+  }
 
   try {
     const slug = title.slice(0, 24).replace(/\W/g, '-')
@@ -308,7 +461,15 @@ async function renderSegmentImage(
   segment: AudioSegment,
   title: string,
   index: number,
-  studioImage: string
+  studioImage: string,
+  subjectRefs?: ResolvedSubjectReference[],
+  renderImageOptions?: Pick<
+    RenderImageOptions,
+    'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext' | 'frameSubjects'
+  > & {
+    subjectBible?: VisualSubject[]
+    sourcesVerified?: unknown
+  }
 ): Promise<string | null> {
   if (roleUsesHostsImage(segment.role)) {
     return studioImage
@@ -323,25 +484,73 @@ async function renderSegmentImage(
     return segment.imageUrl ?? null
   }
 
-  // Use the stored, style- and locale-aware prompt built at compile time. Only
-  // rebuild from the raw text (without locale context) as a last resort so we
-  // never lose localization the way the old render path did.
-  const prompt = segment.imagePrompt?.trim() || (segment.text ? buildAnimaticPrompt(segment.text) : null)
+  const subjectBible = renderImageOptions?.subjectBible ?? []
+  const built = resolveFrameImagenPrompts({
+    segment,
+    subjectBible,
+    episodeTitle: title,
+    style: renderImageOptions?.style,
+    localeContext: renderImageOptions?.localeContext,
+    sourcesVerified: renderImageOptions?.sourcesVerified,
+  })
 
-  if (!prompt) return null
+  if (!built) return null
 
-  return renderImageFromPrompt(prompt, title, index)
+  const sceneText = resolveSegmentSceneText(segment, renderImageOptions?.sourcesVerified)
+  const frameRefs =
+    subjectRefs && !renderImageOptions?.skipSubjectRefs
+      ? referencesForPrompt(`${built.stored} ${sceneText}`, subjectRefs)
+      : []
+  const imagenPrompt =
+    frameRefs.length > 0 ? applySubjectReferenceTags(built.lean, frameRefs) : built.lean
+
+  return renderImageFromPrompt(imagenPrompt, title, index, {
+    subjectReferences: frameRefs.map((ref) => ref.imagenRef),
+    skipSubjectRefs: renderImageOptions?.skipSubjectRefs,
+    onImagenAttempt: renderImageOptions?.onImagenAttempt,
+    style: renderImageOptions?.style,
+    localeContext: renderImageOptions?.localeContext,
+    frameSubjects: built.frameSubjects,
+  })
+}
+
+export type RenderAnimaticPhase = 'images' | 'videos'
+
+export interface RenderFrameCounts {
+  imageGroups: number
+  videoClips: number
 }
 
 interface RenderStoryAnimaticOptions {
+  /** Which News render passes to run. Defaults to images + videos for News. */
+  phases?: RenderAnimaticPhase[]
+  /** Skip Imagen 3 subject-reference path (Imagen 4 text-only). */
+  skipSubjectRefs?: boolean
   /**
-   * Invoked exactly once, just before any NEW frames are generated, with the
-   * count of frames that still need rendering. Lets the caller charge credits
-   * only when real work will happen (a re-open of an existing animatic renders
-   * nothing and must not be charged). Throwing here aborts before any cost is
-   * incurred — used to enforce credit balance.
+   * Invoked exactly once, just before any NEW frames are generated, with counts
+   * of image groups and video clips that still need rendering. Throwing aborts
+   * before any generation cost is incurred — used to enforce credit balance.
    */
-  onWillRender?: (frameCount: number) => Promise<void>
+  onWillRender?: (counts: RenderFrameCounts) => Promise<void>
+}
+
+function createRenderDiagnostics(): AnimaticLastRender {
+  return {
+    at: new Date().toISOString(),
+    model: 'imagen-4.0-generate-001',
+    usedSubjectRefs: false,
+    failedGroups: 0,
+  }
+}
+
+function imagenAttemptHandler(diag: AnimaticLastRender): (result: ImagenGenerateResult) => void {
+  return (result) => {
+    diag.model = result.model
+    if (result.usedSubjectRefs) diag.usedSubjectRefs = true
+    if (result.error && !diag.sampleError) {
+      diag.sampleError = result.raiFilteredReason ?? result.error
+    }
+  }
 }
 
 export async function renderStoryAnimatic(
@@ -352,6 +561,10 @@ export async function renderStoryAnimatic(
   rendered: number
   failed: number
   newlyRendered: number
+  newlyRenderedImages: number
+  newlyRenderedVideos: number
+  framesIncomplete: boolean
+  pendingCounts: AnimaticPendingCounts
 }> {
   const story = await prisma.story.findUnique({ where: { id: storyId } })
   if (!story) {
@@ -375,9 +588,64 @@ export async function renderStoryAnimatic(
     throw new Error('ANIMATIC_UNAVAILABLE')
   }
 
+  const token = await getVertexAccessToken()
+  if (!token) {
+    throw new Error('Vertex AI credentials unavailable — cannot render illustrations')
+  }
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error('BLOB_READ_WRITE_TOKEN not configured — cannot store illustrations')
+  }
+
   const isNews = (meta.contentType ?? show.contentType) === 'News'
+  const skipSubjectRefs = options?.skipSubjectRefs ?? false
+  const subjectRefs = skipSubjectRefs
+    ? []
+    : await resolveSubjectReferences(readVisualSubjectBible(story.sourcesVerified))
+  const renderDiag = createRenderDiagnostics()
+  const onImagenAttempt = imagenAttemptHandler(renderDiag)
+  const metaRecord = (story.sourcesVerified ?? {}) as {
+    countryPerspective?: string
+    category?: string
+  }
+  const localeContext = buildAudienceVisualContext({
+    language: story.language ?? undefined,
+    countryPerspective: metaRecord.countryPerspective,
+  })
+  const renderStyle = frameIllustrationStyle()
+  const imageRenderOpts = {
+    skipSubjectRefs,
+    onImagenAttempt,
+    style: renderStyle,
+    localeContext,
+  }
+
   if (isNews) {
-    return renderNewsAnimatic(storyId, story, segments, options)
+    return renderNewsAnimatic(
+      storyId,
+      story,
+      segments,
+      options,
+      subjectRefs,
+      renderDiag,
+      imageRenderOpts,
+      renderStyle,
+      localeContext
+    )
+  }
+
+  const phases = resolveRenderPhases(false, options)
+  if (!phases.has('images')) {
+    const pendingCounts = countPendingAnimaticFrames(segments, { isNews: false })
+    return {
+      segments,
+      rendered: segments.length,
+      failed: 0,
+      newlyRendered: 0,
+      newlyRenderedImages: 0,
+      newlyRenderedVideos: 0,
+      framesIncomplete: pendingCounts.total > 0,
+      pendingCounts,
+    }
   }
 
   const toRender = segments
@@ -391,7 +659,7 @@ export async function renderStoryAnimatic(
   ).length
 
   if (pendingFrames > 0 && options?.onWillRender) {
-    await options.onWillRender(pendingFrames)
+    await options.onWillRender({ imageGroups: pendingFrames, videoClips: 0 })
   }
 
   const renderedUrls = await mapPool(toRender, RENDER_CONCURRENCY, async ({ segment, index }) => {
@@ -399,7 +667,19 @@ export async function renderStoryAnimatic(
     if (existing && !existing.startsWith('/hosts/')) {
       return { index, url: existing, fresh: false }
     }
-    const url = await renderSegmentImage(segment, story.title, index, studioImage)
+    const subjectBible = readVisualSubjectBible(story.sourcesVerified)
+    const url = await renderSegmentImage(
+      segment,
+      story.title,
+      index,
+      studioImage,
+      subjectRefs,
+      {
+        ...imageRenderOpts,
+        subjectBible,
+        sourcesVerified: story.sourcesVerified,
+      }
+    )
     return { index, url, fresh: true }
   })
 
@@ -416,7 +696,12 @@ export async function renderStoryAnimatic(
     const match = renderedUrls.find((item) => item.index === index)
     if (match?.url) {
       rendered += 1
-      return { ...segment, imageUrl: match.url }
+      const sceneText = resolveSegmentSceneText(segment, story.sourcesVerified)
+      return {
+        ...segment,
+        imageUrl: match.url,
+        ...(sceneText && !segment.scene ? { scene: sceneText } : {}),
+      }
     }
 
     if (segment.imageUrl) {
@@ -433,78 +718,274 @@ export async function renderStoryAnimatic(
       ? { ...(story.sourcesVerified as Record<string, unknown>) }
       : {}
 
+  renderDiag.failedGroups = failed
+  renderDiag.at = new Date().toISOString()
+
+  const pendingCounts = await persistStorySegments(storyId, sourcesVerified, updated, false, {
+    rendered,
+    failed,
+    lastRender: renderDiag,
+  })
+
+  return {
+    segments: updated,
+    rendered,
+    failed,
+    newlyRendered,
+    newlyRenderedImages: newlyRendered,
+    newlyRenderedVideos: 0,
+    framesIncomplete: pendingCounts.total > 0,
+    pendingCounts,
+  }
+}
+
+function resolveRenderPhases(isNews: boolean, options?: RenderStoryAnimaticOptions): Set<RenderAnimaticPhase> {
+  if (options?.phases?.length) return new Set(options.phases)
+  return new Set<RenderAnimaticPhase>(['images'])
+}
+
+function isRealIllustrationUrl(url?: string | null): boolean {
+  return Boolean(url) && !url!.startsWith('/hosts/')
+}
+
+function animaticStatusPatch(
+  segments: AudioSegment[],
+  isNews: boolean,
+  renderSummary?: { rendered: number; failed: number; lastRender?: AnimaticLastRender }
+): Record<string, unknown> {
+  const pending = countPendingAnimaticFrames(segments, { isNews })
+  return {
+    animaticFramesIncomplete: pending.total > 0,
+    animaticPendingCounts: {
+      imageGroups: pending.imageGroups,
+      videoClips: pending.videoClips,
+    },
+    ...(renderSummary
+      ? {
+          animaticRenderSummary: {
+            rendered: renderSummary.rendered,
+            failed: renderSummary.failed,
+            at: new Date().toISOString(),
+          },
+          ...(renderSummary.lastRender ? { animaticLastRender: renderSummary.lastRender } : {}),
+        }
+      : {}),
+  }
+}
+
+async function persistStorySegments(
+  storyId: string,
+  sourcesVerified: Record<string, unknown>,
+  segments: AudioSegment[],
+  isNews: boolean,
+  renderSummary?: { rendered: number; failed: number; lastRender?: AnimaticLastRender }
+): Promise<AnimaticPendingCounts> {
+  const pending = countPendingAnimaticFrames(segments, { isNews })
   await prisma.story.update({
     where: { id: storyId },
     data: {
       sourcesVerified: {
         ...sourcesVerified,
-        audioSegments: serializeAudioSegments(updated) as object[],
+        audioSegments: serializeAudioSegments(segments) as object[],
+        ...animaticStatusPatch(segments, isNews, renderSummary),
       },
     },
   })
-
-  return { segments: updated, rendered, failed, newlyRendered }
+  return pending
 }
 
 /**
- * News render path: every frame is an illustration (no host/studio frames) and
- * frames sharing an `illustrationGroupId` reuse ONE generated image (so an
- * illustration can span several consecutive frames). We render exactly one
- * Imagen image per group, charging only for groups that still need one.
+ * News render path: every frame is an Imagen still illustration (no host/studio
+ * frames, no Veo video). Frames sharing an `illustrationGroupId` reuse ONE
+ * generated image (typically one group per script frame).
  */
 async function renderNewsAnimatic(
   storyId: string,
-  story: { title: string; sourcesVerified: unknown },
+  story: {
+    title: string
+    language?: string | null
+    geoScope?: string | null
+    geoCountry?: string | null
+    sourcesVerified: unknown
+  },
   segments: AudioSegment[],
-  options?: RenderStoryAnimaticOptions
-): Promise<{ segments: AudioSegment[]; rendered: number; failed: number; newlyRendered: number }> {
+  options: RenderStoryAnimaticOptions | undefined,
+  subjectRefs: ResolvedSubjectReference[],
+  renderDiag: AnimaticLastRender,
+  imageRenderOpts: Pick<
+    RenderImageOptions,
+    'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext'
+  >,
+  renderStyle?: string,
+  localeContext?: string
+): Promise<{
+  segments: AudioSegment[]
+  rendered: number
+  failed: number
+  newlyRendered: number
+  newlyRenderedImages: number
+  newlyRenderedVideos: number
+  framesIncomplete: boolean
+  pendingCounts: AnimaticPendingCounts
+}> {
+  const phases = resolveRenderPhases(true, options)
+  const runImages = phases.has('images')
+  const subjectBible = readVisualSubjectBible(story.sourcesVerified)
+
   const groupKeyFor = (segment: AudioSegment, index: number): string =>
     segment.illustrationGroupId || `__seg-${index}`
 
-  const isRealImage = (url?: string | null): boolean =>
-    Boolean(url) && !url!.startsWith('/hosts/')
-
-  interface Group {
+  interface ImageGroup {
     indices: number[]
     prompt: string | null
+    leanPrompt: string | null
+    sceneText: string | null
+    frameSubjects: VisualSubject[]
     existing: string | null
   }
-  const groups = new Map<string, Group>()
+  const imageGroups = new Map<string, ImageGroup>()
 
   segments.forEach((segment, index) => {
     if (segment.role === 'music' || segment.frameKind === 'host') return
     const key = groupKeyFor(segment, index)
-    const entry: Group = groups.get(key) ?? { indices: [], prompt: null, existing: null }
+    const entry: ImageGroup = imageGroups.get(key) ?? {
+      indices: [],
+      prompt: null,
+      leanPrompt: null,
+      sceneText: null,
+      frameSubjects: [],
+      existing: null,
+    }
     entry.indices.push(index)
     if (!entry.prompt) {
-      entry.prompt =
-        segment.imagePrompt?.trim() || (segment.text ? buildAnimaticPrompt(segment.text) : null)
+      const resolved = resolveFrameImagenPrompts({
+        segment,
+        subjectBible,
+        episodeTitle: story.title,
+        style: renderStyle,
+        localeContext,
+        sourcesVerified: story.sourcesVerified,
+      })
+      if (resolved) {
+        entry.prompt = resolved.stored
+        entry.leanPrompt = resolved.lean
+        entry.sceneText = resolveSegmentSceneText(segment, story.sourcesVerified)
+        entry.frameSubjects = resolved.frameSubjects
+      }
     }
-    if (!entry.existing && isRealImage(segment.imageUrl)) entry.existing = segment.imageUrl!
-    groups.set(key, entry)
+    if (!entry.existing && isRealIllustrationUrl(segment.imageUrl)) {
+      entry.existing = segment.imageUrl!
+    }
+    imageGroups.set(key, entry)
   })
 
-  const groupList = Array.from(groups.entries())
+  const imageGroupList = Array.from(imageGroups.entries())
 
-  // Only groups lacking a real illustration incur generation cost.
-  const pendingGroups = groupList.filter(([, group]) => !group.existing && group.prompt).length
-  if (pendingGroups > 0 && options?.onWillRender) {
-    await options.onWillRender(pendingGroups)
+  if (runImages && subjectBible.length > 0) {
+    for (const [, group] of imageGroupList) {
+      if (group.existing || !group.prompt) continue
+      const leadIndex = group.indices[0]
+      if (leadIndex == null) continue
+      const leadSegment = segments[leadIndex]
+      if (!leadSegment) continue
+      if (
+        !scenePromptNeedsRefinement(
+          group.prompt,
+          subjectBible,
+          leadSegment.text,
+          story.title
+        )
+      ) {
+        continue
+      }
+
+      const refinedScene = await refineImagenScenePrompt({
+        storedPrompt: group.prompt,
+        spokenDialogue: leadSegment.text,
+        episodeTitle: story.title,
+        subjects: subjectBible,
+      })
+      const wrapped = buildImagenScenePrompt(refinedScene, {
+        subjectBible: resolveFrameSubjects(
+          subjectBible,
+          refinedScene,
+          leadSegment.text,
+          story.title
+        ),
+        spokenDialogue: leadSegment.text,
+        style: renderStyle,
+        localeContext,
+        episodeTitle: story.title,
+      })
+      if (wrapped === group.prompt) continue
+
+      group.prompt = wrapped
+      group.frameSubjects = resolveFrameSubjects(
+        subjectBible,
+        refinedScene,
+        leadSegment.text,
+        story.title
+      )
+      group.leanPrompt = promptForImagenRender(wrapped, {
+        style: renderStyle,
+        localeContext,
+        subjects: group.frameSubjects,
+      })
+      group.sceneText = refinedScene
+      for (const index of group.indices) {
+        segments[index] = {
+          ...segments[index]!,
+          imagePrompt: wrapped,
+          scene: refinedScene,
+        }
+      }
+    }
   }
 
-  const renderedGroups = await mapPool(groupList, RENDER_CONCURRENCY, async ([key, group], i) => {
-    if (group.existing) return { key, url: group.existing, fresh: false }
-    if (!group.prompt) return { key, url: null, fresh: false }
-    const url = await renderImageFromPrompt(group.prompt, story.title, group.indices[0] ?? i)
-    return { key, url, fresh: true }
-  })
+  const pendingGroups = runImages
+    ? imageGroupList.filter(([, group]) => !group.existing && group.prompt && group.leanPrompt)
+        .length
+    : 0
+
+  if (pendingGroups > 0 && options?.onWillRender) {
+    await options.onWillRender({ imageGroups: pendingGroups, videoClips: 0 })
+  }
+
+  const renderedGroups = runImages
+    ? await mapPool(imageGroupList, RENDER_CONCURRENCY, async ([key, group], i) => {
+        if (group.existing) return { key, url: group.existing, fresh: false }
+        if (!group.prompt || !group.leanPrompt) return { key, url: null, fresh: false }
+        const frameRefs =
+          subjectRefs.length > 0 && !imageRenderOpts.skipSubjectRefs
+            ? referencesForPrompt(`${group.prompt} ${group.sceneText ?? ''}`, subjectRefs)
+            : []
+        const imagenPrompt =
+          frameRefs.length > 0
+            ? applySubjectReferenceTags(group.leanPrompt, frameRefs)
+            : group.leanPrompt
+        const url = await renderImageFromPrompt(imagenPrompt, story.title, group.indices[0] ?? i, {
+          subjectReferences: frameRefs.map((ref) => ref.imagenRef),
+          skipSubjectRefs: imageRenderOpts.skipSubjectRefs,
+          onImagenAttempt: imageRenderOpts.onImagenAttempt,
+          style: renderStyle,
+          localeContext,
+          frameSubjects: group.frameSubjects,
+        })
+        return { key, url, fresh: true }
+      })
+    : []
 
   const urlByGroup = new Map(renderedGroups.map((item) => [item.key, item.url]))
-  const newlyRendered = renderedGroups.filter((item) => item.fresh && item.url).length
-  // The closing music frame reuses the final illustration so News never shows a
-  // host/studio frame.
+  const sceneByGroup = new Map(
+    imageGroupList.map(([key, group]) => [key, group.sceneText] as const)
+  )
+  const newlyRenderedImages = renderedGroups.filter((item) => item.fresh && item.url).length
+  const newlyRendered = newlyRenderedImages
+
   const lastIllustration =
-    [...renderedGroups].reverse().find((item) => item.url)?.url ?? null
+    [...renderedGroups].reverse().find((item) => item.url)?.url ??
+    segments.map((s) => s.imageUrl).find(isRealIllustrationUrl) ??
+    null
 
   let rendered = 0
   let failed = 0
@@ -513,13 +994,23 @@ async function renderNewsAnimatic(
       rendered += 1
       return lastIllustration ? { ...segment, imageUrl: lastIllustration } : segment
     }
+
     const key = groupKeyFor(segment, index)
     const url = urlByGroup.get(key)
+    const groupScene = sceneByGroup.get(key)
     if (url) {
       rendered += 1
-      return { ...segment, imageUrl: url }
+      return {
+        ...segment,
+        imageUrl: url,
+        ...(groupScene && !segment.scene ? { scene: groupScene } : {}),
+      }
     }
     if (segment.imageUrl) {
+      rendered += 1
+      return segment
+    }
+    if (segment.role === 'intro' || segment.role === 'cta' || segment.role === 'disclaimer') {
       rendered += 1
       return segment
     }
@@ -532,15 +1023,23 @@ async function renderNewsAnimatic(
       ? { ...(story.sourcesVerified as Record<string, unknown>) }
       : {}
 
-  await prisma.story.update({
-    where: { id: storyId },
-    data: {
-      sourcesVerified: {
-        ...sourcesVerified,
-        audioSegments: serializeAudioSegments(updated) as object[],
-      },
-    },
+  renderDiag.failedGroups = failed
+  renderDiag.at = new Date().toISOString()
+
+  const pendingCounts = await persistStorySegments(storyId, sourcesVerified, updated, true, {
+    rendered,
+    failed,
+    lastRender: renderDiag,
   })
 
-  return { segments: updated, rendered, failed, newlyRendered }
+  return {
+    segments: updated,
+    rendered,
+    failed,
+    newlyRendered,
+    newlyRenderedImages,
+    newlyRenderedVideos: 0,
+    framesIncomplete: pendingCounts.total > 0,
+    pendingCounts,
+  }
 }

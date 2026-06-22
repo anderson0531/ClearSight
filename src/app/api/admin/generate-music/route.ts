@@ -36,6 +36,42 @@ const MUSIC_SPECS = [
   },
 ] as const
 
+const BED_SPECS = [
+  {
+    key: 'introBed' as const,
+    backgroundKey: 'intro' as const,
+    pathname: 'clearsight/music/bed-intro.wav',
+    prompt:
+      'Premium news broadcast underscore bed, 25 seconds, uplifting modern orchestral with subtle electronic pulse, seamless loop-friendly, professional and engaging, instrumental only, no vocals',
+    negativePrompt: 'vocals, lyrics, speech, singing, narration, dissonant',
+    seed: 42101,
+    targetSeconds: 25,
+    fallbackDuration: 25,
+  },
+  {
+    key: 'contentBed' as const,
+    backgroundKey: 'content' as const,
+    pathname: 'clearsight/music/bed-content.wav',
+    prompt:
+      'Neutral news podcast underscore bed, 30 seconds, calm steady rhythm, soft strings and subtle pulse, seamless loop for continuous background, instrumental only, no vocals',
+    negativePrompt: 'vocals, lyrics, speech, singing, narration, loud, chaotic',
+    seed: 42102,
+    targetSeconds: 30,
+    fallbackDuration: 30,
+  },
+  {
+    key: 'outroBed' as const,
+    backgroundKey: 'outro' as const,
+    pathname: 'clearsight/music/bed-outro.wav',
+    prompt:
+      'Warm resolving news broadcast outro bed, 30 seconds, gentle orchestral fade, reflective and authoritative, seamless loop-friendly, instrumental only, no vocals',
+    negativePrompt: 'vocals, lyrics, speech, singing, narration, abrupt',
+    seed: 42103,
+    targetSeconds: 30,
+    fallbackDuration: 30,
+  },
+] as const
+
 function isAuthorized(request: Request): boolean {
   const secret = process.env.ADMIN_SECRET
   if (!secret) return false
@@ -54,7 +90,7 @@ export async function POST(request: Request) {
   }
 
   const results = await Promise.all(
-    MUSIC_SPECS.map(async (spec) => {
+    [...MUSIC_SPECS, ...BED_SPECS].map(async (spec) => {
       const buffer = await vertexGenerateMusic(spec.prompt, {
         negativePrompt: spec.negativePrompt,
         seed: spec.seed,
@@ -100,12 +136,21 @@ export async function POST(request: Request) {
   const sting = results.find((item) => item.key === 'sting')
   const outro = results.find((item) => item.key === 'outro')
 
+  const introBed = results.find((item) => item.key === 'introBed')
+  const contentBed = results.find((item) => item.key === 'contentBed')
+  const outroBed = results.find((item) => item.key === 'outroBed')
+
   return NextResponse.json({
     message: 'Music assets uploaded. Paste into src/lib/music-assets.ts',
     MUSIC_ASSETS: {
       intro: intro && 'url' in intro ? { url: intro.url, durationSeconds: intro.durationSeconds } : null,
       sting: sting && 'url' in sting ? { url: sting.url, durationSeconds: sting.durationSeconds } : null,
       outro: outro && 'url' in outro ? { url: outro.url, durationSeconds: outro.durationSeconds } : null,
+    },
+    BACKGROUND_MUSIC: {
+      intro: introBed && 'url' in introBed ? introBed.url : null,
+      content: contentBed && 'url' in contentBed ? contentBed.url : null,
+      outro: outroBed && 'url' in outroBed ? outroBed.url : null,
     },
     results,
   })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, ThumbsUp, ThumbsDown, Trash2, Loader2, Check } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
@@ -58,6 +58,7 @@ export function StoryEngagementBar({
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const userTouchedRef = useRef(false)
 
   // Count one view per browser session per story, then reconcile counts with
   // the server (so another tab's votes/views are reflected on load).
@@ -76,7 +77,19 @@ export function StoryEngagementBar({
         const res = await fetch(`/api/stories/${storyId}/reactions`)
         if (!res.ok || cancelled) return
         const data = (await res.json()) as ReactionState
-        if (!cancelled) setState(data)
+        if (cancelled) return
+        if (userTouchedRef.current) {
+          setState((current) => ({
+            ...data,
+            myReaction: data.myReaction !== 0 ? data.myReaction : current.myReaction,
+            myReason: data.myReason ?? current.myReason,
+          }))
+        } else {
+          setState(data)
+          if (data.myReaction !== 0 && data.myReason) {
+            setReasonOpen(false)
+          }
+        }
       } catch {
         /* best-effort */
       }
@@ -90,6 +103,7 @@ export function StoryEngagementBar({
 
   const vote = async (value: 1 | -1) => {
     if (voting) return
+    userTouchedRef.current = true
     setVoting(true)
     setError(null)
 
@@ -104,13 +118,15 @@ export function StoryEngagementBar({
       const res = await fetch(`/api/stories/${storyId}/reactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value, reason: null }),
+        body: JSON.stringify({ value }),
       })
       if (!res.ok) throw new Error('vote failed')
       const data = (await res.json()) as ReactionState
       setState(data)
+      setReasonOpen(data.myReaction !== 0 && !data.myReason)
     } catch {
       setState(prev)
+      setReasonOpen(prev.myReaction !== 0 && !prev.myReason)
     } finally {
       setVoting(false)
     }
@@ -119,6 +135,7 @@ export function StoryEngagementBar({
   // Pick (or toggle off) a reason for the current rating. Single-select.
   const chooseReason = async (reasonId: string) => {
     if (savingReason || state.myReaction === 0) return
+    userTouchedRef.current = true
     setSavingReason(true)
     setError(null)
 

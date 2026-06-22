@@ -93,6 +93,7 @@ export async function POST(
       reason?: string | null
     }
     const requested = normalizeReaction(body.value)
+    const reasonProvided = Object.prototype.hasOwnProperty.call(body, 'reason')
 
     const state = await prisma.$transaction(async (tx) => {
       const existing = await tx.storyReaction.findUnique({
@@ -100,8 +101,14 @@ export async function POST(
         select: { value: true, reason: true },
       })
       const prev = normalizeReaction(existing?.value)
-      // Re-submitting the current vote toggles it off.
-      const next: ReactionValue = requested === prev ? 0 : requested
+      // Re-submitting the current vote toggles it off — unless the client is
+      // only updating the optional feedback reason (same polarity + reason field).
+      const next: ReactionValue =
+        reasonProvided && requested === prev && requested !== 0
+          ? prev
+          : requested === prev
+            ? 0
+            : requested
       // Keep the reason only if it is valid for the resulting vote. When the
       // vote is unchanged the client is just updating (or clearing) the reason.
       const nextReason = resolveReason(next, body.reason)

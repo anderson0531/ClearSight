@@ -18,6 +18,11 @@ interface MediaGridProps {
   loadingStage?: string | null
   loadingPercent?: number
   onGenerate?: (story: StoryCard) => void
+  emptyAction?: React.ReactNode
+  /** Max cards to render (default 10). */
+  maxItems?: number
+  /** i18n key for the ungenerated generate CTA (default generateBriefing). */
+  generateLabelKey?: MessageKey
 }
 
 const FETCH_STAGE_LABELS: Record<string, MessageKey> = {
@@ -52,6 +57,9 @@ export function MediaGrid({
   loadingStage,
   loadingPercent,
   onGenerate,
+  emptyAction,
+  maxItems = 10,
+  generateLabelKey = 'generateBriefing',
 }: MediaGridProps) {
   const t = useTranslations()
   const playTrack = useAudioQueue((s) => s.playTrack)
@@ -120,13 +128,14 @@ export function MediaGrid({
       <div className="fade-in glass-panel rounded-xl p-8 text-center sm:p-12">
         <p className="text-[var(--foreground)]">{t('emptyTitle')}</p>
         <p className="mt-1 text-sm text-[var(--muted-strong)]">{t('emptySubtitle')}</p>
+        {emptyAction ? <div className="mt-4 flex justify-center">{emptyAction}</div> : null}
       </div>
     )
   }
 
   return (
     <div className="grid grid-cols-2 gap-3 xs:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-      {stories.slice(0, 10).map((story) => {
+      {stories.slice(0, maxItems).map((story) => {
         const isActive = currentTrack?.id === story.id
         const isUngenerated = story.requiresGeneration
 
@@ -151,7 +160,7 @@ export function MediaGrid({
                     onClick={() => onGenerate(story)}
                     className="cta-briefing w-full justify-center"
                   >
-                    {t('generateBriefing')}
+                    {t(generateLabelKey)}
                   </button>
                   <span className="text-center text-[10px] font-medium text-[var(--accent-credit)]">
                     {t('oneCredit')}

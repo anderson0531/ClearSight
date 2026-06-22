@@ -1,8 +1,9 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
-import { buildTaxonomyKey, CONTENT_CATEGORIES, typeForCategory, type ContentType } from '@/lib/taxonomy'
+import { buildTaxonomyKey, categoriesForContentType, CONTENT_CATEGORIES, GEO_SCOPES, isContentType, isTopCategory, normalizeGeoTags, typeForCategory, type ContentType, type GeoScope, type GeoTags } from '@/lib/taxonomy'
 import { normalizeTitle } from '@/lib/normalize-title'
 import { getLocaleByEnglishName } from '@/i18n/locales'
+import { evaluatePreviousClaims } from '@/lib/accountability-ledger'
 import {
   getVertexAccessToken,
   vertexGenerateGrounded,
@@ -11,23 +12,38 @@ import {
   VERTEX_FAST_MODEL,
   type GroundedSource,
 } from '@/lib/vertex'
+import {
+  deserializeEpisodeScriptDraft,
+  serializeEpisodeScriptDraft,
+} from '@/lib/episode-script-draft'
 import { TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
-import { reviewPodcastScript } from '@/lib/editorial-review'
 import { formatBriefingAnalysisBlock, formatPodcastAnalysisBlock } from '@/lib/analysis-frameworks'
 import {
-  buildAnimaticPrompt,
-  buildLocaleVisualContext,
+  buildImagenScenePrompt,
+  buildAudienceVisualContext,
   buildTitleSlidePrompt,
-  generateLineImagePrompts,
-  illustratesGenerously,
-  type FrameDecision,
+  frameIllustrationStyle,
 } from '@/lib/animatic'
+import {
+  extractVisualSubjectBible,
+  formatSubjectBibleForPrompt,
+  formatSubjectBibleSceneRules,
+  NO_TEXT_SPELLING_GUARDRAILS,
+  parseVisualSubjectBible,
+  promptForImagenRender,
+  readVisualSubjectBible,
+  resolveFrameSubjects,
+  validateAndRepairFrameScenes,
+  type VisualSubject,
+  type VisualSubjectBible,
+} from '@/lib/visual-subjects'
+import { EPISODE_THUMBNAIL_PATH, isStorySpecificThumbnail, needsEpisodeThumbnail } from '@/lib/episode-thumbnail'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
 import { MUSIC_MOODS, normalizeMusicMood, OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
-import { categoryVisualStyle, resolveShow, showById, type Show } from '@/lib/shows'
+import { resolveShow, showById, type Show } from '@/lib/shows'
 import type { HostProfile } from '@/lib/hosts'
-import type { AudioSegment, AudioSegmentRole, FrameKind, MusicMood } from '@/types/story'
+import type { AudioSegment, AudioSegmentRole, FrameKind, MusicMood, VisualMedium } from '@/types/story'
 
 export type GenerationStage = 'analysis' | 'draft' | 'editorial' | 'podcast' | 'saving' | 'done'
 
@@ -53,8 +69,12 @@ export interface GenerateStoryInput {
   geoLocal?: string
   generationId: string
   questions?: string[]
+  /** Link to an existing story if this is an update briefing */
+  originalStoryId?: string
   /** Creator's approved podcast description; treated as the core brief. */
   description?: string
+  /** Optional audience country lens for script narration (not research geo). */
+  countryPerspective?: string | null
 }
 
 interface TruthLedgerResult {
@@ -120,17 +140,27 @@ interface PodcastTurn {
   illustrate?: boolean
   /** Imagen scene prompt authored by the structured script (News). */
   scene?: string
-  /**
-   * Span-group key from the script: consecutive turns sharing this key reuse a
-   * single illustration. Resolved to a stable `illustrationGroupId` downstream.
-   */
+  /** 1-based index in the episode visual storyboard (News). */
+  visualBeat?: number
+  /** @deprecated Legacy Veo field — News uses Imagen stills only. */
   spanGroup?: string
+  /** @deprecated Legacy Veo field — News uses Imagen stills only. */
+  visualMedium?: VisualMedium
+  /** @deprecated Legacy Veo field — News uses Imagen stills only. */
+  videoScene?: string
 }
 
-interface PodcastScript {
+export interface PodcastClaim {
+  claim_id: string
+  assertion: string
+  assigned_probability: number
+}
+
+export interface PodcastScript {
   directorNotes: string
   turns: PodcastTurn[]
   wordCount: number
+  claims?: PodcastClaim[]
 }
 
 interface EpisodeBookends {
@@ -147,10 +177,16 @@ interface PreparedLine {
   role: AudioSegmentRole
   imageUrl: string | null
   imagePrompt: string | null
+  /** One-line scene sentence used for illustration (from script or repair). */
+  scene?: string | null
   frameKind: FrameKind | null
   musicMood: MusicMood | null
   illustrationGroupId: string | null
   titleSlide: boolean
+  /** True when this line continues a prior TTS chunk of the same spoken turn. */
+  ttsContinuation?: boolean
+  visualMedium?: VisualMedium
+  videoPrompt?: string | null
 }
 
 /** Options for building per-line illustration prompts inline (News path). */
@@ -158,12 +194,20 @@ interface PrepareLineOptions {
   style?: string
   localeContext?: string
   title?: string
+  subjectBible?: VisualSubject[]
 }
 
 // Kept deliberately low: TTS shares a per-minute, per-project quota
 // (gemini-2.5-flash-tts). Fewer simultaneous requests means we burst less and
 // trip RESOURCE_EXHAUSTED (429) far less often, at a small cost to wall time.
-const TTS_CONCURRENCY = 2
+// Override with VERTEX_TTS_CONCURRENCY (1–3) if quota headroom allows.
+function resolveTtsConcurrency(): number {
+  const raw = Number(process.env.VERTEX_TTS_CONCURRENCY)
+  if (!Number.isFinite(raw)) return 2
+  return Math.min(3, Math.max(1, Math.round(raw)))
+}
+
+const TTS_CONCURRENCY = resolveTtsConcurrency()
 
 function geoFocusLabel(input: Omit<GenerateStoryInput, 'userId' | 'generationId'>): string {
   return (
@@ -207,23 +251,19 @@ function truncateToBytes(value: string, maxBytes: number): string {
   return value.slice(0, end).trim()
 }
 
-function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[] {
-  if (byteLength(turn.text) <= maxBytes) return [turn]
+function splitTextIntoSentenceChunks(text: string, maxBytes: number): string[] {
+  if (byteLength(text) <= maxBytes) return [text]
 
-  const sentences = turn.text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [turn.text]
-  const pieces: PodcastTurn[] = []
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [text]
+  const chunks: string[] = []
   let buffer = ''
-
-  // Carry every framing field (mood, scene, span group, illustrate) onto each
-  // piece so a long line split across frames shares one illustration + mood.
-  const piece = (text: string): PodcastTurn => ({ ...turn, text })
 
   for (const sentence of sentences) {
     const trimmed = sentence.trim()
     if (!trimmed) continue
     const candidate = buffer ? `${buffer} ${trimmed}` : trimmed
     if (byteLength(candidate) > maxBytes && buffer) {
-      pieces.push(piece(buffer.trim()))
+      chunks.push(buffer.trim())
       buffer = trimmed
     } else {
       buffer = candidate
@@ -231,10 +271,56 @@ function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[]
   }
 
   if (buffer.trim()) {
-    pieces.push(piece(truncateToBytes(buffer.trim(), maxBytes)))
+    chunks.push(truncateToBytes(buffer.trim(), maxBytes))
   }
 
-  return pieces.length > 0 ? pieces : [piece(truncateToBytes(turn.text, maxBytes))]
+  return chunks.length > 0 ? chunks : [truncateToBytes(text, maxBytes)]
+}
+
+function splitTurnIntoPieces(turn: PodcastTurn, maxBytes: number): PodcastTurn[] {
+  return splitTextIntoSentenceChunks(turn.text, maxBytes).map((text) => ({ ...turn, text }))
+}
+
+/** Expand a bookend line into sentence-sized TTS turns instead of hard-truncating. */
+function expandSpokenTurns(
+  speaker: string,
+  role: AudioSegmentRole,
+  spoken: string,
+  emotion: string,
+  extras?: Partial<PodcastTurn>
+): PodcastTurn[] {
+  const full = `[${emotion}] ${spoken.trim()}`
+  return splitTextIntoSentenceChunks(full, TTS_MAX_TURN_BYTES).map((text, index) => ({
+    speaker,
+    text,
+    role,
+    ...extras,
+    chapterBreak: index === 0 ? extras?.chapterBreak : false,
+  }))
+}
+
+function roleUsesStudioImage(role?: AudioSegmentRole): boolean {
+  return role === 'intro' || role === 'cta' || role === 'disclaimer'
+}
+
+function applyFrameSceneValidation(
+  script: PodcastScript,
+  subjectBible: VisualSubject[] | undefined,
+  title: string
+): PodcastScript {
+  if (!subjectBible?.length) return script
+  const turns = script.turns.map((turn) => ({ ...turn }))
+  validateAndRepairFrameScenes(turns, subjectBible, title)
+  return { ...script, turns }
+}
+
+function resolveSceneText(turn: PodcastTurn): string {
+  const scene = turn.scene?.trim()
+  if (scene) return scene
+  const dialogue = turn.text.replace(/\[[^\]]+\]/g, '').trim()
+  const firstSentence = dialogue.match(/^[^.!?]+[.!?]?/)?.[0]?.trim() || dialogue.slice(0, 200)
+  console.warn('[generate-story] frame missing scene — deriving fallback visual from dialogue')
+  return `Editorial illustration depicting the moment when: ${firstSentence}`
 }
 
 function sleep(ms: number): Promise<void> {
@@ -300,130 +386,132 @@ async function mapPool<T, R>(
 /**
  * Flattens script turns into TTS-sized lines and attaches per-line frame
  * metadata.
- *
- * Legacy shows: intro/cta/disclaimer use the studio host frame; body lines are
- * framed later by the visual-director pass (`generateLineImagePrompts` →
- * `attachImagePrompts`).
- *
- * News: every frame is an illustration (no host/studio frames). The intro is a
- * title-slide backdrop; other frames use the structured script's `scene` prompt
- * (falling back to the spoken text). Consecutive pieces/turns sharing a span
- * group get one `illustrationGroupId` so a single image can span frames.
  */
+function buildLineVisuals(
+  turn: PodcastTurn,
+  promptOptions: PrepareLineOptions,
+  options: {
+    isTitleSlide: boolean
+    sceneText: string
+    title?: string
+    spokenDialogue: string
+  }
+): Pick<PreparedLine, 'imagePrompt' | 'visualMedium' | 'videoPrompt'> {
+  const frameSubjects = resolveFrameSubjects(
+    promptOptions.subjectBible ?? [],
+    options.sceneText,
+    options.spokenDialogue,
+    promptOptions.title
+  )
+  const imagePrompt = options.isTitleSlide
+    ? buildTitleSlidePrompt(options.title ?? options.sceneText, promptOptions)
+    : buildImagenScenePrompt(options.sceneText, {
+        style: promptOptions.style,
+        localeContext: promptOptions.localeContext,
+        subjectBible: frameSubjects,
+        spokenDialogue: options.spokenDialogue,
+        visualBeat: turn.visualBeat,
+        episodeTitle: promptOptions.title,
+      })
+
+  return {
+    imagePrompt,
+    visualMedium: 'image',
+    videoPrompt: null,
+  }
+}
+
 function prepareLines(
   turns: PodcastTurn[],
   show: Show,
+  contentType: ContentType,
   options?: PrepareLineOptions
 ): PreparedLine[] {
   const lines: PreparedLine[] = []
-  const isNews = show.contentType === 'News'
-  const promptOptions = { style: options?.style, localeContext: options?.localeContext }
-
-  // Stable per-episode group ids. Turns with the same explicit span group share
-  // one image; a turn without one still groups its own split pieces together.
-  const spanGroupIds = new Map<string, string>()
-  let groupSeq = 0
-  const nextGroupId = () => `g${++groupSeq}`
+  const isNews = contentType === 'News'
+  const promptOptions: PrepareLineOptions = {
+    style: options?.style,
+    localeContext: options?.localeContext,
+    subjectBible: options?.subjectBible,
+    title: options?.title,
+  }
 
   turns.forEach((turn, turnIndex) => {
     const role = turn.role ?? 'body'
 
-    if (!isNews) {
-      const imageUrl =
-        role === 'intro' || role === 'cta' || role === 'disclaimer' ? show.studioImage : null
-      for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
+    // Non-News bookends use the channel studio frame — no custom illustration.
+    if (!isNews && roleUsesStudioImage(role)) {
+      for (const [pieceIndex, piece] of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES).entries()) {
         lines.push({
           speaker: piece.speaker,
           text: piece.text,
           role,
-          imageUrl,
+          imageUrl: show.studioImage,
           imagePrompt: null,
           frameKind: null,
           musicMood: null,
           illustrationGroupId: null,
           titleSlide: false,
+          ttsContinuation: pieceIndex > 0,
         })
       }
       return
     }
 
-    // News: resolve the illustration grouping for this turn's frames.
-    //  - An explicit `spanGroup` deliberately holds ONE image across several
-    //    consecutive frames (shared group + shared prompt).
-    //  - Otherwise each split TTS piece gets its OWN group + its OWN prompt built
-    //    from that piece's dialogue, so a long turn becomes several distinct
-    //    illustrations instead of one image repeated across frames.
-    const spanKey = turn.spanGroup?.trim()
-    const isTitleSlide = role === 'intro'
-    const musicMood = turn.musicMood ?? null
-    const sceneText = turn.scene?.trim() || turn.text
-
-    if (spanKey) {
-      const groupId = spanGroupIds.get(spanKey) ?? nextGroupId()
-      spanGroupIds.set(spanKey, groupId)
-      const imagePrompt = isTitleSlide
-        ? buildTitleSlidePrompt(options?.title ?? turn.text, promptOptions)
-        : buildAnimaticPrompt(sceneText, promptOptions)
-      for (const piece of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)) {
+    // Host-framed lines skip custom illustrations (script sets illustrate=false).
+    if (!isNews && turn.illustrate === false) {
+      for (const [pieceIndex, piece] of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES).entries()) {
         lines.push({
           speaker: piece.speaker,
           text: piece.text,
           role,
           imageUrl: null,
-          imagePrompt,
-          frameKind: 'scene',
-          musicMood,
-          illustrationGroupId: groupId,
-          titleSlide: isTitleSlide,
+          imagePrompt: null,
+          frameKind: 'host',
+          musicMood: null,
+          illustrationGroupId: null,
+          titleSlide: false,
+          ttsContinuation: pieceIndex > 0,
         })
       }
       return
     }
 
+    // Illustrated frames: scene prompts authored at script generation time.
+    const isTitleSlide = isNews && role === 'intro'
+    const musicMood = isNews ? (turn.musicMood ?? null) : null
+    const sceneText = isTitleSlide
+      ? options?.title ?? turn.text
+      : resolveSceneText(turn)
+    const groupId = `t${turnIndex}`
+
     const pieces = splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)
-    const singlePiece = pieces.length <= 1
-    pieces.forEach((piece) => {
-      // Title slide always shares the turn's scene; multi-piece body turns
-      // illustrate each piece from its own dialogue for visual variety.
-      const promptBasis = isTitleSlide
-        ? options?.title ?? turn.text
-        : singlePiece
-          ? sceneText
-          : piece.text?.trim() || sceneText
-      const imagePrompt = isTitleSlide
-        ? buildTitleSlidePrompt(promptBasis, promptOptions)
-        : buildAnimaticPrompt(promptBasis, promptOptions)
+    pieces.forEach((piece, pieceIndex) => {
+      const visuals = buildLineVisuals(turn, promptOptions, {
+        isTitleSlide,
+        sceneText,
+        title: options?.title,
+        spokenDialogue: piece.text,
+      })
       lines.push({
         speaker: piece.speaker,
         text: piece.text,
         role,
         imageUrl: null,
-        imagePrompt,
+        imagePrompt: visuals.imagePrompt,
+        scene: sceneText,
         frameKind: 'scene',
         musicMood,
-        illustrationGroupId: `t${turnIndex}-${nextGroupId()}`,
+        illustrationGroupId: groupId,
         titleSlide: isTitleSlide,
+        ttsContinuation: pieceIndex > 0,
+        visualMedium: 'image',
+        videoPrompt: null,
       })
     })
   })
 
   return lines
-}
-
-function attachImagePrompts(
-  lines: PreparedLine[],
-  decisions: Map<number, FrameDecision>
-): PreparedLine[] {
-  return lines.map((line, index) => {
-    if (line.role === 'intro' || line.role === 'cta' || line.role === 'disclaimer') {
-      return { ...line, imagePrompt: null, frameKind: null }
-    }
-    const decision = decisions.get(index)
-    if (!decision || decision.kind === 'scene') {
-      return { ...line, imagePrompt: decision?.prompt ?? null, frameKind: 'scene' }
-    }
-    return { ...line, imagePrompt: null, frameKind: 'host' }
-  })
 }
 
 function uniqueDomains(sources: GroundedSource[]): number {
@@ -570,6 +658,13 @@ function formatUserDescriptionBlock(description?: string): string {
   return `\nCreator's brief for this episode (honor this intent, angle, and scope):\n"""\n${trimmed}\n"""\n`
 }
 
+function hasExplicitResearchGeo(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): boolean {
+  if (!input.geoScope || input.geoScope === 'Worldwide') return false
+  return Boolean(input.geoLocal || input.geoState || input.geoCountry || input.geoRegion)
+}
+
 async function compileTruthLedgerMarkdown(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): Promise<TruthLedgerResult> {
@@ -590,7 +685,7 @@ async function compileTruthLedgerMarkdown(
 Compile an unbiased Truth Ledger briefing for: "${input.title}".
 Write the entire briefing in ${input.language}.
 Category: ${input.category}. Geographic scope: ${input.geoScope}.${
-    input.geoCountry || input.geoRegion
+    hasExplicitResearchGeo(input)
       ? `\nGeographic focus: ${[input.geoLocal, input.geoState, input.geoCountry, input.geoRegion].filter(Boolean).join(', ')}. Ground developments, sources, and examples in this place where relevant; use locally credible outlets and culturally accurate specifics.`
       : ''
   }
@@ -703,7 +798,7 @@ async function findReusableThumbnail(
       where: {
         category: input.category,
         geoScope: input.geoScope,
-        thumbnailUrl: { contains: 'blob.vercel-storage.com' },
+        thumbnailUrl: { contains: EPISODE_THUMBNAIL_PATH },
       },
       orderBy: { createdAt: 'desc' },
       take: 60,
@@ -786,12 +881,8 @@ function parsePodcastScript(raw: string, show: Show): PodcastScript | null {
 
 function trimScriptToLimits(script: PodcastScript): PodcastScript {
   const directorNotes = truncateToBytes(script.directorNotes, TTS_MAX_PROMPT_BYTES)
-  const turns = script.turns.map((turn) => ({
-    ...turn,
-    text: truncateToBytes(turn.text, TTS_MAX_TURN_BYTES),
-  }))
-  const wordCount = turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0)
-  return { directorNotes, turns, wordCount }
+  const wordCount = script.turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0)
+  return { directorNotes, turns: script.turns, wordCount }
 }
 
 export type PodcastFormat =
@@ -816,23 +907,107 @@ interface PodcastClassification {
   format: PodcastFormat
 }
 
-/**
- * Lets the model categorize the on-demand podcast (for explore discovery) and
- * pick the most fitting conversational format for the topic.
- */
-async function classifyPodcast(
+interface TaxonomyClassification extends PodcastClassification, GeoTags {}
+
+const NEWS_CATEGORY_ALIASES: Record<string, string> = {
+  'money & economics': 'Business',
+  'economics': 'Finance & Macroeconomics',
+  'finance': 'Finance & Macroeconomics',
+  'health & wellbeing': 'Health & Medicine',
+  'medicine & health': 'Health & Medicine',
+  'technology & coding': 'Technology',
+}
+
+function categoryListForInput(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
-): Promise<PodcastClassification> {
+): readonly string[] {
+  if (input.contentType) return categoriesForContentType(input.contentType)
+  return CONTENT_CATEGORIES
+}
+
+function normalizeCategoryForType(category: string, contentType: ContentType): string {
+  const alias = NEWS_CATEGORY_ALIASES[category.toLowerCase()]
+  if (contentType === 'News' && alias) return alias
+  const allowed = categoriesForContentType(contentType)
+  const match = allowed.find((c) => c.toLowerCase() === category.toLowerCase())
+  return match ?? category
+}
+
+function defaultCategoryForType(contentType: ContentType): string {
+  switch (contentType) {
+    case 'Education':
+      return 'Science & Discovery'
+    case 'Entertainment':
+      return 'True Crime'
+    case 'Lifestyle':
+      return 'Food & Cooking'
+    case 'Music':
+      return 'Hip-Hop'
+    default:
+      return 'Politics'
+  }
+}
+
+function formatGeoBaselineBlock(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): string {
+  const parts = [input.geoScope]
+  if (input.geoRegion) parts.push(`region: ${input.geoRegion}`)
+  if (input.geoCountry) parts.push(`country: ${input.geoCountry}`)
+  if (input.geoState) parts.push(`state/province: ${input.geoState}`)
+  if (input.geoLocal) parts.push(`local: ${input.geoLocal}`)
+  return parts.join(', ')
+}
+
+function mergeGeoTags(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  inferred: GeoTags
+): GeoTags {
+  const trim = (value?: string) => value?.trim() || undefined
+  const userScopeExplicit = Boolean(input.geoScope && input.geoScope !== 'Worldwide')
+
+  let geoScope: GeoScope = userScopeExplicit
+    ? (input.geoScope as GeoScope)
+    : (inferred.geoScope ?? 'Worldwide')
+  const geoRegion = trim(input.geoRegion) ?? trim(inferred.geoRegion)
+  const geoCountry = trim(input.geoCountry) ?? trim(inferred.geoCountry)
+  const geoState = trim(input.geoState) ?? trim(inferred.geoState)
+  const geoLocal = trim(input.geoLocal) ?? trim(inferred.geoLocal)
+
+  if (!trim(input.geoLocal) && trim(inferred.geoLocal)) {
+    geoScope = 'Local'
+  } else if (!trim(input.geoState) && trim(inferred.geoState) && !trim(input.geoLocal)) {
+    if (geoScope === 'Worldwide' || geoScope === 'Region' || geoScope === 'Country') {
+      geoScope = 'State/Province'
+    }
+  }
+
+  return normalizeGeoTags({ geoScope, geoRegion, geoCountry, geoState, geoLocal })
+}
+
+/**
+ * Classify category, conversational format, and geographic tags for discovery
+ * and grounded research. Merges LLM inference with explicit user/filter inputs.
+ */
+async function classifyTaxonomy(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): Promise<TaxonomyClassification> {
+  const podcastType = input.contentType ?? typeForCategory(input.category)
+  const allowedCategories = categoryListForInput(input)
   const questionsBlock = formatUserQuestionsBlock(input.questions)
   const descriptionBlock = formatUserDescriptionBlock(input.description)
+  const geoBaseline = formatGeoBaselineBlock(input)
+
   const prompt = `Classify an on-demand podcast briefing for discovery and production.
 
 Topic: "${input.title}"
+Content type: ${podcastType}
+User geo baseline: ${geoBaseline}
 ${descriptionBlock}${questionsBlock}
 Pick the single best CATEGORY from this list (exact spelling):
-${CONTENT_CATEGORIES.join(', ')}
+${allowedCategories.join(', ')}
 
-Pick the single best FORMAT for how two hosts should cover this topic:
+Pick the single best FORMAT for how hosts should cover this topic:
 - debate: opposing viewpoints argued back and forth
 - explainer: clear walkthrough of a complex/confusing topic
 - educational: teaching fundamentals and context to a curious listener
@@ -840,40 +1015,74 @@ Pick the single best FORMAT for how two hosts should cover this topic:
 - investigative: digging into evidence, motives, and unanswered questions
 - analysis: data-driven breakdown with comparisons and forecasts
 
-Return ONLY compact JSON: {"category":"<one category>","format":"<one format>"}`
+Pick geographic tags for discovery aggregation. Use the most specific scope that fits the story:
+- geoScope: one of Worldwide, Region, Country, State/Province, Local
+- geoRegion, geoCountry, geoState, geoLocal: optional strings (omit when unknown)
+
+Return ONLY compact JSON:
+{"category":"<one category>","format":"<one format>","geoScope":"<scope>","geoRegion":"","geoCountry":"","geoState":"","geoLocal":""}`
+
+  const fallbackCategory =
+    CONTENT_CATEGORIES.includes(input.category as never) && !isTopCategory(input.category as never)
+      ? input.category
+      : defaultCategoryForType(podcastType)
+
+  const fallback: TaxonomyClassification = {
+    category: normalizeCategoryForType(fallbackCategory, podcastType),
+    format: 'analysis',
+    geoScope: (input.geoScope as GeoScope) ?? 'Worldwide',
+    geoRegion: input.geoRegion,
+    geoCountry: input.geoCountry,
+    geoState: input.geoState,
+    geoLocal: input.geoLocal,
+  }
 
   const raw = await vertexGenerateText(prompt, {
     temperature: 0.1,
-    maxOutputTokens: 120,
+    maxOutputTokens: 200,
     model: VERTEX_FAST_MODEL,
     useSearchGrounding: false,
   })
 
-  const fallback: PodcastClassification = {
-    category: CONTENT_CATEGORIES.includes(input.category as never)
-      ? input.category
-      : 'Politics',
-    format: 'analysis',
-  }
-
-  if (!raw) return fallback
+  if (!raw) return { ...fallback, ...mergeGeoTags(input, fallback) }
 
   try {
     const match = raw.match(/\{[\s\S]*\}/)
-    if (!match) return fallback
-    const parsed = JSON.parse(match[0]) as { category?: string; format?: string }
-    const category = CONTENT_CATEGORIES.find(
-      (c) => c.toLowerCase() === (parsed.category ?? '').trim().toLowerCase()
+    if (!match) return { ...fallback, ...mergeGeoTags(input, fallback) }
+    const parsed = JSON.parse(match[0]) as {
+      category?: string
+      format?: string
+      geoScope?: string
+      geoRegion?: string
+      geoCountry?: string
+      geoState?: string
+      geoLocal?: string
+    }
+    const categoryRaw = parsed.category ?? fallback.category
+    const categoryMatch = allowedCategories.find(
+      (c) => c.toLowerCase() === categoryRaw.trim().toLowerCase()
     )
+    const category = normalizeCategoryForType(categoryMatch ?? categoryRaw, podcastType)
     const format = PODCAST_FORMATS.find(
       (f) => f === (parsed.format ?? '').trim().toLowerCase()
     )
+    const inferredGeo = normalizeGeoTags({
+      geoScope: (GEO_SCOPES as readonly string[]).includes(parsed.geoScope ?? '')
+        ? (parsed.geoScope as GeoScope)
+        : 'Worldwide',
+      geoRegion: parsed.geoRegion,
+      geoCountry: parsed.geoCountry,
+      geoState: parsed.geoState,
+      geoLocal: parsed.geoLocal,
+    })
+    const mergedGeo = mergeGeoTags(input, inferredGeo)
     return {
-      category: category ?? fallback.category,
+      category,
       format: format ?? fallback.format,
+      ...mergedGeo,
     }
   } catch {
-    return fallback
+    return { ...fallback, ...mergeGeoTags(input, fallback) }
   }
 }
 
@@ -921,17 +1130,26 @@ function formatStructure(show: Show): string {
   return show.scriptStructure.map((beat, i) => `${i + 1}. ${beat}`).join('\n')
 }
 
-/** Localization grounding so the dialogue itself carries local specifics. */
+/** Script-only audience lens — independent of taxonomy geo used for research. */
 function buildLocaleScriptContext(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
 ): string {
-  const place = input.geoCountry?.trim() || input.geoState?.trim() || input.geoLocal?.trim()
+  const perspective = input.countryPerspective?.trim()
   const langNote =
     input.language && input.language.trim().toLowerCase() !== 'english'
       ? ` Write naturally and idiomatically in ${input.language}, using culturally appropriate phrasing and terms — not a literal translation.`
       : ''
-  if (!place) return langNote.trim()
-  return `LOCALIZATION: Ground specifics (people, places, institutions, examples) in ${place} where relevant, and keep cultural references appropriate to that audience.${langNote}`.trim()
+  if (!perspective) return langNote.trim()
+  return `AUDIENCE PERSPECTIVE (${perspective}): Frame this story for listeners in ${perspective}. Explain why it matters there, use locally meaningful comparisons and cultural context, and keep facts accurate to the subject's geography — do not relocate the events themselves.${langNote}`.trim()
+}
+
+function bookendPerspectivePhrase(
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): string {
+  const perspective = input.countryPerspective?.trim()
+  return perspective
+    ? `, framing the story for an audience in ${perspective}`
+    : ''
 }
 
 /** Source-confidence signal passed into script + bookend generation. */
@@ -970,7 +1188,8 @@ async function generatePodcastScript(
   markdown: string,
   show: Show,
   confidence?: ScriptConfidence | null,
-  editorialNotes?: string | null
+  editorialNotes?: string | null,
+  subjectBible?: VisualSubject[]
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
   const scriptType = input.contentType ?? typeForCategory(input.category)
@@ -992,16 +1211,32 @@ async function generatePodcastScript(
 - ${lead.name} (${lead.role}) — ${lead.persona}`
 
   const outputBlock = isSolo
-    ? `Output format (strict):
-DIRECTOR_NOTES: <one line scene + tone; pacing guidance, max 300 chars>
-${lead.name}: [tag] first segment of the narration...
-${lead.name}: [tag] next segment...
-(8-14 segments total by ${lead.name} ONLY, flowing through the structure above)`
-    : `Output format (strict):
-DIRECTOR_NOTES: <one line scene + tone; pacing guidance, max 300 chars>
-${co.name}: [curious] opening line that launches the first beat...
-${lead.name}: [thoughtful] substantive response...
-(alternate ${co.name} and ${lead.name} for 12-18 turns total, flowing through the structure above)`
+    ? `FRAME MODEL (critical):
+- Output a JSON object containing a "frames" array.
+- Each item is one spoken line by ${lead.name}.
+- "text": ONLY speakable dialogue (+ optional bracket emotion tags like [curious]). NEVER put scene descriptions, host role notes, or stage directions in "text".
+- "scene": REQUIRED when illustrate is true. ONE vivid sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue, NOT prompt instructions, and NOT quoted speech. Each illustrated frame gets its OWN distinct scene.
+- "illustrate": optional boolean; false for purely conversational/transitional lines (host frame), true (default) when a custom scene adds value.
+- VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread. No disconnected stock shots.
+- Pacing: 8-14 segments total, flowing through the structure above.
+
+Output ONLY a JSON object, e.g.:
+{
+  "frames": [{"speaker":"${lead.name}","text":"...","scene":"...","illustrate":true}]
+}`
+    : `FRAME MODEL (critical):
+- Output a JSON object containing a "frames" array.
+- Each item is one spoken line by one host.
+- "text": ONLY speakable dialogue (+ optional bracket emotion tags like [curious]). NEVER put scene descriptions, host role notes, or stage directions in "text".
+- "scene": REQUIRED when illustrate is true. ONE vivid sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue, NOT prompt instructions, and NOT quoted speech. Each illustrated frame gets its OWN distinct scene.
+- "illustrate": optional boolean; false for purely conversational/transitional lines (host frame), true (default) when a custom scene adds value.
+- VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread. No disconnected stock shots.
+- Pacing: 12-18 alternating turns total, flowing through the structure above.
+
+Output ONLY a JSON object, alternating ${co.name} and ${lead.name}, e.g.:
+{
+  "frames": [{"speaker":"${co.name}","text":"...","scene":"...","illustrate":true}]
+}`
 
   const closingRule = isSolo
     ? `- End with ${lead.name} delivering the key takeaway / concrete next step`
@@ -1010,6 +1245,8 @@ ${lead.name}: [thoughtful] substantive response...
   const philosophyBlock = show.scriptPhilosophy?.trim()
     ? `\n${show.scriptPhilosophy.trim()}\n`
     : ''
+
+  const subjectRulesBlock = formatSubjectBibleSceneRules(subjectBible ?? [])
 
   const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" episode in ${input.language} about: "${input.title}".
 ${descriptionBlock}${questionsBlock}
@@ -1026,6 +1263,7 @@ Ground factual claims ONLY in this briefing:
 ${briefingExcerpt}
 
 ${analysisBlock}
+${subjectRulesBlock}
 
 INTERPRETATION RULES:
 - Analytical reasoning and forecasts are encouraged when built on briefing facts
@@ -1045,17 +1283,57 @@ ${closingRule}`
 
   // Ground strictly in the supplied briefing (no live search) — faster and keeps
   // the script faithful to the verified brief rather than re-researching.
-  const raw = await vertexGenerateText(prompt, {
+  const raw = await vertexGenerateGrounded(prompt, {
     temperature: 0.6,
-    maxOutputTokens: 4096,
+    maxOutputTokens: 16384,
     useSearchGrounding: false,
   })
-  if (!raw) return null
+  let text = raw.text
+  if (raw.finishReason === 'MAX_TOKENS' && text) {
+    console.warn('[generate-story] script hit MAX_TOKENS — retrying with a shorter frame cap')
+    const retry = await vertexGenerateGrounded(
+      `${prompt}\n\nIMPORTANT: Output at most 12 frames with concise scene prompts so the JSON fits in one response.`,
+      { temperature: 0.55, maxOutputTokens: 16384, useSearchGrounding: false }
+    )
+    if (retry.text) text = retry.text
+  }
+  if (!text) {
+    console.error('[generate-story] script generation returned no text', {
+      title: input.title,
+      finishReason: raw.finishReason,
+    })
+    return null
+  }
 
-  const parsed = parsePodcastScript(raw, show)
-  if (!parsed) return null
+  const parsed = parseStructuredScript(text, show)
+  if (!parsed) {
+    console.error('[generate-story] failed to parse structured script', {
+      title: input.title,
+      textLength: text.length,
+      excerpt: text.slice(0, 280),
+    })
+    return null
+  }
 
-  return trimScriptToLimits(parsed)
+  return trimScriptToLimits(applyFrameSceneValidation(parsed, subjectBible, input.title))
+}
+
+/** Extracts the first JSON object from raw model output, tolerating fences/prose. */
+function extractJsonObjectLoose(raw: string): Record<string, unknown> | null {
+  const text = raw.replace(/```json/gi, '').replace(/```/g, '')
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  const body = text.slice(start)
+  const lastBrace = body.lastIndexOf('}')
+  if (lastBrace === -1) return null
+  const candidate = body.slice(0, lastBrace + 1)
+  try {
+    const parsed = JSON.parse(candidate)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+  } catch {
+    /* fall through to salvage logic if needed, but for now just return null */
+  }
+  return null
 }
 
 /** Extracts the first JSON array from raw model output, tolerating fences/prose. */
@@ -1086,13 +1364,33 @@ function extractJsonArrayLoose(raw: string): unknown[] | null {
 }
 
 /**
- * Parse the structured News script (a JSON array of frame objects) into turns
- * carrying per-frame illustration prompts, music moods, and span groups. Falls
+ * Parse the structured News script (a JSON object with frames and claims) into turns
+ * carrying per-frame illustration prompts, music moods, and visual beats. Falls
  * back to the plain-text parser when the model didn't return usable JSON, so a
  * News episode still generates even if structured output fails.
  */
-function parseNewsScript(raw: string, show: Show): PodcastScript | null {
-  const arr = extractJsonArrayLoose(raw)
+function parseStructuredScript(raw: string, show: Show): PodcastScript | null {
+  let arr: unknown[] | null = null
+  let claims: PodcastClaim[] | undefined = undefined
+
+  const obj = extractJsonObjectLoose(raw)
+  if (obj && Array.isArray(obj.frames)) {
+    arr = obj.frames
+    if (Array.isArray(obj.claims)) {
+      claims = obj.claims.filter(
+        (c: any) =>
+          c &&
+          typeof c === 'object' &&
+          typeof c.claim_id === 'string' &&
+          typeof c.assertion === 'string' &&
+          typeof c.assigned_probability === 'number'
+      ) as PodcastClaim[]
+    }
+  } else {
+    // Fallback if the model still generated just an array
+    arr = extractJsonArrayLoose(raw)
+  }
+
   if (!arr) return parsePodcastScript(raw, show)
 
   const matchHost = (label: string): HostProfile => {
@@ -1113,47 +1411,58 @@ function parseNewsScript(raw: string, show: Show): PodcastScript | null {
       musicMood?: unknown
       illustrate?: unknown
       scene?: unknown
-      spanGroup?: unknown
+      visualBeat?: unknown
     }
     const text = typeof obj.text === 'string' ? obj.text.trim() : ''
     if (!text) continue
     const host = matchHost(typeof obj.speaker === 'string' ? obj.speaker : '')
     const illustrate = obj.illustrate === false ? false : true
     const scene = typeof obj.scene === 'string' ? obj.scene.trim() : ''
-    const spanGroup =
-      obj.spanGroup == null ? undefined : String(obj.spanGroup).trim() || undefined
+    const visualBeat =
+      typeof obj.visualBeat === 'number' && Number.isFinite(obj.visualBeat)
+        ? Math.max(1, Math.round(obj.visualBeat))
+        : turns.length + 1
     turns.push({
       speaker: host.name,
       text,
       musicMood: normalizeMusicMood(obj.musicMood),
       illustrate,
+      visualMedium: 'image',
+      visualBeat,
       ...(scene ? { scene } : {}),
-      ...(spanGroup ? { spanGroup } : {}),
     })
   }
 
   const minTurns = show.format === 'solo' ? 3 : 4
-  if (turns.length < minTurns) return parsePodcastScript(raw, show)
+  if (turns.length < minTurns) {
+    console.warn('[generate-story] structured script too few frames — falling back to plain parser', {
+      frames: turns.length,
+      minTurns,
+    })
+    return parsePodcastScript(raw, show)
+  }
 
   return {
     directorNotes: show.sceneDirectorNotes.slice(0, 380),
     turns,
     wordCount: turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0),
+    claims,
   }
 }
 
 /**
  * News-only structured script generator. Emits a JSON array of frames, each
  * carrying the spoken line plus its illustration scene prompt, music mood, and
- * optional span group (so one image can cover several consecutive frames). The
- * body MUST include a dedicated misconception-clarification beat. The result
- * feeds the per-frame illustration pipeline directly (no visual-director pass).
+ * visual beat for a continuous storyboard. The body MUST include a dedicated
+ * misconception-clarification beat. The result feeds the per-frame illustration
+ * pipeline directly (no visual-director pass).
  */
 async function generateNewsPodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
   show: Show,
-  confidence?: ScriptConfidence | null
+  confidence?: ScriptConfidence | null,
+  subjectBible?: VisualSubject[]
 ): Promise<PodcastScript | null> {
   const briefingExcerpt = markdown.slice(0, 3500)
   const scriptType = input.contentType ?? typeForCategory(input.category)
@@ -1169,6 +1478,8 @@ async function generateNewsPodcastScript(
   const philosophyBlock = show.scriptPhilosophy?.trim()
     ? `\n${show.scriptPhilosophy.trim()}\n`
     : ''
+
+  const subjectRulesBlock = formatSubjectBibleSceneRules(subjectBible ?? [])
 
   const prompt = `Write the CORE BODY of a prestige ${BRAND_NAME} "${show.name}" news episode in ${input.language} about: "${input.title}", as a STRUCTURED, per-frame script.
 ${descriptionBlock}${questionsBlock}
@@ -1186,6 +1497,7 @@ Ground factual claims ONLY in this briefing:
 ${briefingExcerpt}
 
 ${analysisBlock}
+${subjectRulesBlock}
 
 INTERPRETATION RULES:
 - Analytical reasoning and forecasts are encouraged when built on briefing facts.
@@ -1196,34 +1508,68 @@ ${confidence ? `\n${buildConfidenceDirective(confidence)}\n` : ''}
 MANDATORY MISCONCEPTION BEAT: somewhere in the middle, include one short exchange that NAMES a common, prevalent misconception or piece of misinformation about this topic and CLEARLY corrects it with a sourced fact from the briefing (e.g. one host: "A lot of people assume X…", the other: "Actually, the reporting shows Y…").
 
 FRAME MODEL (critical):
-- Output a JSON array of FRAMES. Each frame is one spoken line by one host.
-- Every frame is an illustration. For each frame write "scene": ONE vivid, concrete sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue. Honor the localization above. The scene must contain NO text/letters/words.
+- Output a JSON object containing two keys: "frames" (an array) and "claims" (an array).
+- Each item in "frames" is one spoken line by one host.
+- "text": ONLY speakable dialogue (+ optional bracket emotion tags like [curious]). NEVER put scene descriptions, host role notes, word-cap reminders, or stage directions in "text".
+- "scene": REQUIRED on every frame. ONE vivid sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue, NOT prompt instructions, and NOT quoted speech. Each frame gets its OWN distinct scene.
+- "visualBeat": integer 1, 2, 3… marking this frame's place in the episode's continuous visual storyboard.
+- VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread (recurring subject, location, or metaphor evolving beat-by-beat) and depict what is being discussed in that frame's "text". No disconnected stock shots.
 - "musicMood": pick the best underscore mood from: ${moods}.
-- "spanGroup": when several CONSECUTIVE frames should share ONE illustration (the same image holds across the lines), give them the SAME spanGroup string (e.g. "scene-A"). Use distinct spanGroup values for distinct images. Omit spanGroup for a frame with its own unique image. Use spanning VERY sparingly and only when it genuinely reads as one continuous visual — most frames should have their own distinct scene.
-- Favor shorter spoken lines and finer visual beats so each frame earns a fresh, distinct illustration (avoid long monologues that would reuse one image).
+- Pacing: one clear idea per frame with natural broadcast rhythm. Use em-dashes, ellipses, and short question fragments for energy — but finish complete thoughts; do not cut mid-sentence.
 
-Output ONLY a JSON array (16-24 frames), alternating ${co.name} and ${lead.name}, e.g.:
-[{"speaker":"${co.name}","text":"...","musicMood":"tension","scene":"A ... wide shot of ...","spanGroup":"scene-A"},{"speaker":"${lead.name}","text":"...","musicMood":"reflective","scene":"Close on ..."}]
+CLAIMS MODEL (Accountability Ledger):
+If Dr. Anderson evaluates developing events, output a \`claims\` array assigning explicit, verifiable probabilities to these assertions. Each claim object MUST have:
+- "claim_id": a unique string identifier (e.g. "pattaya_zoning_01")
+- "assertion": the specific, verifiable future outcome stated (e.g. "The local municipal council will enforce a strict midnight closure rule on entertainment venues by Friday.")
+- "assigned_probability": a float between 0.0 and 1.0 representing the assigned likelihood
+
+Output ONLY a JSON object (16-24 frames), alternating ${co.name} and ${lead.name}, e.g.:
+{
+  "frames": [{"speaker":"${co.name}","text":"...","visualBeat":1,"musicMood":"tension","scene":"..."}],
+  "claims": [{"claim_id":"...", "assertion":"...", "assigned_probability":0.85}]
+}
 
 Rules:
 - Entire spoken text in ${input.language}.
 - Do NOT write a greeting, intro, welcome, or sign-off — this is the MIDDLE of the show only.
 - Every line carries substance; no filler reactions.
 - Use Gemini audio tags sparingly inside "text": [curious], [thoughtful], [short pause], [concerned].
-- No markdown, no commentary outside the JSON array.
-- End with ${lead.name} delivering the forecast and key takeaway.`
+- No markdown, no commentary outside the JSON object.
+- CLOSING: The final frame(s) in this array MUST be ${lead.name}. ${lead.name} delivers a definitive summary separating verified facts from the briefing versus prevalent online myths and misinformation — crisp, sourced, tying back to the misconception beat where natural. This is fact-vs-myth clarity, NOT a partisan verdict on who is right. Do NOT include the Ask the Host invitation here (that comes in the episode CTA after the body). For the final "scene", visually contrast verified reporting against misinformation (e.g. split documentary metaphor).`
 
-  const raw = await vertexGenerateText(prompt, {
+  const raw = await vertexGenerateGrounded(prompt, {
     temperature: 0.6,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 16384,
     useSearchGrounding: false,
   })
-  if (!raw) return null
+  let text = raw.text
+  if (raw.finishReason === 'MAX_TOKENS' && text) {
+    console.warn('[generate-story] News script hit MAX_TOKENS — retrying with a shorter frame cap')
+    const retry = await vertexGenerateGrounded(
+      `${prompt}\n\nIMPORTANT: Output at most 16 frames with concise scene prompts so the JSON fits in one response.`,
+      { temperature: 0.55, maxOutputTokens: 16384, useSearchGrounding: false }
+    )
+    if (retry.text) text = retry.text
+  }
+  if (!text) {
+    console.error('[generate-story] News script generation returned no text', {
+      title: input.title,
+      finishReason: raw.finishReason,
+    })
+    return null
+  }
 
-  const parsed = parseNewsScript(raw, show)
-  if (!parsed) return null
+  const parsed = parseStructuredScript(text, show)
+  if (!parsed) {
+    console.error('[generate-story] failed to parse News structured script', {
+      title: input.title,
+      textLength: text.length,
+      excerpt: text.slice(0, 280),
+    })
+    return null
+  }
 
-  return trimScriptToLimits(parsed)
+  return trimScriptToLimits(applyFrameSceneValidation(parsed, subjectBible, input.title))
 }
 
 /**
@@ -1235,19 +1581,31 @@ async function generateEpisodeBookends(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
   show: Show,
-  confidence?: ScriptConfidence | null
+  confidence?: ScriptConfidence | null,
+  correctionContext?: string | null
 ): Promise<EpisodeBookends | null> {
   const briefingExcerpt = markdown.slice(0, 2500)
-  const region = geoFocusLabel(input)
-  const isNews = show.contentType === 'News'
+  const perspectivePhrase = bookendPerspectivePhrase(input)
+  const isNews = (input.contentType ?? show.contentType) === 'News'
   const confidenceBlock = confidence
     ? `\nSOURCE CONFIDENCE: ${buildConfidenceDirective(confidence)}\nThe SUMMARY must honestly reflect this confidence level (especially: if confidence is low, say so plainly rather than overstating certainty).\n`
     : ''
 
+  // Inject programmatic correction routine if variance was detected
+  let hookInstruction = 'HOOK: A cold-open in the show\'s voice. Lead with the single most startling fact, stakes, or hook from the briefing. No greeting — drop the listener straight into the tension.'
+  let introInstruction = `INTRO: A branded welcome based on the channel's welcome line above, naturally woven together with the real topic ("${input.title}")${perspectivePhrase}. Stay in "${show.name}"'s voice — do NOT use a generic news-network template. Adapt naturally into ${input.language}.`
+
+  if (correctionContext && isNews) {
+    const co = coHost(show)
+    const lead = leadHost(show)
+    hookInstruction = `HOOK: A cold-open in ${co.name}'s voice that immediately calls out our "confidence tracking matrix" or "accuracy score" has shifted for this developing story based on fresh data. State the specific change concisely.`
+    introInstruction = `INTRO: After the welcome, ${lead.name} explains the core variance context in 1-2 sentences. Context to weave in: "${correctionContext}"`
+  }
+
   // News closes by inviting listeners into the on-page Q&A (no liability
   // disclaimer); other shows keep the Custom-Podcast CTA + spoken disclaimer.
   const ctaInstruction = isNews
-    ? `CTA: Exactly one warm closing call to action inviting the listener to ask the hosts their OWN question about this story — right here on this episode's Q&A. Make it clear they can pose a follow-up and the hosts will answer. Confident and inviting, not pushy.`
+    ? `CTA: Spoken by Sarah Chen — one warm, clean bridge from the analysis into the interactive layer. Invite the listener to scroll down on this episode page, tap to ask a question, or use the Ask the Host community Q&A tool to pose their own follow-up about this story. Make click-through feel natural and conversational, not salesy. Keep "Ask the Host" in Latin script if used. Confident and inviting, not pushy.`
     : `CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.`
 
   const disclaimerInstruction = isNews
@@ -1272,8 +1630,8 @@ ${confidenceBlock}
 
 Produce exactly ${blockCount} labeled blocks, each 1-2 sentences, punchy and on-brand for THIS channel's tone:
 
-HOOK: A cold-open in the show's voice. Lead with the single most startling fact, stakes, or hook from the briefing. No greeting — drop the listener straight into the tension.
-INTRO: A branded welcome based on the channel's welcome line above, naturally woven together with the real topic ("${input.title}") and, where it fits the tone, the relevant place (${region}). Stay in "${show.name}"'s voice — do NOT use a generic news-network template. Adapt naturally into ${input.language}.
+${hookInstruction}
+${introInstruction}
 SUMMARY: A rapid, objective 2-sentence recap of the core finding (and forecast, if relevant), in the show's tone.
 ${ctaInstruction}${disclaimerInstruction}
 
@@ -1316,11 +1674,11 @@ function assembleEpisode(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   show: Show
 ): PodcastScript {
-  // Bookend speakers: co-host opens (hook/summary), lead delivers (intro/cta).
-  // For a solo show both resolve to the single host.
+  // Bookend speakers: co-host opens (hook/summary), lead delivers intro.
+  // News CTA is Sarah (interactive handoff); other shows use lead for CTA.
   const hookSpeaker = coHost(show).name
   const leadSpeaker = leadHost(show).name
-  const isNews = show.contentType === 'News'
+  const isNews = (input.contentType ?? show.contentType) === 'News'
   // Bookends come from the model already written in the target language. The
   // canned fallbacks below are English, so they may ONLY be used for English
   // episodes — otherwise a failed bookends call would leak English narration
@@ -1333,7 +1691,7 @@ function assembleEpisode(
   // News closes with a Q&A invitation; other shows pitch the Custom Podcast.
   const fallbackCta = isEnglish
     ? isNews
-      ? `Have a question about this story? Ask the hosts right here on this episode — we'll dig into it.`
+      ? `Now it's your turn — scroll down on this episode and tap Ask the Host to join the community conversation and ask us your own question about this story.`
       : `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
     : ''
   // Spoken liability disclaimer. English fallback only — a failed bookends call
@@ -1354,22 +1712,18 @@ function assembleEpisode(
   const turns: PodcastTurn[] = []
 
   if (hook) {
-    turns.push({
-      speaker: hookSpeaker,
-      text: truncateToBytes(`[serious] ${hook}`, TTS_MAX_TURN_BYTES),
-      role: 'hook',
-      ...(isNews ? { musicMood: 'tension' as MusicMood } : {}),
-    })
+    turns.push(
+      ...expandSpokenTurns(hookSpeaker, 'hook', hook, 'serious', isNews ? { musicMood: 'tension' } : {})
+    )
   }
 
   if (intro) {
-    turns.push({
-      speaker: leadSpeaker,
-      text: truncateToBytes(`[warm] ${intro}`, TTS_MAX_TURN_BYTES),
-      chapterBreak: true,
-      role: 'intro',
-      ...(isNews ? { musicMood: 'uplifting' as MusicMood } : {}),
-    })
+    turns.push(
+      ...expandSpokenTurns(leadSpeaker, 'intro', intro, 'warm', {
+        chapterBreak: true,
+        ...(isNews ? { musicMood: 'uplifting' as MusicMood } : {}),
+      })
+    )
   }
 
   // Insert the analytical core, marking ~3 even chapter resets across the body.
@@ -1387,30 +1741,24 @@ function assembleEpisode(
   // No-verdict shows (e.g. The ClearSight Brief) deliberately end on the
   // forecast + a question to ponder, so we suppress the recap/conclusion turn.
   if (summary && !show.noVerdict) {
-    turns.push({
-      speaker: hookSpeaker,
-      text: truncateToBytes(`[thoughtful] ${summary}`, TTS_MAX_TURN_BYTES),
-      chapterBreak: true,
-      role: 'summary',
-      ...(isNews ? { musicMood: 'reflective' as MusicMood } : {}),
-    })
+    turns.push(
+      ...expandSpokenTurns(hookSpeaker, 'summary', summary, 'thoughtful', {
+        chapterBreak: true,
+        ...(isNews ? { musicMood: 'reflective' as MusicMood } : {}),
+      })
+    )
   }
 
   if (cta) {
-    turns.push({
-      speaker: leadSpeaker,
-      text: truncateToBytes(`[warm] ${cta}`, TTS_MAX_TURN_BYTES),
-      role: 'cta',
-      ...(isNews ? { musicMood: 'hopeful' as MusicMood } : {}),
-    })
+    turns.push(
+      ...expandSpokenTurns(isNews ? hookSpeaker : leadSpeaker, 'cta', cta, 'warm', {
+        ...(isNews ? { musicMood: 'hopeful' as MusicMood } : {}),
+      })
+    )
   }
 
   if (disclaimer) {
-    turns.push({
-      speaker: leadSpeaker,
-      text: truncateToBytes(`[neutral] ${disclaimer}`, TTS_MAX_TURN_BYTES),
-      role: 'disclaimer',
-    })
+    turns.push(...expandSpokenTurns(leadSpeaker, 'disclaimer', disclaimer, 'neutral'))
   }
 
   const wordCount = turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0)
@@ -1503,7 +1851,14 @@ async function callGeminiTts(
  * just covers the bracket emotion tags we intentionally leave in.
  */
 const TTS_VOICE_GUARDRAIL =
-  'Treat any [bracketed] cues as performance direction only — never say them aloud.'
+  'Bracket tags like [curious] are performance cues only — never say them as words.'
+
+/** Minimal host style for byte-chunk continuations — no meta-instructions. */
+function buildContinuationStylePrompt(host: HostProfile): string {
+  return host.ttsStylePrompt.trim()
+}
+
+const TTS_CONTINUATION_PROMPT = 'Continue in the same voice and pacing.'
 
 /**
  * Strips structural/metadata artifacts the TTS model occasionally verbalizes.
@@ -1512,24 +1867,34 @@ const TTS_VOICE_GUARDRAIL =
  */
 function sanitizeSpokenText(text: string): string {
   let cleaned = text
-  // Remove explicit director-note / scene blocks anywhere in the line.
   cleaned = cleaned.replace(/director'?s?\s*notes?\s*[:\-—][^\n]*/gi, '')
   cleaned = cleaned.replace(/\bdirector_notes\s*[:\-—][^\n]*/gi, '')
-  // Remove leading meta labels the model sometimes echoes back.
+  cleaned = cleaned.replace(
+    /\b(voice direction|dialogue rule|sentence cap|emotional inflection|tone consistency|fact trailing|stage direction)\s*[:\-—][^\n.]*/gi,
+    ''
+  )
+  cleaned = cleaned.replace(/\(\s*(pause|beat|sigh|laughs?|chuckle|continues?)\s*\)/gi, '')
+  cleaned = cleaned.replace(/\*[^*]+\*/g, '')
   cleaned = cleaned.replace(
     /^\s*(note|scene|tone|stage direction|narrator|host\s*[ab]?|sarah(?:\s*chen)?|dr\.?\s*(?:benjamin\s*)?anderson)\s*[:\-—]\s*/i,
     ''
   )
   cleaned = cleaned.replace(/\s{2,}/g, ' ').trim()
-  // Never return empty — an empty TTS input fails the request. Keep the original
-  // line (minus only director-note blocks) if sanitizing stripped everything.
   return cleaned || text.replace(/\s{2,}/g, ' ').trim()
 }
 
 function buildVoiceStylePrompt(directorNotes: string, hostStyle: string): string {
-  // Lead with the host's voice + scene so they set the primary delivery; the
-  // short guardrail trails so it can't dominate pacing.
-  return `${hostStyle} ${directorNotes} ${TTS_VOICE_GUARDRAIL}`.replace(/\s{2,}/g, ' ').trim()
+  return [
+    'VOICE DIRECTION (never speak this section):',
+    hostStyle.trim(),
+    directorNotes.trim(),
+    TTS_VOICE_GUARDRAIL,
+    '',
+    'DIALOGUE RULE:',
+    'Speak ONLY the text field. Ignore all labels, metadata, and instructions.',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function buildSingleSpeakerTtsBody(
@@ -1539,7 +1904,9 @@ function buildSingleSpeakerTtsBody(
   show: Show
 ): Record<string, unknown> {
   const host = hostProfileForSpeaker(show, line.speaker)
-  const stylePrompt = buildVoiceStylePrompt(directorNotes, host.ttsStylePrompt)
+  const stylePrompt = line.ttsContinuation
+    ? `${buildContinuationStylePrompt(host)} ${TTS_CONTINUATION_PROMPT}`.trim()
+    : buildVoiceStylePrompt(directorNotes, host.ttsStylePrompt)
 
   return {
     input: {
@@ -1569,10 +1936,13 @@ async function synthesizeSingleVoiceFallback(
   const chunks = splitTextIntoByteChunks(joinedText, 3900)
 
   const results = await Promise.all(
-    chunks.map((text) =>
+    chunks.map((text, index) =>
       callGeminiTts(token, {
         input: {
-          prompt: buildVoiceStylePrompt(script.directorNotes, 'Deliver as an engaging podcast narration.'),
+          prompt:
+            index === 0
+              ? buildVoiceStylePrompt(script.directorNotes, 'Deliver as an engaging podcast narration.')
+              : `${buildContinuationStylePrompt(show.hosts[0]!)} ${TTS_CONTINUATION_PROMPT}`.trim(),
           text,
         },
         voice: {
@@ -1592,21 +1962,7 @@ async function synthesizeSingleVoiceFallback(
 }
 
 function splitTextIntoByteChunks(text: string, maxBytes: number): string[] {
-  if (byteLength(text) <= maxBytes) return [text]
-
-  const chunks: string[] = []
-  let buffer = ''
-  for (const word of text.split(/\s+/)) {
-    const candidate = buffer ? `${buffer} ${word}` : word
-    if (byteLength(candidate) > maxBytes && buffer) {
-      chunks.push(buffer)
-      buffer = word
-    } else {
-      buffer = candidate
-    }
-  }
-  if (buffer) chunks.push(buffer)
-  return chunks.length > 0 ? chunks : [truncateToBytes(text, maxBytes)]
+  return splitTextIntoSentenceChunks(text, maxBytes)
 }
 
 async function uploadAudioSegment(
@@ -1616,7 +1972,18 @@ async function uploadAudioSegment(
   fallbackDuration: number,
   meta: Pick<
     PreparedLine,
-    'speaker' | 'role' | 'imageUrl' | 'text' | 'imagePrompt' | 'frameKind' | 'musicMood' | 'illustrationGroupId' | 'titleSlide'
+    | 'speaker'
+    | 'role'
+    | 'imageUrl'
+    | 'text'
+    | 'imagePrompt'
+    | 'scene'
+    | 'frameKind'
+    | 'musicMood'
+    | 'illustrationGroupId'
+    | 'titleSlide'
+    | 'visualMedium'
+    | 'videoPrompt'
   >
 ): Promise<AudioSegment> {
   const slug = title.slice(0, 32).replace(/\W/g, '-')
@@ -1636,10 +2003,13 @@ async function uploadAudioSegment(
     imageUrl: meta.imageUrl,
     text: meta.text,
     ...(meta.imagePrompt ? { imagePrompt: meta.imagePrompt } : {}),
+    ...(meta.scene?.trim() ? { scene: meta.scene.trim() } : {}),
     ...(meta.frameKind ? { frameKind: meta.frameKind } : {}),
     ...(meta.musicMood ? { musicMood: meta.musicMood } : {}),
     ...(meta.illustrationGroupId ? { illustrationGroupId: meta.illustrationGroupId } : {}),
     ...(meta.titleSlide ? { titleSlide: true } : {}),
+    ...(meta.visualMedium ? { visualMedium: meta.visualMedium } : {}),
+    ...(meta.videoPrompt ? { videoPrompt: meta.videoPrompt } : {}),
   }
 }
 
@@ -1650,40 +2020,29 @@ async function uploadAudioSegment(
 async function synthesizePodcastAudio(
   script: PodcastScript,
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
-  show: Show
+  show: Show,
+  subjectBible?: VisualSubject[]
 ): Promise<{ url: string; durationSeconds: number; segments: AudioSegment[] } | null> {
   const token = await getVertexAccessToken()
   if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
 
   const { language, title } = input
   const locale = getVoiceForLanguage(language)
-  const isNews = show.contentType === 'News'
-  const localeContext = buildLocaleVisualContext(language, geoFocusLabel(input), input.geoCountry)
-  const style = [show.visualStyle, categoryVisualStyle(input.category)].filter(Boolean).join(' ')
+  const localeContext = buildAudienceVisualContext({
+    language,
+    countryPerspective: input.countryPerspective,
+  })
+  const style = frameIllustrationStyle()
 
-  // News: per-frame scene prompts + moods come straight from the structured
-  // script (no separate visual-director pass). Other shows still run the
-  // best-effort framing pass that decides scene-vs-host per line.
-  const rawLines = prepareLines(script.turns, show, { style, localeContext, title })
-  if (rawLines.length === 0) return null
-
-  let lines: PreparedLine[]
-  if (isNews) {
-    lines = rawLines
-  } else {
-    const promptInputs = rawLines.map((line, index) => ({
-      index,
-      speaker: line.speaker,
-      text: line.text,
-      role: line.role,
-    }))
-    const imagePrompts = await generateLineImagePrompts(promptInputs, {
-      style,
-      localeContext,
-      illustrateGenerously: illustratesGenerously(show.contentType),
-    })
-    lines = attachImagePrompts(rawLines, imagePrompts)
-  }
+  // Per-frame scene prompts come straight from the structured script — no
+  // separate visual-director pass after TTS.
+  const lines = prepareLines(script.turns, show, input.contentType ?? show.contentType, {
+    style,
+    localeContext,
+    title,
+    subjectBible,
+  })
+  if (lines.length === 0) return null
 
   const lineBuffers = await mapPool(lines, TTS_CONCURRENCY, async (line) =>
     callGeminiTts(token, buildSingleSpeakerTtsBody(script.directorNotes, line, locale, show))
@@ -1743,6 +2102,7 @@ export interface LocalizedSegmentInput {
   role?: AudioSegmentRole
   imageUrl?: string | null
   imagePrompt?: string | null
+  scene?: string | null
   frameKind?: FrameKind | null
   musicMood?: MusicMood | null
   illustrationGroupId?: string | null
@@ -1774,14 +2134,16 @@ export async function resynthesizeLocalizedSegments(params: {
   const locale = getVoiceForLanguage(targetLanguage)
 
   // Each input is either a TTS line or a non-TTS pass-through (baked music),
-  // preserved 1:1 in order so the outro music survives re-localization.
+  // preserved in order so the outro music survives re-localization. Long spoken
+  // lines are split into byte-safe chunks instead of hard-truncating.
   type Plan =
     | { kind: 'tts'; line: PreparedLine }
     | { kind: 'pass'; segment: AudioSegment }
     | null
-  const plans: Plan[] = segments.map((seg) => {
+  const plans: Plan[] = []
+  for (const seg of segments) {
     if (seg.role === 'music' && seg.url) {
-      return {
+      plans.push({
         kind: 'pass',
         segment: {
           url: seg.url,
@@ -1789,25 +2151,32 @@ export async function resynthesizeLocalizedSegments(params: {
           role: 'music',
           imageUrl: seg.imageUrl ?? null,
         },
-      }
+      })
+      continue
     }
     const text = seg.text?.trim()
-    if (!text) return null
-    return {
-      kind: 'tts',
-      line: {
-        speaker: seg.speaker ?? leadHost(show).name,
-        text: truncateToBytes(text, TTS_MAX_TURN_BYTES),
-        role: seg.role ?? 'body',
-        imageUrl: seg.imageUrl ?? null,
-        imagePrompt: seg.imagePrompt ?? null,
-        frameKind: seg.frameKind ?? null,
-        musicMood: seg.musicMood ?? null,
-        illustrationGroupId: seg.illustrationGroupId ?? null,
-        titleSlide: Boolean(seg.titleSlide),
-      },
+    if (!text) continue
+    const speaker = seg.speaker ?? leadHost(show).name
+    const chunks = splitTextIntoByteChunks(text, TTS_MAX_TURN_BYTES)
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      plans.push({
+        kind: 'tts',
+        line: {
+          speaker,
+          text: chunk,
+          role: seg.role ?? 'body',
+          imageUrl: seg.imageUrl ?? null,
+          imagePrompt: seg.imagePrompt ?? null,
+          scene: seg.scene ?? null,
+          frameKind: seg.frameKind ?? null,
+          musicMood: seg.musicMood ?? null,
+          illustrationGroupId: seg.illustrationGroupId ?? null,
+          titleSlide: Boolean(seg.titleSlide),
+          ttsContinuation: chunkIndex > 0,
+        },
+      })
     }
-  })
+  }
 
   const buffers = await mapPool(plans, TTS_CONCURRENCY, async (plan) =>
     plan?.kind === 'tts' ? callGeminiTts(token, buildSingleSpeakerTtsBody('', plan.line, locale, show)) : null
@@ -1827,6 +2196,7 @@ export async function resynthesizeLocalizedSegments(params: {
         imageUrl: line.imageUrl,
         text: line.text,
         imagePrompt: line.imagePrompt,
+        scene: line.scene,
         frameKind: line.frameKind,
         musicMood: line.musicMood,
         illustrationGroupId: line.illustrationGroupId,
@@ -1869,12 +2239,104 @@ export interface BriefFinalizeContext {
   resolvedInput: GenerateStoryInput
   /** Viewer-perspective questions that prime the episode Q&A (News). */
   seedQuestions: string[]
+  visualSubjectBible?: VisualSubjectBible | null
 }
 
 export interface CompiledBrief {
   storyId: string
   episodeScript: PodcastScript | null
   context: BriefFinalizeContext
+}
+
+/**
+ * Resume a compile step when Inngest retries after the draft story and episode
+ * script were already persisted — avoids duplicate Story rows and re-research.
+ */
+async function tryResumeCompiledBrief(input: GenerateStoryInput): Promise<CompiledBrief | null> {
+  const generation = await prisma.generation.findUnique({
+    where: { id: input.generationId },
+    select: { storyId: true },
+  })
+  if (!generation?.storyId) return null
+
+  const story = await prisma.story.findUnique({
+    where: { id: generation.storyId },
+    select: {
+      id: true,
+      title: true,
+      language: true,
+      category: true,
+      geoScope: true,
+      geoRegion: true,
+      geoCountry: true,
+      geoState: true,
+      geoLocal: true,
+      markdownContent: true,
+      thumbnailUrl: true,
+      reliabilityIndex: true,
+      sourcesVerified: true,
+    },
+  })
+  if (!story?.markdownContent?.trim()) return null
+
+  const meta = (story.sourcesVerified ?? {}) as Record<string, unknown>
+  const episodeScript = deserializeEpisodeScriptDraft(meta.episodeScriptDraft) as PodcastScript | null
+  if (!episodeScript) return null
+
+  const podcastType = isContentType(meta.contentType)
+    ? meta.contentType
+    : typeForCategory(story.category)
+  const podcastFormat =
+    typeof meta.podcastFormat === 'string'
+      ? (meta.podcastFormat as PodcastFormat)
+      : podcastType === 'Education'
+        ? 'educational'
+        : podcastType === 'Entertainment'
+          ? 'investigative'
+          : 'analysis'
+
+  return {
+    storyId: story.id,
+    episodeScript,
+    context: {
+      markdownContent: story.markdownContent,
+      taxonomyKey: typeof meta.taxonomyKey === 'string' ? meta.taxonomyKey : '',
+      topicKey: typeof meta.topicKey === 'string' ? meta.topicKey : '',
+      compiledAt: typeof meta.compiledAt === 'string' ? meta.compiledAt : new Date().toISOString(),
+      podcastType,
+      podcastFormat,
+      showMeta: {
+        showId: typeof meta.showId === 'string' ? meta.showId : '',
+        showName: typeof meta.showName === 'string' ? meta.showName : '',
+        showFormat: (typeof meta.showFormat === 'string' ? meta.showFormat : 'dialogue') as Show['format'],
+        hosts: Array.isArray(meta.hosts)
+          ? (meta.hosts as BriefFinalizeContext['showMeta']['hosts'])
+          : [],
+      },
+      sources: Array.isArray(meta.sources) ? (meta.sources as BriefFinalizeContext['sources']) : [],
+      reliabilityIndex: story.reliabilityIndex ?? 0,
+      thumbnailUrl: story.thumbnailUrl ?? getThumbnailForCategory(story.category),
+      scriptRevised: Boolean(
+        (meta.editorialReview as { scriptRevised?: boolean } | undefined)?.scriptRevised
+      ),
+      resolvedInput: {
+        ...input,
+        title: story.title,
+        language: story.language,
+        category: story.category,
+        contentType: podcastType,
+        geoScope: story.geoScope,
+        geoRegion: story.geoRegion ?? undefined,
+        geoCountry: story.geoCountry ?? undefined,
+        geoState: story.geoState ?? undefined,
+        geoLocal: story.geoLocal ?? undefined,
+      },
+      seedQuestions: Array.isArray(meta.seedQuestions)
+        ? (meta.seedQuestions as unknown[]).filter((q): q is string => typeof q === 'string')
+        : [],
+      visualSubjectBible: parseVisualSubjectBible(meta.visualSubjectBible),
+    },
+  }
 }
 
 /**
@@ -1896,33 +2358,45 @@ export async function compileBriefAndScript(
     }
   }
 
+  const resumed = await tryResumeCompiledBrief(input)
+  if (resumed) {
+    report('podcast', 72, { storyId: resumed.storyId })
+    return resumed
+  }
+
   const compiledAt = new Date().toISOString()
 
   report('analysis', 5)
 
-  const [topicKey, ledger, classification] = await Promise.all([
-    canonicalTopicKey(input),
-    compileTruthLedgerMarkdown(input),
-    classifyPodcast(input),
-  ])
+  const classification = await classifyTaxonomy(input)
 
-  // The model categorizes the podcast for explore discovery; an explicit
-  // user-chosen category still wins. It also picks the conversational format.
-  const resolvedCategory = CONTENT_CATEGORIES.includes(input.category as never)
-    ? input.category
-    : classification.category
-  // The user-chosen Type drives framework + illustration style; fall back to
-  // inferring it from the resolved category (e.g. for "Top" browse generations).
+  const resolvedCategory =
+    CONTENT_CATEGORIES.includes(input.category as never) && !isTopCategory(input.category as never)
+      ? input.category
+      : classification.category
   const podcastType: ContentType = input.contentType ?? typeForCategory(resolvedCategory)
-  // Education/Entertainment have a fixed conversational mode; News keeps the
-  // model-picked format.
   const podcastFormat: PodcastFormat =
     podcastType === 'Education'
       ? 'educational'
       : podcastType === 'Entertainment'
         ? 'investigative'
         : classification.format
-  const resolvedInput = { ...input, category: resolvedCategory, contentType: podcastType }
+
+  const resolvedInput: GenerateStoryInput = {
+    ...input,
+    category: resolvedCategory,
+    contentType: podcastType,
+    geoScope: classification.geoScope,
+    geoRegion: classification.geoRegion,
+    geoCountry: classification.geoCountry,
+    geoState: classification.geoState,
+    geoLocal: classification.geoLocal,
+  }
+
+  const [topicKey, ledger] = await Promise.all([
+    canonicalTopicKey(resolvedInput),
+    compileTruthLedgerMarkdown(resolvedInput),
+  ])
 
   // Resolve the show (cast, visual style, script structure) for this generation.
   const show = resolveShow({ contentType: podcastType, category: resolvedCategory })
@@ -1953,52 +2427,99 @@ export async function compileBriefAndScript(
   const { markdown: markdownContent, sources, reliabilityIndex } = ledger
   const draftThumbnail = reusedThumbnail ?? getThumbnailForCategory(resolvedCategory)
 
+  const visualSubjectBible = await extractVisualSubjectBible(
+    {
+      title: input.title,
+      description: input.description,
+      category: resolvedCategory,
+      contentType: podcastType,
+      language: input.language,
+    },
+    markdownContent
+  )
+
+  let accuracyScore: number | null = null
+  let correctionContext: string | null = null
+  if (input.originalStoryId) {
+    const brierResult = await evaluatePreviousClaims(input.originalStoryId, markdownContent)
+    if (brierResult) {
+      accuracyScore = brierResult.accuracyScore
+      correctionContext = brierResult.correctionContext
+    }
+  }
+
   report('analysis', 28)
 
-  const draftStory = await prisma.story.create({
-    data: {
-      title: input.title,
-      language: input.language,
-      category: resolvedCategory,
-      geoScope: input.geoScope,
-      geoRegion: input.geoRegion,
-      geoCountry: input.geoCountry,
-      geoState: input.geoState,
-      geoLocal: input.geoLocal,
-      markdownContent,
-      thumbnailUrl: draftThumbnail,
-      reliabilityIndex,
-      isCached: false,
-      sourcesVerified: {
-        taxonomyKey,
-        topicKey,
-        compiledAt,
-        generating: true,
-        contentType: podcastType,
-        podcastFormat,
-        ...showMeta,
-        sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
-        sourceCount: sources.length,
-        domainCount: uniqueDomains(sources),
-      },
-    },
-  })
-
-  await prisma.generation.update({
+  const generationLink = await prisma.generation.findUnique({
     where: { id: input.generationId },
-    data: { storyId: draftStory.id },
+    select: { storyId: true },
   })
+  let draftStoryId = generationLink?.storyId ?? null
+  if (draftStoryId) {
+    const existing = await prisma.story.findUnique({
+      where: { id: draftStoryId },
+      select: { id: true },
+    })
+    if (!existing) draftStoryId = null
+  }
 
-  report('draft', 32, { storyId: draftStory.id, markdownContent })
+  const storyData = {
+    title: input.title,
+    language: input.language,
+    category: resolvedCategory,
+    geoScope: resolvedInput.geoScope,
+    geoRegion: resolvedInput.geoRegion,
+    geoCountry: resolvedInput.geoCountry,
+    geoState: resolvedInput.geoState,
+    geoLocal: resolvedInput.geoLocal,
+    markdownContent,
+    thumbnailUrl: draftThumbnail,
+    reliabilityIndex,
+    isCached: false,
+    originalStoryId: input.originalStoryId ?? null,
+    priorAccuracyScore: accuracyScore,
+    sourcesVerified: {
+      taxonomyKey,
+      topicKey,
+      compiledAt,
+      generating: true,
+      contentType: podcastType,
+      podcastFormat,
+      ...showMeta,
+      sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
+      sourceCount: sources.length,
+      domainCount: uniqueDomains(sources),
+      ...(input.countryPerspective?.trim()
+        ? { countryPerspective: input.countryPerspective.trim() }
+        : {}),
+      ...(visualSubjectBible
+        ? { visualSubjectBible: JSON.parse(JSON.stringify(visualSubjectBible)) }
+        : {}),
+    },
+  }
+
+  if (draftStoryId) {
+    await prisma.story.update({
+      where: { id: draftStoryId },
+      data: storyData,
+    })
+  } else {
+    const draftStory = await prisma.story.create({ data: storyData })
+    draftStoryId = draftStory.id
+    await prisma.generation.update({
+      where: { id: input.generationId },
+      data: { storyId: draftStoryId },
+    })
+  }
+
+  report('draft', 32, { storyId: draftStoryId, markdownContent })
 
   report('editorial', 44)
 
-  // Podcast generation never calls Imagen: the episode cover reuses the
-  // channel's preexisting key-art (falling back to a static category image),
-  // so generation depends only on text + audio. Per-episode scene
-  // illustrations are rendered separately, on demand, by the animatic step.
-  const thumbnailUrl =
-    reusedThumbnail ?? show.coverImage ?? getThumbnailForCategory(resolvedCategory)
+  // Episode cover is generated separately (Imagen). Until then use a neutral
+  // category stock image — never channel key-art, which belongs on the channel
+  // hero only and must not be reused as the episode thumbnail.
+  const thumbnailUrl = reusedThumbnail ?? getThumbnailForCategory(resolvedCategory)
 
   // The editorial checklist is now folded into the first-pass briefing prompt,
   // so the briefing ships without a separate (slow, blocking) review. The
@@ -2014,9 +2535,22 @@ export async function compileBriefAndScript(
 
   const [draftScript, bookends, seedQuestions] = await Promise.all([
     isNews
-      ? generateNewsPodcastScript(resolvedInput, markdownContent, show, confidence)
-      : generatePodcastScript(resolvedInput, markdownContent, show, confidence),
-    generateEpisodeBookends(resolvedInput, markdownContent, show, confidence),
+      ? generateNewsPodcastScript(
+          resolvedInput,
+          markdownContent,
+          show,
+          confidence,
+          visualSubjectBible?.subjects
+        )
+      : generatePodcastScript(
+          resolvedInput,
+          markdownContent,
+          show,
+          confidence,
+          null,
+          visualSubjectBible?.subjects
+        ),
+    generateEpisodeBookends(resolvedInput, markdownContent, show, confidence, correctionContext),
     isNews
       ? generateSeedQuestions(resolvedInput, markdownContent)
       : Promise.resolve<string[]>([]),
@@ -2024,40 +2558,37 @@ export async function compileBriefAndScript(
 
   report('podcast', 60)
 
-  let podcastScript: PodcastScript | null = draftScript
-  let scriptRevised = false
-  // The editorial review re-parses the script as plain text, which would strip
-  // the News structured frame metadata (scene/mood/spanGroup). News already
-  // folds the editorial self-check into the brief, so we use its structured
-  // script directly; other shows still get the review pass.
-  if (draftScript && !isNews) {
-    report('podcast', 66)
-    const scriptReview = await reviewPodcastScript(
-      {
-        title: input.title,
-        language: input.language,
-        category: resolvedCategory,
-        markdown: markdownContent,
-        script: draftScript,
-        hostA: coHost(show).name,
-        hostB: leadHost(show).name,
-        hostNames: show.hosts.map((h) => h.name),
-        format: show.format,
-        editorialNotes: null,
-      },
-      (raw) => parsePodcastScript(raw, show),
-      trimScriptToLimits
-    )
-    podcastScript = scriptReview.script
-    scriptRevised = scriptReview.revised
-  }
+  const podcastScript: PodcastScript | null = draftScript
+  const episodeScript = podcastScript
+    ? applyFrameSceneValidation(
+        assembleEpisode(podcastScript, bookends, resolvedInput, show),
+        visualSubjectBible?.subjects,
+        resolvedInput.title
+      )
+    : null
 
-  const episodeScript = podcastScript ? assembleEpisode(podcastScript, bookends, resolvedInput, show) : null
+  if (episodeScript) {
+    const existingMeta = (await prisma.story.findUnique({
+      where: { id: draftStoryId },
+      select: { sourcesVerified: true },
+    }))?.sourcesVerified as Record<string, unknown> | null
+    await prisma.story.update({
+      where: { id: draftStoryId },
+      data: {
+        sourcesVerified: {
+          ...(existingMeta ?? {}),
+          episodeScriptDraft: serializeEpisodeScriptDraft(episodeScript) as object,
+        },
+      },
+    })
+  } else {
+    console.error('[generate-story] no episode script assembled for', draftStoryId)
+  }
 
   report('podcast', 72)
 
   return {
-    storyId: draftStory.id,
+    storyId: draftStoryId,
     episodeScript,
     context: {
       markdownContent,
@@ -2070,9 +2601,10 @@ export async function compileBriefAndScript(
       sources: sources.map((s) => ({ title: s.title, uri: s.uri, domain: s.domain })),
       reliabilityIndex,
       thumbnailUrl,
-      scriptRevised,
+      scriptRevised: false,
       resolvedInput,
       seedQuestions,
+      visualSubjectBible,
     },
   }
 }
@@ -2097,7 +2629,7 @@ export async function synthesizeAndFinalize(
     }
   }
 
-  const { storyId, episodeScript, context } = brief
+  const { storyId, episodeScript: briefEpisodeScript, context } = brief
   const {
     markdownContent,
     taxonomyKey,
@@ -2108,18 +2640,39 @@ export async function synthesizeAndFinalize(
     showMeta,
     sources,
     reliabilityIndex,
-    thumbnailUrl,
     scriptRevised,
     resolvedInput,
     seedQuestions,
+    visualSubjectBible,
   } = context
 
+  const subjectBible = visualSubjectBible?.subjects ?? []
+
   const show = resolveShow({ contentType: podcastType, category: resolvedInput.category })
+
+  let episodeScript = briefEpisodeScript
+  if (!episodeScript) {
+    const row = await prisma.story.findUnique({
+      where: { id: storyId },
+      select: { sourcesVerified: true },
+    })
+    episodeScript = deserializeEpisodeScriptDraft(
+      (row?.sourcesVerified as { episodeScriptDraft?: unknown } | null)?.episodeScriptDraft
+    ) as PodcastScript | null
+    if (episodeScript) {
+      console.warn('[generate-story] recovered episode script from story draft for', storyId)
+    }
+  }
 
   let audio: Awaited<ReturnType<typeof synthesizePodcastAudio>> = null
   try {
     audio = episodeScript
-      ? await synthesizePodcastAudio(episodeScript, resolvedInput, show)
+      ? await synthesizePodcastAudio(
+          episodeScript,
+          resolvedInput,
+          show,
+          subjectBible.length > 0 ? subjectBible : undefined
+        )
       : null
     if (episodeScript && !audio) {
       console.error('[generate-story] audio synthesis returned no segments for', storyId)
@@ -2131,6 +2684,14 @@ export async function synthesizeAndFinalize(
 
   report('saving', 94)
   const domainCount = new Set(sources.map((s) => s.domain)).size
+  const priorMeta = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: { sourcesVerified: true },
+  })
+  const priorSources =
+    priorMeta?.sourcesVerified && typeof priorMeta.sourcesVerified === 'object'
+      ? (priorMeta.sourcesVerified as Record<string, unknown>)
+      : {}
   const story = await prisma.story.update({
     where: { id: storyId },
     data: {
@@ -2138,9 +2699,11 @@ export async function synthesizeAndFinalize(
       audioUrl: audio?.url ?? null,
       durationSeconds: audio?.durationSeconds ?? null,
       reliabilityIndex,
-      thumbnailUrl,
+      // Thumbnail is set at compile (channel fallback) and upgraded in parallel
+      // by generateAndStoreEpisodeThumbnail — do not overwrite a blob URL here.
       isCached: true,
       sourcesVerified: {
+        ...priorSources,
         taxonomyKey,
         topicKey,
         compiledAt,
@@ -2151,6 +2714,17 @@ export async function synthesizeAndFinalize(
         sourceCount: sources.length,
         domainCount,
         audioSegments: audio?.segments ? (serializeAudioSegments(audio.segments) as object[]) : null,
+        ...(episodeScript
+          ? { episodeScriptDraft: serializeEpisodeScriptDraft(episodeScript) as object }
+          : {}),
+        ...(visualSubjectBible
+          ? { visualSubjectBible: JSON.parse(JSON.stringify(visualSubjectBible)) as object }
+          : {}),
+        audioStatus: audio?.url ? 'ready' : 'failed',
+        generating: false,
+        ...(resolvedInput.countryPerspective?.trim()
+          ? { countryPerspective: resolvedInput.countryPerspective.trim() }
+          : {}),
         ...(seedQuestions.length > 0 ? { seedQuestions } : {}),
         editorialReview: {
           editorialFoldedIntoDraft: true,
@@ -2162,6 +2736,121 @@ export async function synthesizeAndFinalize(
 
   report('done', 100)
   return { ...story, audioSegments: audio?.segments ?? null }
+}
+
+/**
+ * Re-synthesize episode audio for a story whose briefing exists but audio failed
+ * or was never produced. Reuses a persisted episode script when available;
+ * otherwise regenerates script + bookends from the stored briefing markdown.
+ */
+export async function resynthesizeEpisodeAudioFromBrief(
+  storyId: string,
+  input: Omit<GenerateStoryInput, 'userId' | 'generationId'>
+): Promise<{ url: string; durationSeconds: number; segments: AudioSegment[] } | null> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: {
+      title: true,
+      language: true,
+      category: true,
+      markdownContent: true,
+      reliabilityIndex: true,
+      sourcesVerified: true,
+    },
+  })
+  if (!story?.markdownContent?.trim()) return null
+
+  const meta = (story.sourcesVerified ?? {}) as {
+    contentType?: ContentType
+    episodeScriptDraft?: unknown
+    sourceCount?: number
+    domainCount?: number
+  }
+  const podcastType = input.contentType ?? meta.contentType ?? typeForCategory(story.category)
+  const show = resolveShow({ contentType: podcastType, category: story.category })
+  const subjectBible = readVisualSubjectBible(story.sourcesVerified)
+
+  let episodeScript = deserializeEpisodeScriptDraft(meta.episodeScriptDraft) as PodcastScript | null
+  if (!episodeScript) {
+    const confidence: ScriptConfidence = {
+      reliabilityIndex: story.reliabilityIndex ?? 5,
+      sourceCount: meta.sourceCount ?? 0,
+      domainCount: meta.domainCount ?? 0,
+    }
+    const resolvedInput = { ...input, title: input.title || story.title, language: input.language || story.language }
+    const draftScript =
+      podcastType === 'News'
+        ? await generateNewsPodcastScript(
+            resolvedInput,
+            story.markdownContent,
+            show,
+            confidence,
+            subjectBible.length > 0 ? subjectBible : undefined
+          )
+        : await generatePodcastScript(
+            resolvedInput,
+            story.markdownContent,
+            show,
+            confidence,
+            null,
+            (story.sourcesVerified as { visualSubjectBible?: VisualSubjectBible })?.visualSubjectBible?.subjects
+          )
+    if (!draftScript) return null
+    const bookends = await generateEpisodeBookends(resolvedInput, story.markdownContent, show, confidence)
+    episodeScript = applyFrameSceneValidation(
+      assembleEpisode(draftScript, bookends, resolvedInput, show),
+      subjectBible.length > 0 ? subjectBible : undefined,
+      resolvedInput.title
+    )
+    if (!episodeScript) return null
+  }
+
+  const audio = await synthesizePodcastAudio(
+    episodeScript,
+    input,
+    show,
+    subjectBible.length > 0 ? subjectBible : undefined
+  )
+  if (!audio) return null
+
+  const priorMeta = (story.sourcesVerified ?? {}) as Record<string, unknown>
+  await prisma.story.update({
+    where: { id: storyId },
+    data: {
+      audioUrl: audio.url,
+      durationSeconds: audio.durationSeconds,
+      sourcesVerified: {
+        ...priorMeta,
+        episodeScriptDraft: serializeEpisodeScriptDraft(episodeScript) as object,
+        audioSegments: serializeAudioSegments(audio.segments) as object[],
+        audioStatus: 'ready',
+        generating: false,
+      },
+    },
+  })
+
+  return audio
+}
+
+function pickSceneFromPodcastScript(
+  script: { turns: Array<{ role?: string; scene?: string }> } | null
+): string | null {
+  if (!script) return null
+  const bodyScene = script.turns.find((t) => t.role === 'body' && t.scene?.trim())?.scene?.trim()
+  if (bodyScene) return bodyScene
+  return script.turns.find((t) => t.scene?.trim())?.scene?.trim() ?? null
+}
+
+/**
+ * Best scene sentence from the compiled episode script for cover art — aligned
+ * with frame illustrations rather than a separate LLM guess from markdown.
+ */
+function pickEpisodeThumbnailScene(sourcesVerified: unknown): string | null {
+  return pickSceneFromPodcastScript(
+    deserializeEpisodeScriptDraft(
+      (sourcesVerified as { episodeScriptDraft?: unknown } | null)?.episodeScriptDraft
+    )
+  )
 }
 
 /**
@@ -2210,27 +2899,48 @@ export async function generateEpisodeThumbnail(args: {
   language?: string
   geoLabel?: string
   geoCountry?: string
+  subjectBible?: VisualSubject[]
+  /** When set, use the script-authored scene instead of a separate LLM concept. */
+  sceneFromScript?: string | null
 }): Promise<string | null> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null
 
   try {
-    const concept = await buildEpisodeThumbnailConcept(args.title, args.markdownContent)
-    const localeContext = buildLocaleVisualContext(args.language, args.geoLabel, args.geoCountry)
-    const prompt = [
-      'Premium, magazine-quality editorial cover illustration for a single podcast news episode.',
-      concept || args.title,
-      args.show.visualStyle,
+    const scriptScene = args.sceneFromScript?.trim()
+    const concept =
+      scriptScene ||
+      (await buildEpisodeThumbnailConcept(args.title, args.markdownContent))
+    const localeContext = buildAudienceVisualContext({
+      language: args.language,
+      countryPerspective: args.geoCountry,
+    })
+    const bibleBlock = formatSubjectBibleForPrompt(args.subjectBible ?? [], 500)
+    const storedPrompt = [
+      `PRIMARY SCENE (render this exactly): Infographic editorial podcast cover — ${concept || args.title}`,
+      bibleBlock,
+      frameIllustrationStyle(),
       localeContext,
-      'Square 1:1 composition, striking and specific to the subject, strong focal point, cinematic lighting. ABSOLUTELY NO text, letters, words, numbers, captions, titles, labels, signage, logos, watermarks, or typography of any kind anywhere in the image.',
+      'Square 1:1 composition, strong focal point, clean diagrammatic layout.',
+      NO_TEXT_SPELLING_GUARDRAILS,
     ]
       .filter((part) => part && part.trim())
       .join('\n\n')
 
-    const buffer = await vertexGenerateImage(prompt, {
+    const prompt = promptForImagenRender(storedPrompt, {
+      style: frameIllustrationStyle(),
+      localeContext,
+      maxChars: 1200,
+    })
+
+    const result = await vertexGenerateImage(prompt, {
       aspectRatio: '1:1',
       personGeneration: 'allow_adult',
     })
-    if (!buffer) return null
+    const buffer = result.buffer
+    if (!buffer) {
+      console.error('[generate-story] episode thumbnail Imagen failed:', result.error ?? 'unknown')
+      return null
+    }
 
     const slug = args.title.slice(0, 32).replace(/\W/g, '-')
     const blob = await put(`clearsight/thumbnails/${Date.now()}-${slug}.png`, buffer, {
@@ -2240,6 +2950,59 @@ export async function generateEpisodeThumbnail(args: {
     return blob.url
   } catch (err) {
     console.error('[generate-story] episode thumbnail generation failed', err)
+    return null
+  }
+}
+
+export function isStorySpecificEpisodeThumbnail(url: string | null | undefined): boolean {
+  return isStorySpecificThumbnail(url)
+}
+
+export async function ensureEpisodeThumbnail(storyId: string): Promise<string | null> {
+  const story = await prisma.story.findUnique({
+    where: { id: storyId },
+    select: {
+      title: true,
+      language: true,
+      category: true,
+      markdownContent: true,
+      thumbnailUrl: true,
+      sourcesVerified: true,
+    },
+  })
+  if (!story?.markdownContent?.trim()) return null
+  if (!needsEpisodeThumbnail(story.thumbnailUrl)) return story.thumbnailUrl
+
+  const meta = (story.sourcesVerified ?? {}) as {
+    contentType?: ContentType
+    showId?: string
+    countryPerspective?: string
+  }
+  const podcastType = meta.contentType ?? typeForCategory(story.category)
+  const show =
+    (meta.showId ? showById(meta.showId) : null) ??
+    resolveShow({ contentType: podcastType, category: story.category })
+  const perspective = meta.countryPerspective?.trim()
+  const subjectBible = readVisualSubjectBible(story.sourcesVerified)
+  const sceneFromScript = pickEpisodeThumbnailScene(story.sourcesVerified)
+
+  const url = await generateEpisodeThumbnail({
+    title: story.title,
+    markdownContent: story.markdownContent,
+    show,
+    language: story.language,
+    geoLabel: perspective,
+    geoCountry: perspective,
+    subjectBible,
+    sceneFromScript,
+  })
+  if (!url) return null
+
+  try {
+    await prisma.story.update({ where: { id: storyId }, data: { thumbnailUrl: url } })
+    return url
+  } catch (err) {
+    console.error('[generate-story] failed to persist ensured episode thumbnail', err)
     return null
   }
 }
@@ -2257,16 +3020,17 @@ export async function generateAndStoreEpisodeThumbnail(brief: CompiledBrief): Pr
     resolveShow({ contentType: context.podcastType, category: context.resolvedInput.category })
 
   const geo = context.resolvedInput
-  const geoLabel =
-    geo.geoLocal || geo.geoState || geo.geoCountry || geo.geoRegion || undefined
+  const perspective = geo.countryPerspective?.trim()
 
   const url = await generateEpisodeThumbnail({
     title: context.resolvedInput.title,
     markdownContent: context.markdownContent,
     show,
     language: geo.language,
-    geoLabel,
-    geoCountry: geo.geoCountry,
+    geoLabel: perspective,
+    geoCountry: perspective,
+    subjectBible: context.visualSubjectBible?.subjects,
+    sceneFromScript: pickSceneFromPodcastScript(brief.episodeScript),
   })
   if (!url) return null
 

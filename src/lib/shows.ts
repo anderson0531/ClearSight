@@ -382,9 +382,9 @@ export const SHOW_NEWS = makeShow({
   id: 'clearsight-brief',
   name: 'The ClearSight Brief',
   description:
-    'The flagship ClearSight news desk. Dr. Anderson and Sarah Chen cut through the noise with dense, even-handed analysis of the day’s most consequential stories — steel-manning every side and forecasting what comes next, across politics, business, technology, science, and more.',
+    'The flagship ClearSight news desk. Dr. Anderson and Sarah Chen cut through the noise with dense, even-handed analysis of the day’s most consequential stories — steel-manning every side and forecasting what comes next, across politics, business, finance, technology, science, health, sports, crime, and world affairs.',
   focus:
-    'Current events and consequential news across politics, business, economics, technology, science, world affairs, and society — analyzed with even-handed, evidence-based depth.',
+    'Current events and consequential news across politics, business, finance, economics, technology, science, health, sports, crime, world affairs, and society — analyzed with even-handed, evidence-based depth.',
   introTagline:
     'Welcome to The ClearSight Brief, your unbiased deep-dive into the stories that matter — where we steel-man every side and forecast what comes next.',
   contentType: 'News',
@@ -396,12 +396,12 @@ export const SHOW_NEWS = makeShow({
     'Cold open: skip the preamble — Sarah hits the listener with the single highest-stakes data point or event; Benjamin frames the core tension in one move',
     'Dialectical deep dive, Phase 1 (Side A): Sarah makes the strongest case for one side using hard metrics; Benjamin supplies the analytical context for why it holds weight',
     'Dialectical deep dive, Phase 2 (Side B): Sarah pivots sharply to steel-man the opposing side, surfacing anomalies and counter-arguments; Benjamin breaks down the structural incentives driving it',
-    'Forecast & exit: Benjamin delivers a multi-factor forecast of what to watch next; Sarah leaves the listener with one vital question to ponder — no verdict, no conclusion',
+    'Close: Dr. Benjamin Anderson delivers a definitive summary separating verified briefing facts from prevalent online myths; Sarah\'s CTA (after the body) transitions into Ask the Host — no verdict, no conclusion label',
   ],
   scriptPhilosophy:
     'SHOW PHILOSOPHY — "The ClearSight Brief": Cut through the noise with dense, even-handed analysis of one consequential story. Map the evidence transparently and steel-man EVERY perspective at its maximum intellectual strength. Do NOT take a side, do NOT patronize with summaries, and do NOT deliver a definitive final verdict or a section labeled "Conclusion" — present the balanced evidence as a conversational "table of evidence" and let the listener decide.\n' +
     'STRUCTURE THE DEBATE AS A DIALECTIC: Phase 1 builds Side A on hard metrics with Benjamin\'s context; Phase 2 sharply steel-mans Side B with the structural incentives behind it. Both sides must be presented at full strength.\n' +
-    'RETENTION & AUDIO RULES: Write for the EAR, not the eye — short, varied sentence lengths, natural contractions (it\'s, they\'re, what\'s), and conversational transitions. Open on the highest-stakes point, not a greeting. Hosts must talk WITH each other in rapid hand-offs with frequent micro-agreement and pushback ("Let\'s push back on that…", "But the counter-metric here is…") — never long uninterrupted essays. Sarah is the sharp, fast, probing driver; Benjamin is the calm, authoritative anchor who supplies structural and historical context and the forecast. Target roughly 700-750 spoken words.',
+    'RETENTION & AUDIO RULES: Write for the EAR, not the eye — short, varied sentence lengths, natural contractions (it\'s, they\'re, what\'s), and conversational transitions. Open on the highest-stakes point, not a greeting. Hosts must talk WITH each other in rapid hand-offs with frequent micro-agreement and pushback ("Let\'s push back on that…", "But the counter-metric here is…") — never long uninterrupted essays. Sarah is the sharp, fast, probing driver; Benjamin is the calm, authoritative anchor who supplies structural and historical context. CLOSING: Benjamin owns the epistemic close (verified facts vs. online myths); Sarah owns the interactive handoff into Ask the Host after the body. Target roughly 700-750 spoken words.',
   noVerdict: true,
   sceneDirectorNotes:
     'Scene: modern intelligence newsroom. Tone: analytical, dense, energetic — no fluff. Pace: natural with thoughtful pauses.',
@@ -1469,15 +1469,18 @@ export interface ResolveShowInput {
 }
 
 /**
- * Resolves the show for a generation. Keys first on the explicit category/topic
- * (e.g. "Career & Job Market" → The Pivot), then on the content type's default
- * show, and finally on News.
+ * Resolves the show for a generation. News always uses the single news desk
+ * channel; category is for discovery only. Other types map category → dedicated
+ * show when the category belongs to the same content type.
  */
 export function resolveShow(input: ResolveShowInput): Show {
-  const byCategory = input.category ? SHOW_BY_CATEGORY[input.category.toLowerCase()] : undefined
-  if (byCategory) return byCategory
-
   const type = input.contentType ?? (input.category ? typeForCategory(input.category) : 'News')
+
+  if (type === 'News') return SHOW_NEWS
+
+  const byCategory = input.category ? SHOW_BY_CATEGORY[input.category.toLowerCase()] : undefined
+  if (byCategory && byCategory.contentType === type) return byCategory
+
   return DEFAULT_SHOW_BY_TYPE[type] ?? SHOW_NEWS
 }
 

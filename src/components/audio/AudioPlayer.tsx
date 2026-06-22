@@ -133,6 +133,11 @@ export function AudioPlayer() {
     const music = musicRef.current
     if (!music || !currentTrack) return
 
+    if (currentTrack.disableBackgroundMusic) {
+      music.pause()
+      return
+    }
+
     const bed = musicBedForRole(currentSegment?.role)
 
     if (!bed) {
