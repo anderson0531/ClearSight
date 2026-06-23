@@ -13,9 +13,9 @@ export const HOST_VOICES = {
   },
   benjamin: {
     voiceId: 'Algenib',
-    speakingRate: 1.0,
+    speakingRate: 1.08,
     style:
-      "Calm, objective, data-driven analytical anchor. Steady, intelligent cadence — a grounding acoustic contrast to Sarah's high-energy inquiry. Never condescending; deliver complex data through crisp physical analogies. Never read bracket tags aloud.",
+      'Engaged conversational analyst — confident, energetic, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
   },
 }
 

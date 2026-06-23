@@ -8,7 +8,7 @@
 
 /** Show id → pre-generated, tap-to-play channel intro audio URL. */
 export const SHOW_INTRO_AUDIO: Record<string, string> = {
-  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-intro-trailer-EVdTjccTpQw8GmUftZrN8fVHLBr46W.mp3",
+  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-intro-trailer-yTXqOCB7EHvVYgXjYfoJMSljv7f4V6.mp3",
   "clearsight-academy": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-academy-intro-wYksJn2m2sRudHkS0yGfAPmTUhCJJV.mp3",
   "the-pivot": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-pivot-intro-YNQPjq0B01928yMbYe5A8mQ1hznQ3Q.mp3",
   "the-casefile": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-casefile-intro-s1U4YlRYXeIMit9SGqsYP1G0ZdCbso.mp3",
