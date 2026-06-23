@@ -24,6 +24,7 @@
     "generate:host-art": "node scripts/generate-host-art.mjs",
     "generate:pwa-icons": "node scripts/upload-pwa-icons.mjs",
     "generate:show-intros": "node scripts/generate-show-intros.mjs",
+    "generate:clearsight-brief-intro": "node scripts/generate-clearsight-brief-intro.mjs",
     "generate:vapid": "node scripts/generate-vapid-keys.mjs",
     "db:gcp": "node scripts/start-gcp-db.mjs",
     "db:push": "node scripts/db-push.mjs"
@@ -56,6 +57,8 @@
     "@types/web-push": "^3.6.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",

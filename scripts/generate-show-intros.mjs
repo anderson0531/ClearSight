@@ -29,16 +29,8 @@ const TTS_MAX_ATTEMPTS = 4
 // Each show's branded welcome, synthesized in the lead host's voice. The lead
 // host is the LAST host in the show's `hosts` array (see leadHost in
 // src/lib/generate-story.ts), so these voices mirror the show registry.
+// clearsight-brief uses scripts/generate-clearsight-brief-intro.mjs (dual-host trailer).
 const SHOW_INTROS = [
-  {
-    id: 'clearsight-brief',
-    tagline:
-      'Welcome to The ClearSight Brief, your unbiased deep-dive into the stories that matter — where we steel-man every side and forecast what comes next.',
-    voiceId: 'Algenib',
-    speakingRate: 1.0,
-    style:
-      'Seasoned anchor and lead analyst. Intelligent and thoughtful — grounded, calm, and authoritative, with a natural conversational broadcast delivery at a normal pace.',
-  },
   {
     id: 'clearsight-academy',
     tagline:
