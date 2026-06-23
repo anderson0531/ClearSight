@@ -218,6 +218,21 @@ model PushSubscription {
   @@index([userId])
 }
 
+model ChannelIntroAudio {
+  id            String           @id @default(cuid())
+  showId        String
+  language      String
+  status        GenerationStatus @default(QUEUED)
+  audioUrl      String?
+  audioSegments Json?
+  errorMessage  String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([showId, language])
+  @@index([showId])
+}
+
 model AffiliateReferral {
   id             String   @id @default(cuid())
   affiliateCode  String

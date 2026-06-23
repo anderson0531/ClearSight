@@ -26,6 +26,10 @@ import {
   HOST_VOICES,
   INTRO_MUSIC,
 } from './clearsight-brief-intro-script.mjs'
+import { applyBriefIntroFrameImages } from './clearsight-brief-intro-images.mjs'
+import {
+  buildIntroTtsPrompt,
+} from './intro-tts.mjs'
 
 let ffmpegPath = 'ffmpeg'
 let ffprobePath = 'ffprobe'
@@ -53,14 +57,68 @@ async function resolveFfmpegBinaries() {
 
 const ROOT = process.cwd()
 const SHOW_AUDIO_PATH = join(ROOT, 'src/lib/show-audio.ts')
+const SHOW_INTRO_ANIMATIC_PATH = join(ROOT, 'src/lib/show-intro-animatic.ts')
 const SHOW_ID = 'clearsight-brief'
+
+const SPEAKER_NAMES = {
+  sarah: 'Sarah Chen',
+  benjamin: 'Dr. Benjamin Anderson',
+}
+
+const ACT_ROLES = ['intro', 'body', 'cta']
+
+function themeDurationSeconds(key) {
+  if (key === 'themeIntro') return INTRO_MUSIC.themeIntro.durationSeconds
+  if (key === 'sting') return INTRO_MUSIC.sting.durationSeconds
+  if (key === 'themeOutro') return INTRO_MUSIC.themeOutro.durationSeconds
+  return 0
+}
+
+function buildActTimeline(act, actIndex, lineDurationsSeconds) {
+  const role = ACT_ROLES[actIndex] ?? 'body'
+  const frames = []
+  let offset = 0
+
+  if (act.music.prependTheme) {
+    offset += themeDurationSeconds(act.music.prependTheme)
+  }
+
+  act.lines.forEach((line, lineIndex) => {
+    const durationSeconds = lineDurationsSeconds[lineIndex] ?? 0
+    if (durationSeconds <= 0) return
+    frames.push({
+      url: '',
+      durationSeconds,
+      startOffsetSeconds: offset,
+      text: line.text,
+      speaker: SPEAKER_NAMES[line.speaker] ?? line.speaker,
+      role,
+      frameKind: 'scene',
+    })
+    offset += durationSeconds
+  })
+
+  return frames
+}
+
+function mergeTrailerTimeline(actResults) {
+  const merged = []
+  let cumulative = 0
+  for (const result of actResults) {
+    for (const frame of result.frames) {
+      merged.push({
+        ...frame,
+        startOffsetSeconds: cumulative + (frame.startOffsetSeconds ?? 0),
+      })
+    }
+    cumulative += result.actDurationSeconds
+  }
+  return merged
+}
 
 const TTS_MODEL = process.env.VERTEX_TTS_MODEL ?? 'gemini-2.5-flash-tts'
 const TTS_MAX_ATTEMPTS = 4
 const LINE_DELAY_MS = 1500
-
-const TTS_VOICE_GUARDRAIL =
-  'Treat any [bracketed] cues as performance direction only — never say them aloud.'
 
 function loadDotEnv() {
   const envPath = join(ROOT, '.env')
@@ -174,13 +232,13 @@ function sanitizeSpokenText(text) {
   return text.replace(/\s{2,}/g, ' ').trim()
 }
 
-async function synthesizeLine(token, speaker, text, attempt = 1) {
+async function synthesizeLine(token, speaker, text, { strict = false, attempt = 1 } = {}) {
   const voice = HOST_VOICES[speaker]
   if (!voice) throw new Error(`Unknown speaker: ${speaker}`)
 
   const body = {
     input: {
-      prompt: `${voice.style} ${TTS_VOICE_GUARDRAIL}`,
+      prompt: buildIntroTtsPrompt(voice.style, strict),
       text: sanitizeSpokenText(text),
     },
     voice: {
@@ -207,7 +265,7 @@ async function synthesizeLine(token, speaker, text, attempt = 1) {
 
     if ((res.status === 429 || res.status >= 500) && attempt < TTS_MAX_ATTEMPTS) {
       await sleep(attempt * 4000)
-      return synthesizeLine(token, speaker, text, attempt + 1)
+      return synthesizeLine(token, speaker, text, { strict, attempt: attempt + 1 })
     }
 
     if (!res.ok) {
@@ -218,7 +276,7 @@ async function synthesizeLine(token, speaker, text, attempt = 1) {
     if (!data.audioContent) {
       if (attempt < TTS_MAX_ATTEMPTS) {
         await sleep(attempt * 2000)
-        return synthesizeLine(token, speaker, text, attempt + 1)
+        return synthesizeLine(token, speaker, text, { strict, attempt: attempt + 1 })
       }
       throw new Error('empty audioContent')
     }
@@ -226,10 +284,14 @@ async function synthesizeLine(token, speaker, text, attempt = 1) {
   } catch (err) {
     if (attempt < TTS_MAX_ATTEMPTS) {
       await sleep(attempt * 3000)
-      return synthesizeLine(token, speaker, text, attempt + 1)
+      return synthesizeLine(token, speaker, text, { strict, attempt: attempt + 1 })
     }
     throw err
   }
+}
+
+async function synthesizeIntroLine(token, speaker, text, label) {
+  return synthesizeLine(token, speaker, text)
 }
 
 function writeConcatList(filePaths, listPath) {
@@ -292,18 +354,22 @@ function resolveMusicKey(key) {
 
 async function buildActSegment(act, actIndex, workDir, token, musicCache) {
   const linePaths = []
+  const lineDurationsSeconds = []
   let lineNum = 0
 
   for (const line of act.lines) {
     lineNum += 1
     const label = `act${actIndex + 1}-line${String(lineNum).padStart(2, '0')}-${line.speaker}`
     console.log(`[generate-clearsight-brief-intro] TTS ${label}...`)
-    const buffer = await synthesizeLine(token, line.speaker, line.text)
+    const buffer = await synthesizeIntroLine(token, line.speaker, line.text, label)
     const linePath = join(workDir, `${label}.mp3`)
     writeFileSync(linePath, buffer)
     linePaths.push(linePath)
+    lineDurationsSeconds.push(probeDurationSeconds(linePath))
     await sleep(LINE_DELAY_MS)
   }
+
+  const frames = buildActTimeline(act, actIndex, lineDurationsSeconds)
 
   const dialoguePath = join(workDir, `${act.id}-dialogue.mp3`)
   concatAudio(linePaths, dialoguePath, true)
@@ -352,9 +418,9 @@ async function buildActSegment(act, actIndex, workDir, token, musicCache) {
 
   const actPath = join(workDir, `${act.id}-final.mp3`)
   concatAudio(segmentParts, actPath, true)
-  const duration = probeDurationSeconds(actPath)
-  console.log(`[generate-clearsight-brief-intro] ${act.id} assembled (${duration.toFixed(1)}s)`)
-  return actPath
+  const actDurationSeconds = probeDurationSeconds(actPath)
+  console.log(`[generate-clearsight-brief-intro] ${act.id} assembled (${actDurationSeconds.toFixed(1)}s)`)
+  return { actPath, frames, actDurationSeconds }
 }
 
 function readExistingAudio() {
@@ -390,6 +456,24 @@ ${entries}
   writeFileSync(SHOW_AUDIO_PATH, content, 'utf8')
 }
 
+function writeShowIntroAnimaticFile(segments) {
+  const content = `/**
+ * Generated English channel intro animatic frames for The ClearSight Brief.
+ *
+ * Overwritten by \`npm run generate:clearsight-brief-intro\`.
+ */
+
+import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import type { AudioSegment } from '@/types/story'
+
+/** Show id → intro animatic frames (English). */
+export const SHOW_INTRO_ANIMATIC: Record<string, AudioSegment[]> = {
+  [CLEARSIGHT_BRIEF_SHOW_ID]: ${JSON.stringify(segments, null, 2)} as AudioSegment[],
+}
+`
+  writeFileSync(SHOW_INTRO_ANIMATIC_PATH, content, 'utf8')
+}
+
 async function uploadAudio(buffer) {
   const blob = await put(`clearsight/shows/${SHOW_ID}-intro-trailer.mp3`, buffer, {
     access: 'public',
@@ -404,7 +488,9 @@ async function main() {
   loadDotEnv()
   await resolveFfmpegBinaries()
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  const animaticOnly = process.argv.includes('--animatic-only')
+
+  if (!animaticOnly && !process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error('BLOB_READ_WRITE_TOKEN is required in .env')
   }
 
@@ -414,14 +500,27 @@ async function main() {
   try {
     const token = await getAccessToken()
     const musicCache = {}
-    const actPaths = []
+    const actResults = []
 
     for (const [index, act] of CLEARSIGHT_BRIEF_INTRO.acts.entries()) {
-      actPaths.push(await buildActSegment(act, index, workDir, token, musicCache))
+      actResults.push(await buildActSegment(act, index, workDir, token, musicCache))
     }
 
     const finalPath = join(workDir, 'clearsight-brief-intro-trailer.mp3')
-    concatAudio(actPaths, finalPath, true)
+    concatAudio(
+      actResults.map((result) => result.actPath),
+      finalPath,
+      true
+    )
+
+    const timeline = applyBriefIntroFrameImages(mergeTrailerTimeline(actResults))
+    writeShowIntroAnimaticFile(timeline)
+    console.log(`[generate-clearsight-brief-intro] Wrote ${timeline.length} animatic frames`)
+
+    if (animaticOnly) {
+      console.log('[generate-clearsight-brief-intro] --animatic-only: skipped MP3 upload and show-audio update')
+      return
+    }
 
     const durationSeconds = probeDurationSeconds(finalPath)
     console.log(

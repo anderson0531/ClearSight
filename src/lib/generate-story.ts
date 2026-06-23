@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { buildTaxonomyKey, categoriesForContentType, CONTENT_CATEGORIES, GEO_SCOPES, isContentType, isTopCategory, normalizeGeoTags, typeForCategory, type ContentType, type GeoScope, type GeoTags } from '@/lib/taxonomy'
 import { normalizeTitle } from '@/lib/normalize-title'
 import { getLocaleByEnglishName } from '@/i18n/locales'
+import { resolveGeminiTtsLanguageCode } from '@/lib/gemini-tts-locale'
 import { evaluatePreviousClaims } from '@/lib/accountability-ledger'
 import {
   getVertexAccessToken,
@@ -218,7 +219,7 @@ function geoFocusLabel(input: Omit<GenerateStoryInput, 'userId' | 'generationId'
 function getVoiceForLanguage(language: string) {
   const locale = getLocaleByEnglishName(language)
   return {
-    languageCode: locale.ttsLanguageCode,
+    languageCode: resolveGeminiTtsLanguageCode(locale),
     name: locale.ttsVoice,
   }
 }

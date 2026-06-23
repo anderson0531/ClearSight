@@ -2,20 +2,22 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Heart, Pause, Play } from 'lucide-react'
-import { useTranslations } from '@/i18n/I18nProvider'
+import { Heart, Loader2, Pause, Play } from 'lucide-react'
+import { useTranslations, useI18n } from '@/i18n/I18nProvider'
 import { useTranslatedTexts } from '@/lib/use-translated'
 import type { Show } from '@/lib/shows'
 import { FAVORITES_EVENT, isChannelFollowed, toggleFollowChannel } from '@/lib/favorites'
 import { CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
+import { useChannelIntro } from '@/hooks/useChannelIntro'
+import { ChannelIntroHeroAnimatic } from '@/components/channel/ChannelIntroHeroAnimatic'
+import { useAudioQueue } from '@/store/useAudioQueue'
 
 export function ChannelHeader({ show }: { show: Show }) {
   const t = useTranslations()
+  const { locale } = useI18n()
   const typeKey = CONTENT_TYPE_MESSAGE_KEYS[show.contentType]
   const typeLabel = typeKey ? t(typeKey) : show.contentType
 
-  // Channel registry text (name, description, host roles/bios) is authored in
-  // English; translate it on the fly for non-English locales.
   const translatable = [
     show.name,
     show.description,
@@ -41,31 +43,78 @@ export function ChannelHeader({ show }: { show: Show }) {
     }
   }, [show.id])
 
-  // Short, standalone channel intro clip (not part of the global player queue).
   const introRef = useRef<HTMLAudioElement | null>(null)
   const [introPlaying, setIntroPlaying] = useState(false)
+  const pendingPlayRef = useRef(false)
+
+  const pauseGlobalAudio = useAudioQueue((s) => s.pause)
+
+  const { introUrl, introSegments, state, error, canShowIntro, framesReady, ensureFramesReady, prepareAndPlay, retry } = useChannelIntro(
+    show.id,
+    locale.englishName,
+    show.introAudio,
+    show.coverImage
+  )
+
+  const playIntro = async (url: string) => {
+    const el = introRef.current
+    if (!el) return
+    pauseGlobalAudio()
+    await ensureFramesReady()
+    el.src = url
+    el.load()
+    void el.play().catch(() => setIntroPlaying(false))
+  }
+
+  useEffect(() => {
+    if (introUrl && pendingPlayRef.current && state === 'ready') {
+      pendingPlayRef.current = false
+      playIntro(introUrl)
+    }
+  }, [introUrl, state])
+
   const toggleIntro = () => {
     const el = introRef.current
     if (!el) return
-    if (el.paused) {
-      void el.play().catch(() => setIntroPlaying(false))
-    } else {
+    if (!el.paused) {
       el.pause()
+      pendingPlayRef.current = false
+      return
     }
+    if (introUrl && state === 'ready') {
+      playIntro(introUrl)
+      return
+    }
+    pendingPlayRef.current = true
+    void prepareAndPlay(playIntro)
   }
+
+  const introBusy = state === 'preparing' || (Boolean(introSegments?.length) && !framesReady)
+  const introFailed = state === 'failed'
+  const showHeroAnimatic = Boolean(introSegments?.length)
 
   return (
     <header>
       <div className="channel-hero-bleed">
         <div className="channel-hero">
-          <Image
-            src={show.coverImage}
-            alt={show.name}
-            fill
-            priority
-            sizes="100vw"
-            className="channel-hero-img"
-          />
+          {!introPlaying ? (
+            <Image
+              src={show.coverImage}
+              alt={show.name}
+              fill
+              priority
+              sizes="100vw"
+              className="channel-hero-img"
+            />
+          ) : null}
+          {introSegments?.length ? (
+            <ChannelIntroHeroAnimatic
+              segments={introSegments}
+              audioRef={introRef}
+              playing={introPlaying}
+              posterImage={show.coverImage}
+            />
+          ) : null}
           <div className="channel-hero-overlay" />
           <div className="channel-hero-body">
           <span className="show-card-type">{typeLabel}</span>
@@ -81,26 +130,42 @@ export function ChannelHeader({ show }: { show: Show }) {
               <Heart className={`h-4 w-4 ${following ? 'fill-current' : ''}`} />
               {following ? t('channelFollowing') : t('channelFollow')}
             </button>
-            {show.introAudio ? (
+            {canShowIntro ? (
               <button
                 type="button"
-                onClick={toggleIntro}
+                onClick={introFailed ? () => void retry() : toggleIntro}
                 className="channel-intro-btn"
                 aria-pressed={introPlaying}
+                disabled={introBusy}
               >
-                {introPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                {introPlaying ? t('channelPauseIntro') : t('channelPlayIntro')}
+                {introBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : introPlaying ? (
+                  <Pause className="h-4 w-4" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                {introBusy
+                  ? t('channelIntroPreparing')
+                  : introFailed
+                    ? t('channelIntroFailed')
+                    : introPlaying
+                      ? t('channelPauseIntro')
+                      : t('channelPlayIntro')}
               </button>
             ) : null}
           </div>
+          {introFailed && error ? (
+            <p className="mt-2 text-xs text-[var(--muted-strong)]">{error}</p>
+          ) : null}
           </div>
         </div>
       </div>
-      {show.introAudio ? (
+      {canShowIntro ? (
         <audio
           ref={introRef}
-          src={show.introAudio}
-          preload="none"
+          src={introUrl ?? undefined}
+          preload="metadata"
           onPlay={() => setIntroPlaying(true)}
           onPause={() => setIntroPlaying(false)}
           onEnded={() => setIntroPlaying(false)}

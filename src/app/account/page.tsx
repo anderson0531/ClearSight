@@ -7,6 +7,7 @@ import { PageShell } from '@/components/layout/PageShell'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n, useTranslations } from '@/i18n/I18nProvider'
 import { CREDIT_PACKS, PLAN_DETAILS, PLANS, type Plan } from '@/lib/plans'
+import { formatCreditsDisplay } from '@/lib/credit-units'
 
 interface CreditTxn {
   id: string
@@ -287,7 +288,7 @@ export default function AccountPage() {
             <div className="flex items-center justify-between">
               <dt className="text-[var(--muted-strong)]">{t('creditsBalance')}</dt>
               <dd className="font-medium text-[var(--foreground)]">
-                {coreTokens != null ? t('creditsCount', { count: coreTokens }) : '—'}
+                {coreTokens != null ? t('creditsCount', { count: formatCreditsDisplay(coreTokens) }) : '—'}
               </dd>
             </div>
           </dl>
@@ -372,7 +373,7 @@ export default function AccountPage() {
                     className={`font-semibold ${txn.amount >= 0 ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}`}
                   >
                     {txn.amount >= 0 ? '+' : ''}
-                    {txn.amount}
+                    {formatCreditsDisplay(txn.amount)}
                   </span>
                 </li>
               ))}

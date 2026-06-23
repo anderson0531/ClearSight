@@ -87,6 +87,7 @@ export const SHOW_STUDIO_ART: Record<string, string> = {
 
 /** Show id → host-populated intro image URL (home-page show card). */
 export const SHOW_INTRO_ART: Record<string, string> = {
+  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png",
   "clearsight-academy": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-academy-intro-3Y4Q2A86YSFuBmR2zjndojMnHzDqLv.png",
   "the-pivot": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-pivot-intro-yrUZrqpJRxX8G49AefB7mxEnYZWKjE.png",
   "the-casefile": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-casefile-intro-AHOeXYlsmvl90kT9DR3EEUygO4UHqP.png",
@@ -99,6 +100,7 @@ export const SHOW_INTRO_ART: Record<string, string> = {
 
 /** Show id → fixed cover key-art URL (channel hero + channel cards). */
 export const SHOW_COVER_ART: Record<string, string> = {
+  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png",
   "clearsight-academy": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-academy-cover-mZsZK7dQhzDJ9JEJtVKy1FGaeDovAp.png",
   "the-pivot": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-pivot-cover-D04mX0KCsc5I10GX4AIfRIZMySTl2B.png",
   "the-casefile": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-casefile-cover-3ZFVUEdMFSpvUvaOqpDbyUzpcG89t9.png",

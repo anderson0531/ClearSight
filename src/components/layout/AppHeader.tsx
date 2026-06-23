@@ -16,6 +16,7 @@ import { CATEGORY_MESSAGE_KEYS, GEO_MESSAGE_KEYS, type MessageKey } from '@/i18n
 import { ClearSightLogo } from '@/components/layout/ClearSightLogo'
 import { GlobalLanguagePicker } from '@/components/layout/GlobalLanguagePicker'
 import { GeoFocusSelectors } from '@/components/layout/GeoFocusSelectors'
+import { formatCreditsDisplay } from '@/lib/credit-units'
 
 interface AppHeaderProps {
   value: TaxonomyFilter
@@ -142,7 +143,7 @@ export function AppHeader({
 
             {coreTokens != null ? (
               <Link href="/credits" className="credits-pill hidden sm:inline-flex">
-                {t('creditsCount', { count: coreTokens })}
+                {t('creditsCount', { count: formatCreditsDisplay(coreTokens) })}
               </Link>
             ) : null}
 
@@ -181,7 +182,7 @@ export function AppHeader({
                   onClick={() => setMenuOpen(false)}
                   className="credits-pill mt-2 justify-center"
                 >
-                  {t('creditsCount', { count: coreTokens })}
+                  {t('creditsCount', { count: formatCreditsDisplay(coreTokens) })}
                 </Link>
               ) : null}
             </div>

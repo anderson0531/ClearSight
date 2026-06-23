@@ -51,6 +51,22 @@ export interface MusicGenerationRequested {
   userId: string
 }
 
+/** Just-in-time localized channel intro audio generation. */
+export const CHANNEL_INTRO_REQUESTED = 'channel-intro.requested' as const
+
+export interface ChannelIntroRequested {
+  showId: string
+  language: string
+}
+
+/** Generate Imagen scene frames for an intro that already has audio + timeline metadata. */
+export const CHANNEL_INTRO_ILLUSTRATE_REQUESTED = 'channel-intro.illustrate.requested' as const
+
+export interface ChannelIntroIllustrateRequested {
+  showId: string
+  language: string
+}
+
 /**
  * Whether to run the Inngest SDK in Development Mode (no signing/event key, and
  * events/registration go to the local `inngest dev` server). Recent SDK

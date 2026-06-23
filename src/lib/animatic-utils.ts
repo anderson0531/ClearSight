@@ -198,3 +198,20 @@ export function animaticFramesIncomplete(
 ): boolean {
   return countPendingAnimaticFrames(segments, options).total > 0
 }
+
+export type AnimaticTransitionEffect = 'kenburns' | 'crossfade' | 'slide' | 'zoom'
+
+export function frameAnimationClass(effect: AnimaticTransitionEffect, index: number): string {
+  switch (effect) {
+    case 'kenburns':
+      return index % 2 === 0 ? 'ken-burns-a' : 'ken-burns-b'
+    case 'crossfade':
+      return 'animatic-fx-crossfade'
+    case 'slide':
+      return 'animatic-fx-slide'
+    case 'zoom':
+      return 'animatic-fx-zoom'
+    default:
+      return ''
+  }
+}

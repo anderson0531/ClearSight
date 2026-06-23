@@ -1,6 +1,6 @@
 'use client'
 
-import { Play } from 'lucide-react'
+import { Volume2 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import type { AudioSegment, AudioTrack } from '@/types/story'
@@ -29,8 +29,12 @@ export function StoryPlayButton({
 
   if (!audioUrl) {
     return (
-      <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-gray-500">
-        {t('audioUnavailable')}
+      <span
+        className="story-action-btn inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-500"
+        title={t('audioUnavailable')}
+        aria-label={t('audioUnavailable')}
+      >
+        <Volume2 className="h-4 w-4" />
       </span>
     )
   }
@@ -54,10 +58,11 @@ export function StoryPlayButton({
     <button
       type="button"
       onClick={handlePlay}
-      className="btn-accent"
+      className="btn-accent story-action-btn"
+      aria-label={isActive ? t('playing') : t('listen')}
+      title={isActive ? t('playing') : t('listen')}
     >
-      <Play className={`h-4 w-4 ${isActive ? '' : 'ms-0.5'}`} />
-      {isActive ? t('playing') : t('listen')}
+      <Volume2 className="h-4 w-4" />
     </button>
   )
 }

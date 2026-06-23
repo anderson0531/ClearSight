@@ -36,6 +36,8 @@ export type MusicMood =
 export interface AudioSegment {
   url: string
   durationSeconds: number
+  /** Position in a single mixed audio track (channel intro hero sync). */
+  startOffsetSeconds?: number
   speaker?: string
   role?: AudioSegmentRole
   imageUrl?: string | null
@@ -51,6 +53,10 @@ export interface AudioSegment {
    * as 'scene' for backward compatibility).
    */
   frameKind?: FrameKind
+  /** True when start/duration were probed from TTS output (channel intro sync). */
+  introTimelineProbed?: boolean
+  /** English template timings scaled client-side for cached localized audio. */
+  introTimelineBackfilled?: boolean
   /**
    * Emotional palette for the ducked underscore beneath this frame (News).
    */

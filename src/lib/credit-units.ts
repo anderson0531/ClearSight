@@ -25,12 +25,19 @@ export function fromUnits(units: number): number {
 }
 
 /**
- * Format stored units as a human credit string for display, trimming trailing
- * zeros (e.g. 5000 -> "50", 4950 -> "49.5").
+ * Format a human credit amount for display: round down, no decimals, thousands
+ * separators (e.g. 4950.75 → "4,950").
+ */
+export function formatCreditsDisplay(credits: number): string {
+  return Math.floor(credits).toLocaleString('en-US')
+}
+
+/**
+ * Format stored units as a display string (round down, no decimals, thousands
+ * separators).
  */
 export function formatCredits(units: number): string {
-  const credits = fromUnits(units)
-  return Number.isInteger(credits) ? String(credits) : credits.toFixed(2).replace(/\.?0+$/, '')
+  return formatCreditsDisplay(fromUnits(units))
 }
 
 // Charge amounts, in stored units.

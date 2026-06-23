@@ -242,11 +242,11 @@ export function StoryEngagementBar({
           <button
             type="button"
             onClick={() => setConfirming(true)}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3.5 py-2 text-sm font-semibold text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-300"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/5 text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-300"
             title={t('deletePodcast')}
+            aria-label={t('deletePodcast')}
           >
             <Trash2 className="h-4 w-4" />
-            {t('deletePodcast')}
           </button>
         )
       ) : null}

@@ -2,20 +2,25 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import {
   Images,
+  Loader2,
   Maximize,
   Minimize,
   Pause,
   Play,
   RotateCcw,
   Shield,
+  Sparkles,
   Users,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
+import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { canGenerateOnDemand } from '@/lib/plans'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { hostBySpeaker, showById } from '@/lib/shows'
 import { BACKGROUND_MUSIC, BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole, VIDEO_FRAME_VOLUME_RATIO } from '@/lib/music-assets'
@@ -121,6 +126,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   ref
 ) {
   const t = useTranslations()
+  const { plan } = useUser()
+  const canIllustrate = canGenerateOnDemand(plan)
   const pauseGlobalAudio = useAudioQueue((s) => s.pause)
 
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -177,6 +184,21 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   )
 
   const framesIncomplete = pendingFrameCounts.total > 0
+
+  const illustrationsNeedWork = !hasRenderedImages || framesIncomplete
+  const showIllustrateActions = Boolean(audioUrl && illustrationsNeedWork)
+  const showCompleteButton = canIllustrate && showIllustrateActions
+  const showUpgradeLink = !canIllustrate && showIllustrateActions
+
+  const completeMissingCredits = useMemo(() => {
+    if (pendingFrameCounts.total > 0) return 2
+    return !hasRenderedImages ? 2 : 0
+  }, [hasRenderedImages, pendingFrameCounts.total])
+
+  const completeMissingLabel =
+    pendingFrameCounts.total > 0
+      ? t('completeFramesMissing', { count: pendingFrameCounts.total })
+      : t('completeMissing')
 
   // Episodes synthesized with a baked outro-music segment carry their own
   // closing music, so we skip the legacy synthetic outro tail for them.
@@ -451,17 +473,20 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     [openView, handleGenerate, audioUrl, canUseAnimatic, generating, hasRenderedImages, framesIncomplete, pendingFrameCounts.total]
   )
 
+  const onStateChangeRef = useRef(onStateChange)
+  onStateChangeRef.current = onStateChange
+
   // Mirror player state up to the header so it can render the View / Illustrate
   // controls and reflect generation progress.
   useEffect(() => {
-    onStateChange?.({
+    onStateChangeRef.current?.({
       canView: Boolean(audioUrl && canUseAnimatic),
       isGenerating: generating,
       hasIllustrations: hasRenderedImages,
       framesIncomplete,
       pendingFrameCount: pendingFrameCounts.total,
     })
-  }, [onStateChange, audioUrl, canUseAnimatic, generating, hasRenderedImages, framesIncomplete, pendingFrameCounts.total])
+  }, [audioUrl, canUseAnimatic, generating, hasRenderedImages, framesIncomplete, pendingFrameCounts.total])
 
   // Drive the per-segment audio + background music while playing inline.
   useEffect(() => {
@@ -654,15 +679,45 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
             {/* Centered play control */}
             {!hideInlineControls && canUseAnimatic ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4">
                 <button
                   type="button"
                   onClick={startAnimatic}
-                  className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-black/30 transition-transform hover:scale-105"
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent)] text-black shadow-lg shadow-black/30 transition-transform hover:scale-105"
+                  aria-label={t('viewBriefing')}
+                  title={t('viewBriefing')}
                 >
-                  <Play className="h-4 w-4" />
-                  {t('viewBriefing')}
+                  <Play className="ms-0.5 h-5 w-5" />
                 </button>
+                {showCompleteButton ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerate()}
+                    disabled={generating}
+                    className="inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/15 px-4 py-2 text-xs font-semibold text-amber-50 shadow-lg shadow-black/20 transition-colors hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
+                    title={t('completeFramesHint')}
+                  >
+                    {generating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Images className="h-4 w-4" />
+                    )}
+                    {generating ? t('illustrating') : completeMissingLabel}
+                    {!generating && completeMissingCredits > 0 ? (
+                      <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                        {t('illustrateCredits', { count: completeMissingCredits })}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : showUpgradeLink ? (
+                  <Link
+                    href="/premium"
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-credit)]/40 bg-black/40 px-4 py-2 text-xs font-semibold text-[#e8d5a8] backdrop-blur-sm transition-colors hover:bg-black/55 sm:text-sm"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {t('upgradeCta')}
+                  </Link>
+                ) : null}
               </div>
             ) : null}
           </>
@@ -745,6 +800,12 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         <p className="px-3 py-2 text-xs text-amber-300">{error}</p>
       ) : null}
 
+      {showStatic && framesIncomplete && pendingFrameCounts.total > 0 ? (
+        <p className="border-t border-white/10 px-3 py-2 text-center text-xs text-amber-200/90">
+          {t('completeFramesMissing', { count: pendingFrameCounts.total })}
+        </p>
+      ) : null}
+
       {audioUrl && !canUseAnimatic ? (
         <p className="px-3 py-2 text-xs text-[var(--muted)]">{t('animaticUnavailable')}</p>
       ) : null}
@@ -760,6 +821,23 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             <RotateCcw className="h-3.5 w-3.5" />
             {t('animaticReplay')}
           </button>
+
+          {showCompleteButton ? (
+            <button
+              type="button"
+              onClick={() => void handleGenerate()}
+              disabled={generating}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-200 transition-colors hover:text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={t('completeFramesHint')}
+            >
+              {generating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Images className="h-3.5 w-3.5" />
+              )}
+              {generating ? t('illustrating') : completeMissingLabel}
+            </button>
+          ) : null}
 
           <div className="flex items-center gap-2">
             <button

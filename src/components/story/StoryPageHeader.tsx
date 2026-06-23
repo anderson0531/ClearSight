@@ -1,21 +1,18 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Clapperboard, Clock, Globe, Images, Languages, Loader2, RefreshCw, Shield, Sparkles, Tv } from 'lucide-react'
+import { Clock, Globe, Shield } from 'lucide-react'
 import { StoryPlayButton } from '@/components/story/StoryPlayButton'
-import { ShareBriefingButton } from '@/components/story/ShareBriefingButton'
+import { StoryViewButton } from '@/components/story/StoryViewButton'
+import { StoryMoreActions } from '@/components/story/StoryMoreActions'
 import { ExpandableThumbnail } from '@/components/story/ExpandableThumbnail'
 import { TranslatePodcastDialog } from '@/components/story/TranslatePodcastDialog'
 import { ResynthesizeAudioButton } from '@/components/story/ResynthesizeAudioButton'
 import { StoryEngagementBar } from '@/components/story/StoryEngagementBar'
-import {
-  AnimaticStage,
-  type AnimaticStageHandle,
-  type AnimaticStageState,
-} from '@/components/story/AnimaticStage'
+import { AnimaticStage, type AnimaticStageHandle, type AnimaticStageState } from '@/components/story/AnimaticStage'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { showById } from '@/lib/shows'
@@ -91,8 +88,8 @@ export function StoryPageHeader({
   const t = useTranslations()
   const { plan } = useUser()
   const canIllustrate = canGenerateOnDemand(plan)
-  const animaticRef = useRef<AnimaticStageHandle>(null)
   const [translateOpen, setTranslateOpen] = useState(false)
+  const animaticRef = useRef<AnimaticStageHandle>(null)
   const [animaticState, setAnimaticState] = useState<AnimaticStageState>({
     canView: false,
     isGenerating: false,
@@ -110,17 +107,6 @@ export function StoryPageHeader({
   const briefingThumbnail =
     episodeCover ??
     (thumbnailUrl && !isChannelOrGenericThumbnail(thumbnailUrl) ? thumbnailUrl : null)
-
-  const illustrationsNeedWork =
-    !animaticState.hasIllustrations || animaticState.framesIncomplete
-  const showCompleteMissingButton = canIllustrate && illustrationsNeedWork
-
-  const completeMissingCredits = useMemo(() => {
-    if (animaticState.pendingFrameCount > 0) {
-      return 2
-    }
-    return !animaticState.hasIllustrations ? 2 : 0
-  }, [animaticState.hasIllustrations, animaticState.pendingFrameCount])
 
   const [isUpdating, setIsUpdating] = useState(false)
   const [liveAudioSegments, setLiveAudioSegments] = useState<AudioSegment[] | null>(
@@ -201,18 +187,20 @@ export function StoryPageHeader({
     }
   }
 
-  const handleView = () => {
-    animaticRef.current?.openView()
-  }
-
-  const handleIllustrate = () => {
-    animaticRef.current?.generateIllustrations()
-  }
-
-  const completeMissingLabel =
-    animaticState.pendingFrameCount > 0
-      ? t('completeFramesMissing', { count: animaticState.pendingFrameCount })
-      : t('completeMissing')
+  const handleAnimaticStateChange = useCallback((state: AnimaticStageState) => {
+    setAnimaticState((prev) => {
+      if (
+        prev.canView === state.canView &&
+        prev.isGenerating === state.isGenerating &&
+        prev.hasIllustrations === state.hasIllustrations &&
+        prev.framesIncomplete === state.framesIncomplete &&
+        prev.pendingFrameCount === state.pendingFrameCount
+      ) {
+        return prev
+      }
+      return state
+    })
+  }, [])
 
   return (
     <header className="border-b border-[var(--border)] bg-[var(--surface)]">
@@ -246,163 +234,100 @@ export function StoryPageHeader({
           </div>
         ) : null}
 
-          <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
-            {briefingThumbnail ? (
-              <div className="relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
-                <ExpandableThumbnail
-                  src={briefingThumbnail}
-                  alt={title}
-                  sizes="(max-width: 640px) 90vw, 256px"
-                  wrapperClassName="relative h-full w-full"
-                  expandButtonClassName="absolute end-2 top-2 z-10"
-                />
+        <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
+          {briefingThumbnail ? (
+            <div className="relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
+              <ExpandableThumbnail
+                src={briefingThumbnail}
+                alt={title}
+                sizes="(max-width: 640px) 90vw, 256px"
+                wrapperClassName="relative h-full w-full"
+                expandButtonClassName="absolute end-2 top-2 z-10"
+              />
+            </div>
+          ) : null}
+
+          <div className="min-w-0 flex-1 space-y-4">
+            {!introHero ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
+                  {categoryLabel}
+                </p>
+                <h1 className="mt-1 text-xl font-bold leading-tight text-[var(--foreground)] sm:text-2xl">
+                  {title}
+                </h1>
               </div>
             ) : null}
 
-            <div className="min-w-0 flex-1 space-y-4">
-              {!introHero ? (
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
-                    {categoryLabel}
-                  </p>
-                  <h1 className="mt-1 text-xl font-bold leading-tight text-[var(--foreground)] sm:text-2xl">
-                    {title}
-                  </h1>
-                </div>
-              ) : null}
-
-              <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+            <div className="flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
+                <Globe className="h-3 w-3" />
+                {geoLabel}
+              </span>
+              {reliabilityIndex != null && !musicOnly ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
-                  <Globe className="h-3 w-3" />
-                  {geoLabel}
+                  <Shield className="h-3 w-3 text-[var(--accent)]" />
+                  {t('reliability')} {reliabilityIndex.toFixed(1)}
                 </span>
-                {reliabilityIndex != null && !musicOnly ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
-                    <Shield className="h-3 w-3 text-[var(--accent)]" />
-                    {t('reliability')} {reliabilityIndex.toFixed(1)}
-                  </span>
-                ) : null}
-                <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
-                  <Clock className="h-3 w-3" />
-                  {formatDuration(durationSeconds)}
-                </span>
-                {sourcesCount > 0 && !musicOnly ? (
-                  <span className="rounded-full bg-white/5 px-2.5 py-1">
-                    {sourcesCount === 1
-                      ? t('verifiedSources', { count: sourcesCount })
-                      : t('verifiedSourcesPlural', { count: sourcesCount })}
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <StoryPlayButton
-                  storyId={id}
-                  title={title}
-                  audioUrl={audioUrl}
-                  audioSegments={audioSegments}
-                  thumbnailUrl={briefingThumbnail ?? thumbnailUrl}
-                  durationSeconds={durationSeconds}
-                />
-                {!musicOnly ? (
-                <>
-                <button
-                  type="button"
-                  onClick={handleView}
-                  disabled={!audioUrl}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={!audioUrl ? t('animaticUnavailable') : undefined}
-                >
-                  <Clapperboard className="h-4 w-4" />
-                  {t('viewBriefing')}
-                </button>
-                {showCompleteMissingButton ? (
-                  <button
-                    type="button"
-                    onClick={handleIllustrate}
-                    disabled={!audioUrl || animaticState.isGenerating}
-                    className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={t('completeFramesHint')}
-                  >
-                    {animaticState.isGenerating ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Images className="h-4 w-4" />
-                    )}
-                    {animaticState.isGenerating ? t('illustrating') : completeMissingLabel}
-                    {!animaticState.isGenerating && completeMissingCredits > 0 ? (
-                      <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
-                        {t('illustrateCredits', { count: completeMissingCredits })}
-                      </span>
-                    ) : null}
-                  </button>
-                ) : !canIllustrate ? (
-                  <Link
-                    href="/premium"
-                    className="inline-flex items-center gap-2 rounded-full border border-[var(--accent-credit)]/30 bg-[var(--accent-credit-muted)] px-4 py-2 text-sm font-semibold text-[#e8d5a8] transition-colors hover:bg-[var(--accent-credit-muted)]"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    {t('upgradeCta')}
-                  </Link>
-                ) : null}
-                {canIllustrate && audioUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => setTranslateOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10"
-                    title={t('translateHint')}
-                  >
-                    <Languages className="h-4 w-4" />
-                    {t('translate')}
-                    <span className="rounded-full bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
-                      {t('translateCredits')}
-                    </span>
-                  </button>
-                ) : null}
-                </>
-                ) : null}
-                {showId ? (
-                  <Link
-                    href={`/channel/${showId}`}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10"
-                    title={t('goToChannel')}
-                  >
-                    <Tv className="h-4 w-4" />
-                    {t('goToChannel')}
-                  </Link>
-                ) : null}
-                {isNews ? (
-                  <button
-                    type="button"
-                    onClick={handleUpdateBriefing}
-                    disabled={isUpdating}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Request an update on this topic"
-                  >
-                    {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    Update Briefing
-                  </button>
-                ) : null}
-                <ShareBriefingButton title={title} storyId={id} />
-              </div>
-
-              {!audioUrl && canDelete && !musicOnly ? (
-                <ResynthesizeAudioButton storyId={id} />
               ) : null}
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/5 px-2.5 py-1">
+                <Clock className="h-3 w-3" />
+                {formatDuration(durationSeconds)}
+              </span>
+              {sourcesCount > 0 && !musicOnly ? (
+                <span className="rounded-full bg-white/5 px-2.5 py-1">
+                  {sourcesCount === 1
+                    ? t('verifiedSources', { count: sourcesCount })
+                    : t('verifiedSourcesPlural', { count: sourcesCount })}
+                </span>
+              ) : null}
+            </div>
 
-              <StoryEngagementBar
+            <div className="story-actions-primary">
+              <StoryPlayButton
                 storyId={id}
-                canDelete={canDelete}
+                title={title}
+                audioUrl={audioUrl}
+                audioSegments={audioSegments}
+                thumbnailUrl={briefingThumbnail ?? thumbnailUrl}
+                durationSeconds={durationSeconds}
+              />
+              {!musicOnly ? (
+                <StoryViewButton
+                  onClick={() => animaticRef.current?.openView()}
+                  disabled={!animaticState.canView}
+                />
+              ) : null}
+              <StoryMoreActions
+                storyId={id}
+                title={title}
                 showId={showId}
-                viewCount={viewCount}
-                likeCount={likeCount}
-                dislikeCount={dislikeCount}
-                myReaction={myReaction}
+                canTranslate={!musicOnly && canIllustrate && Boolean(audioUrl)}
+                isNews={Boolean(isNews)}
+                onTranslate={() => setTranslateOpen(true)}
+                onUpdateBriefing={() => void handleUpdateBriefing()}
+                isUpdating={isUpdating}
+                musicOnly={musicOnly}
               />
             </div>
-          </div>
 
-          {!musicOnly ? (
+            {!audioUrl && canDelete && !musicOnly ? (
+              <ResynthesizeAudioButton storyId={id} />
+            ) : null}
+
+            <StoryEngagementBar
+              storyId={id}
+              canDelete={canDelete}
+              showId={showId}
+              viewCount={viewCount}
+              likeCount={likeCount}
+              dislikeCount={dislikeCount}
+              myReaction={myReaction}
+            />
+          </div>
+        </div>
+
+        {!musicOnly ? (
           <AnimaticStage
             ref={animaticRef}
             storyId={id}
@@ -414,19 +339,19 @@ export function StoryPageHeader({
             category={category}
             posterImage={briefingThumbnail ?? thumbnailUrl}
             priorAccuracyScore={priorAccuracyScore}
-            onStateChange={setAnimaticState}
+            onStateChange={handleAnimaticStateChange}
           />
-          ) : null}
-        </div>
+        ) : null}
+      </div>
 
-        {!musicOnly ? (
+      {!musicOnly ? (
         <TranslatePodcastDialog
           storyId={id}
           currentLanguage={language}
           open={translateOpen}
           onClose={() => setTranslateOpen(false)}
         />
-        ) : null}
-      </header>
+      ) : null}
+    </header>
   )
 }

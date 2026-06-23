@@ -10,6 +10,7 @@ import { GlobalGeoFocusPicker } from '@/components/layout/GlobalGeoFocusPicker'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { Plan } from '@/lib/plans'
+import { formatCreditsDisplay } from '@/lib/credit-units'
 
 function showUpgradeButton(plan: Plan): boolean {
   return plan === 'FREE' || plan === 'PREMIUM'
@@ -85,7 +86,7 @@ export function TopBar() {
               {coreTokens != null ? (
                 <Link href="/premium" className="top-bar-menu-item">
                   <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-                  {t('creditsCount', { count: coreTokens })}
+                  {t('creditsCount', { count: formatCreditsDisplay(coreTokens) })}
                 </Link>
               ) : null}
 

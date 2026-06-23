@@ -406,7 +406,8 @@ export const SHOW_NEWS = makeShow({
   sceneDirectorNotes:
     'Scene: modern intelligence newsroom. Tone: analytical, dense, energetic — no fluff. Pace: natural with thoughtful pauses.',
   studioImage: HOSTS_IMAGE,
-  introImage: HOSTS_IMAGE,
+  introImage:
+    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png',
 })
 
 export const SHOW_ACADEMY = makeShow({

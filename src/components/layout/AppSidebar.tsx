@@ -8,6 +8,7 @@ import { GlobalGeoFocusPicker } from '@/components/layout/GlobalGeoFocusPicker'
 import { buildPrimaryNav } from '@/components/layout/primaryNav'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { formatCreditsDisplay } from '@/lib/credit-units'
 
 export function AppSidebar() {
   const pathname = usePathname()
@@ -52,7 +53,7 @@ export function AppSidebar() {
 
         {coreTokens != null ? (
           <Link href="/premium" className="credits-pill w-full justify-center">
-            {t('creditsCount', { count: coreTokens })}
+            {t('creditsCount', { count: formatCreditsDisplay(coreTokens) })}
           </Link>
         ) : null}
 

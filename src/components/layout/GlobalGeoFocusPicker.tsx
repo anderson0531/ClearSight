@@ -47,14 +47,19 @@ export function GlobalGeoFocusPicker({ className = '' }: GlobalGeoFocusPickerPro
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  const loadFilter = useCallback((): TaxonomyFilter => {
-    return loadPersistedTaxonomyFilter({
+  const defaultFilter = useMemo(
+    (): TaxonomyFilter => ({
       ...DEFAULT_TAXONOMY,
       languages: [locale.englishName as TaxonomyFilter['languages'][number]],
-    })
-  }, [locale.englishName])
+    }),
+    [locale.englishName]
+  )
 
-  const [filter, setFilter] = useState<TaxonomyFilter>(loadFilter)
+  const loadFilter = useCallback((): TaxonomyFilter => {
+    return loadPersistedTaxonomyFilter(defaultFilter)
+  }, [defaultFilter])
+
+  const [filter, setFilter] = useState<TaxonomyFilter>(defaultFilter)
 
   useEffect(() => {
     setFilter(loadFilter())
