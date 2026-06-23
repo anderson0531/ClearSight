@@ -67,11 +67,11 @@ export const HOST_ANDERSON: HostProfile = {
   role: 'The Expert',
   voiceId: 'Algenib',
   ttsStylePrompt:
-    'Engaged conversational analyst — confident, energetic, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
-  speakingRate: 1.08,
-  bio: 'Grounded, confident, and deeply trustworthy. Dr. Anderson delivers factor-by-factor analysis and the forecast with energetic authority.',
+    'Engaged conversational analyst — confident, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
+  speakingRate: 1.0,
+  bio: 'Grounded, confident, and deeply trustworthy. Dr. Anderson delivers factor-by-factor analysis and the forecast with confident authority.',
   persona:
-    'The Analytical Anchor: delivers objective, data-driven truth with confident energy — never condescending; communicates complex scientific, local, or economic data through crisp, memorable physical analogies. Fact trailing: every definitive statement must seamlessly reference a foundational source or footnote anchor from the briefing. Pacing: engaged, energetic broadcast rhythm — confident, conversational, and forward-moving; complete sentences with natural hand-offs to Sarah.',
+    'The Analytical Anchor: delivers objective, data-driven truth — never condescending; communicates complex scientific, local, or economic data through crisp, memorable physical analogies. Fact trailing: every definitive statement must seamlessly reference a foundational source or footnote anchor from the briefing. Pacing: engaged, broadcast rhythm — confident, conversational, and forward-moving; complete sentences with natural hand-offs to Sarah.',
   aliases: ['anderson', 'benjamin'],
   speakingImages: [
     'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_b9h9skb9h9skb9h9.png',

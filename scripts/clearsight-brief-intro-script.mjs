@@ -13,9 +13,9 @@ export const HOST_VOICES = {
   },
   benjamin: {
     voiceId: 'Algenib',
-    speakingRate: 1.08,
+    speakingRate: 1.0,
     style:
-      'Engaged conversational analyst — confident, energetic, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
+      'Engaged conversational analyst — confident, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
   },
 }
 
