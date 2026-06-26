@@ -3,10 +3,13 @@ import { describe, it } from 'node:test'
 import {
   backfillIntroAnimaticSegments,
   canonicalIntroLanguage,
+  isEnglishStaticIntroAudioUrl,
   isIntroSchemaMissingError,
   languageSlug,
+  localizedIntroAudioUrlIsValid,
   resolveChannelIntro,
 } from '@/lib/channel-intro'
+import { SHOW_INTRO_AUDIO } from '@/lib/show-audio'
 
 describe('channel-intro', () => {
   it('resolves English Brief intro from static assets', async () => {
@@ -26,6 +29,40 @@ describe('channel-intro', () => {
 
   it('slugifies language names for blob paths', () => {
     assert.equal(languageSlug('Thai'), 'thai')
+  })
+
+  it('detects English static intro URLs copied onto localized rows', () => {
+    const englishUrl = SHOW_INTRO_AUDIO['clearsight-brief']
+    assert.ok(englishUrl)
+    assert.equal(isEnglishStaticIntroAudioUrl('clearsight-brief', englishUrl), true)
+    assert.equal(
+      localizedIntroAudioUrlIsValid('clearsight-brief', 'Thai', englishUrl),
+      false
+    )
+    assert.equal(
+      localizedIntroAudioUrlIsValid(
+        'clearsight-brief',
+        'Thai',
+        'https://example.com/clearsight/shows/clearsight-brief/intro-thai-abc123.mp3'
+      ),
+      true
+    )
+    assert.equal(
+      localizedIntroAudioUrlIsValid('clearsight-brief', 'English', englishUrl),
+      true
+    )
+  })
+
+  it('detects missing progressStage column errors', () => {
+    const error = new Error('The column `progressStage` does not exist in the current database.')
+    assert.equal(isIntroSchemaMissingError(error), true)
+  })
+
+  it('detects stale Prisma client errors for progress arguments', () => {
+    const error = new Error(
+      'Unknown argument `progressStage`. Available options are marked with ?.'
+    )
+    assert.equal(isIntroSchemaMissingError(error), true)
   })
 
   it('detects stale Prisma client errors for audioSegments', () => {

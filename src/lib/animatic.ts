@@ -1,17 +1,25 @@
 import { prisma } from '@/lib/db'
 import { extractAudioSegments, serializeAudioSegments } from '@/lib/audio-segments'
 import { segmentHasAnimaticMetadata, segmentWantsScene, countPendingAnimaticFrames } from '@/lib/animatic-utils'
-import { resolveShow, showById } from '@/lib/shows'
+import { resolveShow, showById, type Show } from '@/lib/shows'
+import { resolveFrameReferenceBundle } from '@/lib/host-character-ref'
 import { renderAnimaticFrameImage, type RenderAnimaticFrameImageOptions } from '@/lib/animatic-frame-image'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
 import type { AnimaticPendingCounts } from '@/lib/animatic-utils'
 import type { ContentType } from '@/lib/taxonomy'
+import {
+  frameIllustrationStyle,
+  NO_HOST_FRAME_GUARDRAIL,
+  resolveFrameIllustrationStyle,
+  sceneCoreIsTooShort,
+} from '@/lib/frame-illustration-style'
 import {
   applySubjectReferenceTags,
   formatSubjectBibleForPrompt,
   IMAGEN_PRIMARY_SCENE_MARKER,
   NO_TEXT_SPELLING_GUARDRAILS,
   readVisualSubjectBible,
+  refineEducationScenePrompt,
   refineImagenScenePrompt,
   referencesForPrompt,
   resolveSubjectReferences,
@@ -19,29 +27,26 @@ import {
   promptForImagenRender,
   extractImagenSceneCore,
   resolveFrameSubjects,
+  shouldAllowPersonGeneration,
   stripSubjectReferenceTags,
   SUBJECT_PRECISION_GUARDRAILS,
   type ResolvedSubjectReference,
   type VisualSubject,
 } from '@/lib/visual-subjects'
-import { getVertexAccessToken, type ImagenGenerateResult, type ImagenSubjectReference } from '@/lib/vertex'
+import { getVertexAccessToken, isImagenQuotaError, type ImagenGenerateResult, type ImagenSubjectReference } from '@/lib/vertex'
 import type { AnimaticLastRender } from '@/lib/animatic-utils'
 import { deserializeEpisodeScriptDraft } from '@/lib/episode-script-draft'
 
-const RENDER_CONCURRENCY = 3
+export {
+  frameIllustrationStyle,
+  INFOGRAPHIC_ILLUSTRATION_STYLE,
+  PHOTOREALISTIC_ILLUSTRATION_STYLE,
+  resolveFrameIllustrationStyle,
+} from '@/lib/frame-illustration-style'
 
-/** Unified infographic look for all generated episode frame illustrations. */
-export const INFOGRAPHIC_ILLUSTRATION_STYLE =
-  'Style: modern editorial infographic illustration — clean flat-vector shapes, clear visual hierarchy, diagrammatic composition, symbolic icons and flows, limited professional palette. Not photorealistic, not cinematic.'
-
-/** Style string passed into Imagen prompts for podcast frame illustrations. */
-export function frameIllustrationStyle(): string {
-  return INFOGRAPHIC_ILLUSTRATION_STYLE
-}
-
-/** Per-Type visual direction — all frame images use the infographic style. */
+/** Per-Type visual direction — all frame images use the photorealistic base style. */
 export function illustrationStyleForType(_type?: ContentType): string {
-  return INFOGRAPHIC_ILLUSTRATION_STYLE
+  return frameIllustrationStyle()
 }
 
 // Lightweight country → visual-hint map for the most common locales, used to
@@ -106,6 +111,8 @@ export interface AnimaticPromptOptions {
   localeContext?: string
   /** Spoken dialogue at this frame (News storyboard alignment). */
   spokenDialogue?: string
+  /** Omit dialogue context block (SceneFlow Lite — avoids host-name bias). */
+  omitDialogueContext?: boolean
   /** 1-based beat index in the episode visual arc (News). */
   visualBeat?: number
   /** Primary people/places for this episode — anchors Imagen prompts. */
@@ -124,7 +131,7 @@ export function buildImagenScenePrompt(scene: string, options?: AnimaticPromptOp
 
   parts.push(`${IMAGEN_PRIMARY_SCENE_MARKER} ${visual}`)
 
-  if (options?.spokenDialogue?.trim()) {
+  if (options?.spokenDialogue?.trim() && !options.omitDialogueContext) {
     parts.push(
       `Frame dialogue context (depict what is being discussed): ${options.spokenDialogue.replace(/\[[^\]]+\]/g, '').trim().slice(0, 300)}`
     )
@@ -139,9 +146,10 @@ export function buildImagenScenePrompt(scene: string, options?: AnimaticPromptOp
   const bibleBlock = formatSubjectBibleForPrompt(frameSubjects)
   if (bibleBlock) parts.push(bibleBlock)
 
-  parts.push('Infographic editorial still illustration for a podcast frame.')
+  parts.push('Photorealistic editorial still photograph for a podcast frame.')
   parts.push(NO_TEXT_SPELLING_GUARDRAILS)
   parts.push(SUBJECT_PRECISION_GUARDRAILS)
+  parts.push(NO_HOST_FRAME_GUARDRAIL)
   parts.push(options?.style?.trim() || frameIllustrationStyle())
   if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
   return parts.join('\n\n')
@@ -175,7 +183,7 @@ export function buildVeoReenactmentPrompt(
 export function buildTitleSlidePrompt(title: string, options?: AnimaticPromptOptions): string {
   const subject = title.replace(/\[[^\]]+\]/g, '').trim().slice(0, 300)
   const parts = [
-    `Create an infographic editorial title-card backdrop for a news episode about: "${subject}". Wide establishing composition with clear negative space (especially lower third) for an overlaid title. Clean vector shapes, diagrammatic motifs, modern broadcast infographic look. Absolutely NO text, letters, words, captions, logos, or watermarks anywhere in the image.`,
+    `Create a photorealistic editorial title-card backdrop for a news episode about: "${subject}". Wide establishing composition with clear negative space (especially lower third) for an overlaid title. Documentary photography quality, natural lighting. Absolutely NO text, letters, words, captions, logos, or watermarks anywhere in the image.`,
   ]
   parts.push(options?.style?.trim() || frameIllustrationStyle())
   if (options?.localeContext?.trim()) parts.push(options.localeContext.trim())
@@ -260,6 +268,8 @@ function buildFrameImagenPrompts(params: {
   episodeTitle: string
   style?: string
   localeContext?: string
+  omitDialogueContext?: boolean
+  includeHosts?: boolean
 }): FrameImagenPrompts | null {
   const sceneText =
     params.sceneText.trim() ||
@@ -285,12 +295,14 @@ function buildFrameImagenPrompts(params: {
         style: params.style,
         localeContext: params.localeContext,
         episodeTitle: params.episodeTitle,
+        omitDialogueContext: params.omitDialogueContext,
       })
 
   const lean = promptForImagenRender(stored, {
     style: params.style,
     localeContext: params.localeContext,
     subjects: frameSubjects,
+    includeHosts: params.includeHosts,
   })
 
   return { stored, lean, frameSubjects }
@@ -304,6 +316,7 @@ function resolveFrameImagenPrompts(params: {
   style?: string
   localeContext?: string
   sourcesVerified?: unknown
+  omitDialogueContext?: boolean
 }): FrameImagenPrompts | null {
   const sceneText = resolveSegmentSceneText(params.segment, params.sourcesVerified)
   const fromScene = buildFrameImagenPrompts({
@@ -313,6 +326,7 @@ function resolveFrameImagenPrompts(params: {
     episodeTitle: params.episodeTitle,
     style: params.style,
     localeContext: params.localeContext,
+    omitDialogueContext: params.omitDialogueContext,
   })
   if (fromScene) return fromScene
 
@@ -349,34 +363,17 @@ function resolveFrameImagenPrompts(params: {
   }
 }
 
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  if (items.length === 0) return []
-  const results: R[] = new Array(items.length)
-  let nextIndex = 0
-
-  async function worker() {
-    while (nextIndex < items.length) {
-      const i = nextIndex++
-      results[i] = await fn(items[i]!, i)
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
-  return results
-}
-
 /** Render an Imagen 16:9 frame from a prompt and upload it, with retries. */
 interface RenderImageOptions {
   subjectReferences?: ImagenSubjectReference[]
   skipSubjectRefs?: boolean
+  forceSubjectCustomization?: boolean
+  includeHosts?: boolean
   onImagenAttempt?: (result: ImagenGenerateResult) => void
   style?: string
   localeContext?: string
   frameSubjects?: VisualSubject[]
+  personGeneration?: 'dont_allow' | 'allow_adult' | 'allow_all'
 }
 
 async function renderImageFromPrompt(
@@ -393,13 +390,17 @@ async function renderSegmentImage(
   title: string,
   index: number,
   studioImage: string,
+  show: Show,
   subjectRefs?: ResolvedSubjectReference[],
   renderImageOptions?: Pick<
     RenderImageOptions,
-    'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext' | 'frameSubjects'
+    'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext' | 'frameSubjects' | 'personGeneration'
   > & {
     subjectBible?: VisualSubject[]
     sourcesVerified?: unknown
+    omitDialogueContext?: boolean
+    showName?: string
+    category?: string
   }
 ): Promise<string | null> {
   if (roleUsesHostsImage(segment.role)) {
@@ -416,32 +417,96 @@ async function renderSegmentImage(
   }
 
   const subjectBible = renderImageOptions?.subjectBible ?? []
+  let segmentForPrompt = segment
+  let sceneText = resolveSegmentSceneText(segment, renderImageOptions?.sourcesVerified)
+  const storedPreview = segment.imagePrompt?.trim() ?? ''
+  const sceneCore =
+    extractImagenSceneCore(storedPreview).trim() || sceneText.trim()
+
+  const needsRefine =
+    sceneCoreIsTooShort(sceneCore) ||
+    (subjectBible.length > 0 &&
+      scenePromptNeedsRefinement(
+        storedPreview || `${IMAGEN_PRIMARY_SCENE_MARKER} ${sceneCore}`,
+        subjectBible,
+        segment.text,
+        title
+      ))
+
+  if (needsRefine) {
+    const refined =
+      subjectBible.length > 0
+        ? await refineImagenScenePrompt({
+            storedPrompt: storedPreview || `${IMAGEN_PRIMARY_SCENE_MARKER} ${sceneCore}`,
+            spokenDialogue: segment.text,
+            episodeTitle: title,
+            subjects: subjectBible,
+          })
+        : await refineEducationScenePrompt({
+            sceneText: sceneCore,
+            spokenDialogue: segment.text,
+            episodeTitle: title,
+            showName: renderImageOptions?.showName,
+          })
+    if (refined.trim()) {
+      segmentForPrompt = { ...segment, scene: refined }
+      sceneText = refined
+    }
+  }
+
   const built = resolveFrameImagenPrompts({
-    segment,
+    segment: segmentForPrompt,
     subjectBible,
     episodeTitle: title,
     style: renderImageOptions?.style,
     localeContext: renderImageOptions?.localeContext,
     sourcesVerified: renderImageOptions?.sourcesVerified,
+    omitDialogueContext: renderImageOptions?.omitDialogueContext,
   })
 
   if (!built) return null
 
-  const sceneText = resolveSegmentSceneText(segment, renderImageOptions?.sourcesVerified)
-  const frameRefs =
-    subjectRefs && !renderImageOptions?.skipSubjectRefs
-      ? referencesForPrompt(`${built.stored} ${sceneText}`, subjectRefs)
-      : []
+  const frameSubjects = built.frameSubjects
+  const allowPeople = shouldAllowPersonGeneration(frameSubjects, sceneText, segment.text)
+
+  const sceneTextForRefs = resolveSegmentSceneText(segmentForPrompt, renderImageOptions?.sourcesVerified)
+  const promptForRefs = `${built.stored} ${sceneTextForRefs}`
+  const bundle = await resolveFrameReferenceBundle({
+    show,
+    prompt: promptForRefs,
+    speaker: segment.speaker,
+    bibleRefs: subjectRefs ?? [],
+    skipSubjectRefs: renderImageOptions?.skipSubjectRefs,
+  })
+
+  let renderStyle = renderImageOptions?.style ?? frameIllustrationStyle()
+  let leanPrompt = built.lean
+  if (bundle.includeHosts) {
+    renderStyle = resolveFrameIllustrationStyle(show, renderImageOptions?.category, {
+      includeHosts: true,
+    })
+    leanPrompt = promptForImagenRender(built.stored, {
+      style: renderStyle,
+      localeContext: renderImageOptions?.localeContext,
+      subjects: frameSubjects,
+      includeHosts: true,
+    })
+  }
+
   const imagenPrompt =
-    frameRefs.length > 0 ? applySubjectReferenceTags(built.lean, frameRefs) : built.lean
+    bundle.refs.length > 0 ? applySubjectReferenceTags(leanPrompt, bundle.refs) : leanPrompt
 
   return renderImageFromPrompt(imagenPrompt, title, index, {
-    subjectReferences: frameRefs.map((ref) => ref.imagenRef),
+    subjectReferences: bundle.refs.map((ref) => ref.imagenRef),
     skipSubjectRefs: renderImageOptions?.skipSubjectRefs,
+    forceSubjectCustomization: bundle.forceSubjectCustomization,
+    includeHosts: bundle.includeHosts,
     onImagenAttempt: renderImageOptions?.onImagenAttempt,
-    style: renderImageOptions?.style,
+    style: renderStyle,
     localeContext: renderImageOptions?.localeContext,
-    frameSubjects: built.frameSubjects,
+    frameSubjects,
+    personGeneration:
+      allowPeople || bundle.includeHosts ? 'allow_adult' : 'dont_allow',
   })
 }
 
@@ -457,6 +522,11 @@ interface RenderStoryAnimaticOptions {
   phases?: RenderAnimaticPhase[]
   /** Skip Imagen 3 subject-reference path (Imagen 4 text-only). */
   skipSubjectRefs?: boolean
+  /**
+   * Cap how many NEW frame images this invocation generates (resume passes skip
+   * frames that already have blob URLs). Used by Inngest to stay under maxDuration.
+   */
+  maxNewFramesPerPass?: number
   /**
    * Invoked exactly once, just before any NEW frames are generated, with counts
    * of image groups and video clips that still need rendering. Throwing aborts
@@ -481,6 +551,16 @@ function imagenAttemptHandler(diag: AnimaticLastRender): (result: ImagenGenerate
     if (result.error && !diag.sampleError) {
       diag.sampleError = result.raiFilteredReason ?? result.error
     }
+  }
+}
+
+function trackImagenAttempt(
+  base: ((result: ImagenGenerateResult) => void) | undefined,
+  onQuota: () => void
+): (result: ImagenGenerateResult) => void {
+  return (result) => {
+    base?.(result)
+    if (isImagenQuotaError(result)) onQuota()
   }
 }
 
@@ -542,12 +622,15 @@ export async function renderStoryAnimatic(
     language: story.language ?? undefined,
     countryPerspective: metaRecord.countryPerspective,
   })
-  const renderStyle = frameIllustrationStyle()
+  const renderStyle = resolveFrameIllustrationStyle(show, metaRecord.category ?? story.category)
+  const omitDialogueContext = show.generationProfile === 'sceneFlowLite'
   const imageRenderOpts = {
     skipSubjectRefs,
     onImagenAttempt,
     style: renderStyle,
     localeContext,
+    omitDialogueContext,
+    showName: show.name,
   }
 
   if (isNews) {
@@ -560,7 +643,9 @@ export async function renderStoryAnimatic(
       renderDiag,
       imageRenderOpts,
       renderStyle,
-      localeContext
+      localeContext,
+      show,
+      metaRecord.category ?? story.category
     )
   }
 
@@ -583,36 +668,58 @@ export async function renderStoryAnimatic(
     .map((segment, index) => ({ segment, index }))
     .filter(({ segment }) => !roleUsesHostsImage(segment.role) && segmentWantsScene(segment))
 
+  const pendingToRender = toRender.filter(
+    ({ segment }) => !(segment.imageUrl && !segment.imageUrl.startsWith('/hosts/'))
+  )
+
   // Frames that don't yet have a real (non-hosts) illustration are the only ones
   // that incur generation cost. If there are none, this is a no-op re-open.
-  const pendingFrames = toRender.filter(
-    ({ segment }) => !(segment.imageUrl && !segment.imageUrl.startsWith('/hosts/'))
-  ).length
+  const pendingFrames = pendingToRender.length
+  const maxNew =
+    options?.maxNewFramesPerPass && options.maxNewFramesPerPass > 0
+      ? Math.round(options.maxNewFramesPerPass)
+      : pendingFrames
+  const batchToRender =
+    maxNew < pendingFrames ? pendingToRender.slice(0, maxNew) : pendingToRender
+  const batchIndices = new Set(batchToRender.map(({ index }) => index))
 
   if (pendingFrames > 0 && options?.onWillRender) {
     await options.onWillRender({ imageGroups: pendingFrames, videoClips: 0 })
   }
 
-  const renderedUrls = await mapPool(toRender, RENDER_CONCURRENCY, async ({ segment, index }) => {
+  const renderedUrls: Array<{ index: number; url: string | null; fresh: boolean }> = []
+  let quotaLimited = false
+  for (const { segment, index } of batchToRender) {
+    if (quotaLimited) break
+
     const existing = segment.imageUrl
     if (existing && !existing.startsWith('/hosts/')) {
-      return { index, url: existing, fresh: false }
+      renderedUrls.push({ index, url: existing, fresh: false })
+      continue
     }
+
+    let hitQuota = false
     const subjectBible = readVisualSubjectBible(story.sourcesVerified)
     const url = await renderSegmentImage(
       segment,
       story.title,
       index,
       studioImage,
+      show,
       subjectRefs,
       {
         ...imageRenderOpts,
+        category: metaRecord.category ?? story.category,
         subjectBible,
         sourcesVerified: story.sourcesVerified,
+        onImagenAttempt: trackImagenAttempt(imageRenderOpts.onImagenAttempt, () => {
+          hitQuota = true
+        }),
       }
     )
-    return { index, url, fresh: true }
-  })
+    if (hitQuota) quotaLimited = true
+    renderedUrls.push({ index, url, fresh: true })
+  }
 
   const newlyRendered = renderedUrls.filter((item) => item.fresh && item.url).length
 
@@ -635,12 +742,20 @@ export async function renderStoryAnimatic(
       }
     }
 
+    if (batchIndices.has(index)) {
+      if (segment.imageUrl) {
+        rendered += 1
+        return segment
+      }
+      failed += 1
+      return segment
+    }
+
     if (segment.imageUrl) {
       rendered += 1
       return segment
     }
 
-    failed += 1
     return segment
   })
 
@@ -748,7 +863,9 @@ async function renderNewsAnimatic(
     'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext'
   >,
   renderStyle?: string,
-  localeContext?: string
+  localeContext?: string,
+  show?: Show,
+  category?: string
 ): Promise<{
   segments: AudioSegment[]
   rendered: number
@@ -882,29 +999,82 @@ async function renderNewsAnimatic(
     await options.onWillRender({ imageGroups: pendingGroups, videoClips: 0 })
   }
 
-  const renderedGroups = runImages
-    ? await mapPool(imageGroupList, RENDER_CONCURRENCY, async ([key, group], i) => {
-        if (group.existing) return { key, url: group.existing, fresh: false }
-        if (!group.prompt || !group.leanPrompt) return { key, url: null, fresh: false }
-        const frameRefs =
-          subjectRefs.length > 0 && !imageRenderOpts.skipSubjectRefs
-            ? referencesForPrompt(`${group.prompt} ${group.sceneText ?? ''}`, subjectRefs)
-            : []
-        const imagenPrompt =
-          frameRefs.length > 0
-            ? applySubjectReferenceTags(group.leanPrompt, frameRefs)
-            : group.leanPrompt
-        const url = await renderImageFromPrompt(imagenPrompt, story.title, group.indices[0] ?? i, {
-          subjectReferences: frameRefs.map((ref) => ref.imagenRef),
-          skipSubjectRefs: imageRenderOpts.skipSubjectRefs,
-          onImagenAttempt: imageRenderOpts.onImagenAttempt,
-          style: renderStyle,
+  const renderedGroups: Array<{ key: string; url: string | null; fresh: boolean }> = []
+  if (runImages) {
+    let quotaLimited = false
+    for (let i = 0; i < imageGroupList.length; i++) {
+      if (quotaLimited) break
+      const [key, group] = imageGroupList[i]!
+      if (group.existing) {
+        renderedGroups.push({ key, url: group.existing, fresh: false })
+        continue
+      }
+      if (!group.prompt || !group.leanPrompt) {
+        renderedGroups.push({ key, url: null, fresh: false })
+        continue
+      }
+
+      let hitQuota = false
+      const leadIndex = group.indices[0] ?? i
+      const leadSegment = segments[leadIndex]
+      const promptForRefs = `${group.prompt} ${group.sceneText ?? ''}`
+      const bundle =
+        show != null
+          ? await resolveFrameReferenceBundle({
+              show,
+              prompt: promptForRefs,
+              speaker: leadSegment?.speaker,
+              bibleRefs: subjectRefs,
+              skipSubjectRefs: imageRenderOpts.skipSubjectRefs,
+            })
+          : {
+              refs:
+                subjectRefs.length > 0 && !imageRenderOpts.skipSubjectRefs
+                  ? referencesForPrompt(promptForRefs, subjectRefs)
+                  : [],
+              includeHosts: false,
+              forceSubjectCustomization: false,
+            }
+
+      let groupStyle = renderStyle
+      let leanPrompt = group.leanPrompt
+      if (bundle.includeHosts && show) {
+        groupStyle = resolveFrameIllustrationStyle(show, category, { includeHosts: true })
+        leanPrompt = promptForImagenRender(group.prompt!, {
+          style: groupStyle,
           localeContext,
-          frameSubjects: group.frameSubjects,
+          subjects: group.frameSubjects,
+          includeHosts: true,
         })
-        return { key, url, fresh: true }
+      }
+
+      const imagenPrompt =
+        bundle.refs.length > 0
+          ? applySubjectReferenceTags(leanPrompt!, bundle.refs)
+          : leanPrompt!
+      const allowPeople =
+        shouldAllowPersonGeneration(
+          group.frameSubjects,
+          group.sceneText ?? '',
+          leadSegment?.text
+        ) || bundle.includeHosts
+      const url = await renderImageFromPrompt(imagenPrompt, story.title, leadIndex, {
+        subjectReferences: bundle.refs.map((ref) => ref.imagenRef),
+        skipSubjectRefs: imageRenderOpts.skipSubjectRefs,
+        forceSubjectCustomization: bundle.forceSubjectCustomization,
+        includeHosts: bundle.includeHosts,
+        onImagenAttempt: trackImagenAttempt(imageRenderOpts.onImagenAttempt, () => {
+          hitQuota = true
+        }),
+        style: groupStyle,
+        localeContext,
+        frameSubjects: group.frameSubjects,
+        personGeneration: allowPeople ? 'allow_adult' : 'dont_allow',
       })
-    : []
+      if (hitQuota) quotaLimited = true
+      renderedGroups.push({ key, url, fresh: true })
+    }
+  }
 
   const urlByGroup = new Map(renderedGroups.map((item) => [item.key, item.url]))
   const sceneByGroup = new Map(

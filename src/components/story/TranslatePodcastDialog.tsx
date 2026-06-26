@@ -47,9 +47,9 @@ export function TranslatePodcastDialog({
     reset()
   }
 
-  const goToLibrary = () => {
+  const goToOnDemand = () => {
     handleClose()
-    router.push('/library')
+    router.push('/on-demand')
   }
 
   const handleSubmit = async () => {
@@ -106,8 +106,8 @@ export function TranslatePodcastDialog({
               <button type="button" onClick={handleClose} className="geo-action-btn-muted justify-center">
                 {t('close')}
               </button>
-              <button type="button" onClick={goToLibrary} className="btn-accent justify-center">
-                {t('onDemandViewLibrary')}
+              <button type="button" onClick={goToOnDemand} className="btn-accent justify-center">
+                {t('onDemandViewOnDemand')}
               </button>
             </div>
           </div>

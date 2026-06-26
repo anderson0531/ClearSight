@@ -19,6 +19,8 @@ export interface ParsedEpisodeScript {
     spanGroup?: string
     visualMedium?: string
     videoScene?: string
+    animaticMovement?: string
+    sfxCue?: string
   }>
   wordCount: number
 }

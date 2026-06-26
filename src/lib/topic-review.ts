@@ -1,5 +1,14 @@
+import {
+  formatChannelRegistryForReview,
+  sanitizeSuggestedChannels,
+  type SuggestedChannel,
+} from '@/lib/on-demand-channels'
 import { vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
 import { NEWS_CATEGORIES, type ContentType } from '@/lib/taxonomy'
+
+export type TopicReviewBlockReason = 'wrong_channel' | 'guidelines'
+
+export type { SuggestedChannel }
 
 export interface TopicReviewInput {
   /** The creator's free-text podcast description. */
@@ -54,6 +63,30 @@ export interface TopicReviewResult {
    * instead of an editorial-block panel.
    */
   transient?: boolean
+  /** Why the review blocked, when verdict is 'block'. */
+  blockReason?: TopicReviewBlockReason
+  /** Alternate on-demand channels when the topic fits elsewhere. */
+  suggestedChannels?: SuggestedChannel[]
+  /** True when on-channel but too vague to produce an episode. */
+  needsMoreDetail?: boolean
+}
+
+/** Derive block reason and needs-more-detail flags from hard checks. */
+export function deriveTopicReviewFeedback(input: {
+  verdict: 'pass' | 'block'
+  fitsChannel: boolean
+  withinGuidelines: boolean
+  effective: boolean
+}): Pick<TopicReviewResult, 'blockReason' | 'needsMoreDetail'> {
+  const needsMoreDetail =
+    input.verdict === 'pass' && input.fitsChannel && input.withinGuidelines && !input.effective
+
+  if (input.verdict !== 'block') {
+    return { needsMoreDetail: needsMoreDetail || undefined }
+  }
+
+  const blockReason: TopicReviewBlockReason = !input.withinGuidelines ? 'guidelines' : 'wrong_channel'
+  return { blockReason, needsMoreDetail: needsMoreDetail || undefined }
 }
 
 /** Conservative fallback used whenever the model output cannot be trusted. */
@@ -231,10 +264,15 @@ This is a MUSIC track brief for a FULL track WITH SUNG VOCALS${voiceTypeNote(inp
 - Keep lyrics concise (1 verse + 1 chorus is enough for a short track) and within community guidelines (no hate, explicit sexual content, or instructions for illegal/dangerous acts).`
     : ''
 
+  const registryTable = formatChannelRegistryForReview()
+
   return `You are the editorial gatekeeper for a podcast platform. Evaluate a creator's proposed episode description for ONE specific channel and respond with STRICT JSON only.
 ${musicGuidance}
 ${newsCategoryGuidance(input)}
 
+${registryTable}
+
+SELECTED CHANNEL FOR THIS REQUEST:
 ${channelLine}
 ${focusLine}
 ${typeLine}
@@ -247,13 +285,17 @@ ${input.description}
 """
 
 Assess all of the following:
-1. fitsChannel: Does this episode fit THIS channel's area of focus and theme? Be generous about breadth: ACCEPT any topic with broad interest that genuinely fits the channel's area of focus, even if it is a fresh angle. Only mark fitsChannel=false when the topic clearly belongs on a different kind of channel (off-theme).${
+1. fitsChannel: Does this episode fit the SELECTED channel (${input.contentType ?? 'News'} → ${input.category} → ${input.showName ?? 'ClearSight'})? Be generous about breadth within that channel's focus. Only mark fitsChannel=false when the topic clearly belongs on a DIFFERENT registry entry (different Type/Category/Channel).${
     input.contentType === 'News' && isConcreteNewsCategory(input.category)
       ? ` For News → "${input.category}", set fitsChannel=true whenever the topic is a legitimate ${input.category} story — including single-athlete or single-team sports coverage. Never block for being "too narrow" or "too specific".`
       : ''
   }
 2. withinGuidelines: Is it within community guidelines? Reject hate or harassment, sexual/explicit content, instructions for illegal or dangerous acts, graphic gore, defamation of real private individuals, or disallowed content.
-3. effective: Is the description a clear, specific, and effective brief for producing a strong episode?
+3. effective: Is the description a clear, specific, and effective brief for producing a strong episode? Mark effective=false when the description is on-channel but too vague, generic, or missing key details to produce an episode.
+
+When fitsChannel is false and withinGuidelines is true:
+- Populate suggestedChannels with 1 to 3 entries from the ON-DEMAND CHANNEL REGISTRY above (exact contentType + category pairs only).
+- Each suggestion needs a brief reason in ${input.language}.
 
 Then:
 - Write 2 to 4 short clarifying questions that would sharpen the episode (in ${input.language}).
@@ -261,7 +303,7 @@ Then:
 
 Rules:
 - If fitsChannel is false OR withinGuidelines is false, set verdict to "block", put clear reasons in "issues", and set "recommendedDescription" to an empty string (do NOT optimize disallowed or off-channel content).
-- Otherwise set verdict to "pass". "issues" may contain effectiveness notes.
+- Otherwise set verdict to "pass". "issues" may contain effectiveness notes when effective is false.
 
 Respond with ONLY this JSON object and nothing else:
 {
@@ -272,7 +314,8 @@ Respond with ONLY this JSON object and nothing else:
   "issues": string[],
   "clarifyingQuestions": string[],
   "recommendedDescription": string,
-  "suggestedTitle": string
+  "suggestedTitle": string,
+  "suggestedChannels": [{ "contentType": string, "category": string, "reason": string }]
 }`
 }
 
@@ -359,6 +402,18 @@ export async function reviewTopic(input: TopicReviewInput): Promise<TopicReviewR
         )
       : issues
 
+  const suggestedChannels =
+    verdict === 'block' && !withinGuidelines
+      ? []
+      : sanitizeSuggestedChannels(parsed.suggestedChannels)
+
+  const feedback = deriveTopicReviewFeedback({
+    verdict,
+    fitsChannel,
+    withinGuidelines,
+    effective,
+  })
+
   return {
     verdict,
     fitsChannel,
@@ -373,5 +428,7 @@ export async function reviewTopic(input: TopicReviewInput): Promise<TopicReviewR
     clarifyingQuestions,
     recommendedDescription,
     suggestedTitle,
+    ...(suggestedChannels.length > 0 ? { suggestedChannels } : {}),
+    ...feedback,
   }
 }

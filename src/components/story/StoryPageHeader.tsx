@@ -13,13 +13,15 @@ import { TranslatePodcastDialog } from '@/components/story/TranslatePodcastDialo
 import { ResynthesizeAudioButton } from '@/components/story/ResynthesizeAudioButton'
 import { StoryEngagementBar } from '@/components/story/StoryEngagementBar'
 import { AnimaticStage, type AnimaticStageHandle, type AnimaticStageState } from '@/components/story/AnimaticStage'
+import { MathFoundationPanel } from '@/components/story/MathFoundationPanel'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/scene-flow-lite'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { showById } from '@/lib/shows'
 import { isChannelOrGenericThumbnail, isStorySpecificThumbnail } from '@/lib/episode-thumbnail'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { CATEGORY_MESSAGE_KEYS } from '@/i18n/messages/en'
-import type { AudioSegment } from '@/types/story'
+import { CATEGORY_MESSAGE_KEYS, CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
+import type { AudioSegment, MathFoundationNode } from '@/types/story'
 
 type ReactionValue = 1 | -1 | 0
 
@@ -49,6 +51,7 @@ interface StoryHeaderProps {
   myReaction: ReactionValue
   musicOnly?: boolean
   priorAccuracyScore?: number | null
+  mathFoundationNode?: MathFoundationNode | null
 }
 
 function formatDuration(seconds: number | null): string {
@@ -84,6 +87,7 @@ export function StoryPageHeader({
   myReaction,
   musicOnly = false,
   priorAccuracyScore,
+  mathFoundationNode = null,
 }: StoryHeaderProps) {
   const t = useTranslations()
   const { plan } = useUser()
@@ -101,12 +105,25 @@ export function StoryPageHeader({
   const categoryLabel = categoryKey ? t(categoryKey) : category
   const show = useMemo(() => (showId ? showById(showId) : undefined), [showId])
   const isNews = show?.contentType === 'News'
+  const isPatternMatrix = showId === PATTERN_MATRIX_SHOW_ID
 
-  const introHero = show ? (show.introImage ?? show.coverImage) : null
+  const introHero = show
+    ? isPatternMatrix
+      ? show.coverImage || show.introImage
+      : show.introImage ?? show.coverImage
+    : null
+  const typeKey = show ? CONTENT_TYPE_MESSAGE_KEYS[show.contentType] : undefined
+  const typeLabel = typeKey ? t(typeKey) : show?.contentType
   const episodeCover = isStorySpecificThumbnail(thumbnailUrl) ? thumbnailUrl : null
   const briefingThumbnail =
     episodeCover ??
     (thumbnailUrl && !isChannelOrGenericThumbnail(thumbnailUrl) ? thumbnailUrl : null)
+  const episodePlayerPoster =
+    briefingThumbnail ?? episodeCover ?? thumbnailUrl ?? show?.coverImage ?? null
+  const patternMatrixPoster = isPatternMatrix ? episodePlayerPoster : null
+  const showTitleOnThumbnail = isPatternMatrix && Boolean(patternMatrixPoster)
+  const showTitleOnHero = Boolean(introHero && show && !isPatternMatrix)
+  const showTitleInMeta = !showTitleOnHero && !showTitleOnThumbnail
 
   const [isUpdating, setIsUpdating] = useState(false)
   const [liveAudioSegments, setLiveAudioSegments] = useState<AudioSegment[] | null>(
@@ -178,7 +195,7 @@ export function StoryPageHeader({
       }
       await res.json()
       alert('Update requested. We will notify you when it is ready.')
-      router.push('/library')
+      router.push('/on-demand')
     } catch (err) {
       console.error(err)
       alert(t('onDemandEnqueueError'))
@@ -225,17 +242,42 @@ export function StoryPageHeader({
               />
               <div className="channel-hero-overlay" />
               <div className="channel-hero-body">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/80">
-                  {show.name} · {categoryLabel}
-                </span>
-                <h1 className="channel-hero-title mt-1">{title}</h1>
+                {isPatternMatrix ? (
+                  <>
+                    <span className="show-card-type">{typeLabel}</span>
+                    <h2 className="channel-hero-title">{show.name}</h2>
+                    <p className="channel-hero-hosts">
+                      {show.hosts.map((host) => host.shortName).join(' & ')}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-white/80">
+                      {show.name} · {categoryLabel}
+                    </span>
+                    <h1 className="channel-hero-title mt-1">{title}</h1>
+                  </>
+                )}
               </div>
             </Link>
           </div>
         ) : null}
 
         <div className="fade-in mt-4 flex flex-col gap-6 sm:flex-row sm:items-start">
-          {briefingThumbnail ? (
+          {showTitleOnThumbnail && patternMatrixPoster ? (
+            <div className="story-thumbnail-wrap relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
+              <ExpandableThumbnail
+                src={patternMatrixPoster}
+                alt={title}
+                sizes="(max-width: 640px) 90vw, 256px"
+                wrapperClassName="relative h-full w-full"
+                expandButtonClassName="absolute end-2 top-2 z-10"
+              />
+              <div className="story-thumbnail-title-overlay" aria-hidden>
+                <h1 className="story-thumbnail-title">{title}</h1>
+              </div>
+            </div>
+          ) : briefingThumbnail ? (
             <div className="relative mx-auto aspect-square w-full max-w-xs shrink-0 overflow-hidden rounded-xl ring-1 ring-[var(--border)] shadow-lg shadow-black/20 sm:mx-0 sm:h-64 sm:w-64 sm:max-w-none">
               <ExpandableThumbnail
                 src={briefingThumbnail}
@@ -248,7 +290,7 @@ export function StoryPageHeader({
           ) : null}
 
           <div className="min-w-0 flex-1 space-y-4">
-            {!introHero ? (
+            {showTitleInMeta ? (
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
                   {categoryLabel}
@@ -289,7 +331,7 @@ export function StoryPageHeader({
                 title={title}
                 audioUrl={audioUrl}
                 audioSegments={audioSegments}
-                thumbnailUrl={briefingThumbnail ?? thumbnailUrl}
+                thumbnailUrl={episodePlayerPoster}
                 durationSeconds={durationSeconds}
               />
               {!musicOnly ? (
@@ -337,10 +379,14 @@ export function StoryPageHeader({
             showId={showId}
             contentType={contentType}
             category={category}
-            posterImage={briefingThumbnail ?? thumbnailUrl}
+            posterImage={episodePlayerPoster}
             priorAccuracyScore={priorAccuracyScore}
             onStateChange={handleAnimaticStateChange}
           />
+        ) : null}
+
+        {!musicOnly && showId === PATTERN_MATRIX_SHOW_ID && mathFoundationNode ? (
+          <MathFoundationPanel node={mathFoundationNode} />
         ) : null}
       </div>
 

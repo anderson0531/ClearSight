@@ -1,22 +1,19 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Mic2, Play } from 'lucide-react'
-import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
-import { LibraryCollectionsSection } from '@/components/library/LibraryCollectionsSection'
+import { Mic2, Play, ArrowRight } from 'lucide-react'
+import { LensCollectionsHub } from '@/components/library/LensCollectionsHub'
+import { LensTypePreferencesSection } from '@/components/library/LensTypePreferencesSection'
 import { LibraryContinueSection } from '@/components/library/LibraryContinueSection'
-import { LibraryInProgressSection } from '@/components/library/LibraryInProgressSection'
 import { LibraryJumpNav, type LibraryJumpSection } from '@/components/library/LibraryJumpNav'
-import { LibraryOnDemandSection } from '@/components/library/LibraryOnDemandSection'
 import { LibraryQueueSection } from '@/components/library/LibraryQueueSection'
 import { LibraryWelcomeEmpty } from '@/components/library/LibraryWelcomeEmpty'
 import { LibrarySection } from '@/components/library/LibrarySection'
-import type { GenerationJob } from '@/components/library/types'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
-import type { TaxonomyFilter } from '@/lib/taxonomy'
-import { DEFAULT_TAXONOMY } from '@/lib/taxonomy'
+import { DEFAULT_TAXONOMY, type ContentType, type TaxonomyFilter } from '@/lib/taxonomy'
 import {
   SAVED_SEARCHES_EVENT,
   loadSavedSearches,
@@ -39,8 +36,8 @@ import {
   removeFromPlaylist,
   type Playlist,
 } from '@/lib/playlists'
-import { persistTaxonomyFilter, loadPersistedTaxonomyFilter } from '@/lib/taxonomy-persistence'
-import { fetchWithTimeout } from '@/lib/client-fetch'
+import { persistTaxonomyFilter, loadPersistedTaxonomyFilter, TAXONOMY_FILTER_EVENT } from '@/lib/taxonomy-persistence'
+import { buildLensTypeProfiles } from '@/lib/lens-preferences'
 import { filterEpisodeRecentTracks } from '@/lib/audio-tracks'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { useAudioQueue } from '@/store/useAudioQueue'
@@ -59,21 +56,10 @@ export default function LibraryPage() {
   const [liked, setLiked] = useState<LikedEpisode[]>([])
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [following, setFollowing] = useState<FollowedChannel[]>([])
-  const [generations, setGenerations] = useState<GenerationJob[]>([])
-  const [retryingId, setRetryingId] = useState<string | null>(null)
-  const [cancelingId, setCancelingId] = useState<string | null>(null)
   const [showAllRecent, setShowAllRecent] = useState(false)
-  const [showAllOnDemand, setShowAllOnDemand] = useState(false)
-  const [onDemandSearch, setOnDemandSearch] = useState('')
+  const [activeContentType, setActiveContentType] = useState<ContentType | null>(null)
 
-  const onDemandFilter = useMemo((): TaxonomyFilter => {
-    const persisted = loadPersistedTaxonomyFilter()
-    if (persisted) {
-      return { ...persisted, languages: [locale.englishName as TaxonomyFilter['languages'][number]] }
-    }
-    return { ...DEFAULT_TAXONOMY, languages: [locale.englishName as TaxonomyFilter['languages'][number]] }
-  }, [locale.englishName])
-
+  const language = locale.englishName
   const canCreateOnDemand = canGenerateOnDemand(plan)
   const isCreator = plan === 'CREATOR'
 
@@ -114,135 +100,66 @@ export default function LibraryPage() {
   }, [])
 
   useEffect(() => {
-    let active = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const poll = async () => {
-      let nextDelay = 20000
-      try {
-        const res = await fetchWithTimeout('/api/generations', {}, 15_000)
-        if (res.ok && active) {
-          const data = (await res.json()) as { generations?: GenerationJob[] }
-          const jobs = data.generations ?? []
-          setGenerations(jobs)
-          if (
-            jobs.some(
-              (g) =>
-                g.status === 'QUEUED' ||
-                g.status === 'RUNNING' ||
-                g.illustrationsInProgress
-            )
-          ) {
-            nextDelay = 5000
-          }
-        }
-      } catch {
-        /* transient */
-      }
-      if (active) timer = setTimeout(poll, nextDelay)
+    const syncActiveType = () => {
+      const persisted = loadPersistedTaxonomyFilter({
+        ...DEFAULT_TAXONOMY,
+        languages: [language as TaxonomyFilter['languages'][number]],
+      })
+      setActiveContentType(persisted.contentType)
     }
-
-    void poll()
+    syncActiveType()
+    window.addEventListener('storage', syncActiveType)
+    window.addEventListener(TAXONOMY_FILTER_EVENT, syncActiveType)
     return () => {
-      active = false
-      if (timer) clearTimeout(timer)
+      window.removeEventListener('storage', syncActiveType)
+      window.removeEventListener(TAXONOMY_FILTER_EVENT, syncActiveType)
     }
-  }, [])
+  }, [language])
 
   const upNext = queue.filter((track) => track.id !== currentTrack?.id)
   const recentEpisodes = filterEpisodeRecentTracks(recentTracks)
-  const inProgressJobs = generations.filter(
-    (job) => job.status === 'QUEUED' || job.status === 'RUNNING' || job.status === 'FAILED'
+
+  const typeProfiles = useMemo(
+    () =>
+      buildLensTypeProfiles(
+        language,
+        savedSearches,
+        liked,
+        playlists,
+        following,
+        activeContentType
+      ),
+    [language, savedSearches, liked, playlists, following, activeContentType]
   )
-  const completedOnDemand = generations.filter(
-    (job) => job.status === 'COMPLETED' && job.storyId && job.contentType !== 'Music'
-  )
+
+  const hasCollections =
+    liked.length > 0 ||
+    playlists.length > 0 ||
+    savedSearches.length > 0 ||
+    following.length > 0
 
   const jumpSections = useMemo(() => {
     const sections: LibraryJumpSection[] = []
-    if (inProgressJobs.length > 0) sections.push('inProgress')
     if (recentEpisodes.length > 0) sections.push('continue')
     if (upNext.length > 0) sections.push('queue')
-    if (completedOnDemand.length > 0) sections.push('podcasts')
-    if (liked.length > 0) sections.push('liked')
-    if (playlists.length > 0) sections.push('playlists')
-    if (savedSearches.length > 0) sections.push('saved')
-    if (following.length > 0) sections.push('following')
+    sections.push('preferences')
+    if (hasCollections) sections.push('collections')
     return sections
-  }, [
-    inProgressJobs.length,
-    recentEpisodes.length,
-    upNext.length,
-    completedOnDemand.length,
-    liked.length,
-    playlists.length,
-    savedSearches.length,
-    following.length,
-  ])
+  }, [recentEpisodes.length, upNext.length, hasCollections])
 
-  const libraryIsEmpty =
+  const lensIsEmpty =
     recentEpisodes.length === 0 &&
     upNext.length === 0 &&
-    inProgressJobs.length === 0 &&
-    completedOnDemand.length === 0 &&
-    liked.length === 0 &&
-    playlists.length === 0 &&
-    savedSearches.length === 0 &&
-    following.length === 0
+    !hasCollections &&
+    typeProfiles.every((profile) => profile.signalCount === 0)
 
   const openSavedSearch = (search: SavedSearch) => {
     const restored: TaxonomyFilter = {
       ...search.filter,
-      languages: [locale.englishName as TaxonomyFilter['languages'][number]],
+      languages: [language as TaxonomyFilter['languages'][number]],
     }
     persistTaxonomyFilter(restored)
     router.push('/discover')
-  }
-
-  const handleCancelGeneration = async (id: string) => {
-    const previous = generations
-    setCancelingId(id)
-    setGenerations((jobs) => jobs.filter((job) => job.id !== id))
-    try {
-      const res = await fetch(`/api/generations/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancel' }),
-      })
-      if (!res.ok) setGenerations(previous)
-    } catch {
-      setGenerations(previous)
-    } finally {
-      setCancelingId(null)
-    }
-  }
-
-  const handleDeleteGeneration = async (id: string) => {
-    const previous = generations
-    setGenerations((jobs) => jobs.filter((job) => job.id !== id))
-    try {
-      const res = await fetch(`/api/generations/${id}`, { method: 'DELETE' })
-      if (!res.ok) setGenerations(previous)
-    } catch {
-      setGenerations(previous)
-    }
-  }
-
-  const handleRetryGeneration = async (id: string) => {
-    setRetryingId(id)
-    try {
-      const res = await fetch(`/api/generations/${id}`, { method: 'POST' })
-      if (!res.ok) return
-      setGenerations((jobs) =>
-        jobs.map((job) =>
-          job.id === id ? { ...job, status: 'QUEUED', errorMessage: null } : job
-        )
-      )
-    } catch {
-      /* keep failed state */
-    } finally {
-      setRetryingId(null)
-    }
   }
 
   const handlePlayQueue = () => {
@@ -256,36 +173,27 @@ export default function LibraryPage() {
         <h1 className="text-xl font-bold text-[var(--foreground)] sm:text-2xl">{t('libraryTitle')}</h1>
         <p className="mt-2 max-w-2xl text-sm text-[var(--muted-strong)]">{t('librarySubtitle')}</p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {canCreateOnDemand ? (
-            <AddTopicDialog filter={onDemandFilter} buttonLabel={t('libraryCreateOnDemand')} />
-          ) : null}
           {upNext.length > 0 ? (
             <button type="button" onClick={handlePlayQueue} className="btn-accent">
               <Play className="h-4 w-4" />
               {t('libraryPlayQueue')}
             </button>
           ) : null}
+          {canCreateOnDemand ? (
+            <Link href="/on-demand" className="btn-secondary">
+              <ArrowRight className="h-4 w-4" />
+              {t('lensGoToOnDemand')}
+            </Link>
+          ) : null}
         </div>
       </div>
 
       <LibraryJumpNav sections={jumpSections} />
 
-      {libraryIsEmpty ? (
-        <LibraryWelcomeEmpty
-          canCreateOnDemand={canCreateOnDemand}
-          onDemandFilter={onDemandFilter}
-        />
+      {lensIsEmpty ? (
+        <LibraryWelcomeEmpty canCreateOnDemand={canCreateOnDemand} />
       ) : (
         <>
-          <LibraryInProgressSection
-            jobs={inProgressJobs}
-            retryingId={retryingId}
-            cancelingId={cancelingId}
-            onCancel={(id) => void handleCancelGeneration(id)}
-            onRetry={(id) => void handleRetryGeneration(id)}
-            onDelete={(id) => void handleDeleteGeneration(id)}
-          />
-
           <LibraryContinueSection
             recentTracks={recentTracks}
             showAll={showAllRecent}
@@ -300,19 +208,9 @@ export default function LibraryPage() {
             onRemove={removeFromQueue}
           />
 
-          <LibraryOnDemandSection
-            jobs={completedOnDemand}
-            showAll={showAllOnDemand}
-            search={onDemandSearch}
-            onToggleShowAll={() => {
-              setShowAllOnDemand((on) => !on)
-              if (showAllOnDemand) setOnDemandSearch('')
-            }}
-            onSearchChange={setOnDemandSearch}
-            onPlay={playTrack}
-          />
+          <LensTypePreferencesSection profiles={typeProfiles} language={language} />
 
-          <LibraryCollectionsSection
+          <LensCollectionsHub
             liked={liked}
             playlists={playlists}
             savedSearches={savedSearches}

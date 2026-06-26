@@ -8,7 +8,7 @@
 
 /** Show id → pre-generated, tap-to-play channel intro audio URL. */
 export const SHOW_INTRO_AUDIO: Record<string, string> = {
-  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-intro-trailer-op8f87V8fpbdeTNvnp3xYAN1a2mj3p.mp3",
+  "clearsight-brief": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-intro-trailer-3GXj3SfdSVqq371mNPzTqIwqL3Vc83.mp3",
   "clearsight-academy": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-academy-intro-wYksJn2m2sRudHkS0yGfAPmTUhCJJV.mp3",
   "the-pivot": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-pivot-intro-YNQPjq0B01928yMbYe5A8mQ1hznQ3Q.mp3",
   "the-casefile": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/the-casefile-intro-s1U4YlRYXeIMit9SGqsYP1G0ZdCbso.mp3",
@@ -28,7 +28,7 @@ export const SHOW_INTRO_AUDIO: Record<string, string> = {
   "clearsight-style": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-style-intro-5mSwtMNRokKENtQjsBfvp4HwHSGlj1.mp3",
   "clearsight-wellness": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-wellness-intro-vAD0Oc0OzYvnKBKPpWW2UxptGd4Ouh.mp3",
   "clearsight-pets": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-pets-intro-SAtDeuKMGOG4mvhZBxDVsCUZr5pDEd.mp3",
-  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-intro-KCztndODMFmLzwYblmYQDlMOQap7EI.mp3",
+  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-intro-manifesto-sDkpdmCTamfhnf9KUuOj7nssOqaZcs.mp3",
   "clearsight-science": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-science-intro-YmTTrR0kUwjiqJYVenoR6pbyb2Ye4F.mp3",
   "clearsight-cosmos": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-cosmos-intro-9NMypn6ZrovjJbir4gOVEmKYwiUYfW.mp3",
   "clearsight-history": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-history-intro-z9i3ou9Vypw07RHzmbUvGVailFvgP7.mp3",

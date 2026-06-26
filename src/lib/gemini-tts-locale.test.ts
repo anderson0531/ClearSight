@@ -7,6 +7,10 @@ describe('resolveGeminiTtsLanguageCode', () => {
     assert.equal(resolveGeminiTtsLanguageCode('Arabic'), 'ar-EG')
   })
 
+  it('maps Urdu legacy ur-IN to Gemini-supported ur-PK', () => {
+    assert.equal(resolveGeminiTtsLanguageCode('Urdu'), 'ur-PK')
+  })
+
   it('passes through supported locales unchanged', () => {
     assert.equal(resolveGeminiTtsLanguageCode('English'), 'en-US')
     assert.equal(resolveGeminiTtsLanguageCode('Spanish'), 'es-ES')

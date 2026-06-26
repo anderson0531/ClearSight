@@ -19,10 +19,11 @@ interface MediaGridProps {
   loadingPercent?: number
   onGenerate?: (story: StoryCard) => void
   emptyAction?: React.ReactNode
-  /** Max cards to render (default 10). */
+  /** Max cards to render (omit for no limit). */
   maxItems?: number
   /** i18n key for the ungenerated generate CTA (default generateBriefing). */
   generateLabelKey?: MessageKey
+  viewMode?: 'grid' | 'list'
 }
 
 const FETCH_STAGE_LABELS: Record<string, MessageKey> = {
@@ -51,6 +52,18 @@ function SkeletonCard() {
   )
 }
 
+function SkeletonListRow() {
+  return (
+    <div className="flex animate-pulse items-center gap-3 rounded-lg border border-[var(--border)] bg-white/[0.03] px-4 py-3">
+      <div className="h-16 w-16 shrink-0 rounded-lg bg-white/8" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="h-3 w-3/4 rounded bg-white/8" />
+        <div className="h-2 w-1/3 rounded bg-white/5" />
+      </div>
+    </div>
+  )
+}
+
 export function MediaGrid({
   stories,
   loading,
@@ -60,6 +73,7 @@ export function MediaGrid({
   emptyAction,
   maxItems = 10,
   generateLabelKey = 'generateBriefing',
+  viewMode = 'grid',
 }: MediaGridProps) {
   const t = useTranslations()
   const playTrack = useAudioQueue((s) => s.playTrack)
@@ -70,6 +84,8 @@ export function MediaGrid({
     const key = CATEGORY_MESSAGE_KEYS[category]
     return key ? t(key) : category
   }
+
+  const visibleStories = maxItems != null ? stories.slice(0, maxItems) : stories
 
   const handlePlay = (story: StoryCard) => {
     if (story.requiresGeneration || !story.audioUrl) {
@@ -104,7 +120,134 @@ export function MediaGrid({
     playTrack(track, playable)
   }
 
+  const renderListRow = (story: StoryCard) => {
+    const isActive = currentTrack?.id === story.id
+    const isUngenerated = story.requiresGeneration
+
+    if (isUngenerated) {
+      return (
+        <li
+          key={story.id}
+          className="flex flex-col gap-3 rounded-lg border border-[var(--border)] bg-white/[0.03] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="min-w-0 flex-1 space-y-1">
+            <span className="inline-block rounded-full bg-[var(--accent-muted)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#c7cff0]">
+              {categoryLabel(story.category)}
+            </span>
+            <h3 className="line-clamp-2 text-sm font-semibold text-[var(--foreground)]">{story.title}</h3>
+          </div>
+          {onGenerate ? (
+            <button type="button" onClick={() => onGenerate(story)} className="cta-briefing shrink-0 justify-center">
+              {t(generateLabelKey)}
+            </button>
+          ) : (
+            <Link href="/premium" className="cta-briefing shrink-0 justify-center">
+              {t('upgradeCta')}
+            </Link>
+          )}
+        </li>
+      )
+    }
+
+    return (
+      <li
+        key={story.id}
+        className={`flex items-start justify-between gap-3 rounded-lg border px-4 py-3 ${
+          isActive
+            ? 'border-[var(--accent)] bg-[var(--accent-muted)]/40'
+            : 'border-[var(--border)] bg-white/[0.03]'
+        }`}
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <Link
+            href={`/story/${story.id}`}
+            className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg ring-1 ring-[var(--border)]"
+            title={story.title}
+          >
+            {story.thumbnailUrl ? (
+              <Image src={story.thumbnailUrl} alt={story.title} fill sizes="64px" className="object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center bg-white/[0.04] text-[var(--muted)]">
+                CS
+              </span>
+            )}
+          </Link>
+
+          <div className="min-w-0 flex-1">
+            <Link href={`/story/${story.id}`}>
+              <h3 className="line-clamp-2 text-sm font-semibold text-[var(--foreground)] transition-colors hover:text-[#c7cff0]">
+                {story.title}
+              </h3>
+            </Link>
+            <p className="mt-0.5 text-xs text-[var(--muted-strong)]">{categoryLabel(story.category)}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-[var(--muted-strong)]">
+              <span className="inline-flex items-center gap-0.5">
+                <Clock className="h-3 w-3" />
+                {formatDuration(story.durationSeconds)}
+              </span>
+              {story.reliabilityIndex != null ? (
+                <span className="inline-flex items-center gap-0.5">
+                  <Shield className="h-3 w-3" />
+                  {story.reliabilityIndex.toFixed(1)}
+                </span>
+              ) : null}
+              {story.isCached ? (
+                <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium">{t('ready')}</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+          {story.audioUrl ? (
+            <>
+              <button
+                type="button"
+                onClick={() => handlePlay(story)}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white shadow-md transition-transform hover:scale-105"
+                aria-label={t('listen')}
+                title={t('listen')}
+              >
+                <Play className="ms-0.5 h-4 w-4 fill-current" />
+              </button>
+              <EpisodeActions
+                track={{
+                  id: story.id,
+                  title: story.title,
+                  audioUrl: story.audioUrl,
+                  audioSegments: story.audioSegments,
+                  thumbnailUrl: story.thumbnailUrl,
+                  durationSeconds: story.durationSeconds,
+                  storyId: story.id,
+                }}
+              />
+            </>
+          ) : null}
+        </div>
+      </li>
+    )
+  }
+
   if (loading) {
+    if (viewMode === 'list') {
+      return (
+        <div className="space-y-4">
+          <StageProgress
+            t={t}
+            stage={loadingStage}
+            percent={loadingPercent}
+            stageLabels={FETCH_STAGE_LABELS}
+            fallbackLabel="updating"
+          />
+          <ul className="space-y-2">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <SkeletonListRow key={index} />
+            ))}
+          </ul>
+        </div>
+      )
+    }
+
     return (
       <div className="space-y-4">
         <StageProgress
@@ -133,9 +276,13 @@ export function MediaGrid({
     )
   }
 
+  if (viewMode === 'list') {
+    return <ul className="space-y-2">{visibleStories.map(renderListRow)}</ul>
+  }
+
   return (
     <div className="grid grid-cols-2 gap-3 xs:gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-      {stories.slice(0, maxItems).map((story) => {
+      {visibleStories.map((story) => {
         const isActive = currentTrack?.id === story.id
         const isUngenerated = story.requiresGeneration
 

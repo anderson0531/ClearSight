@@ -1,13 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   channelHasIntro,
   clientEnglishIntroSegments,
 } from '@/lib/channel-intro-animatic-client'
 import { introPollTimeoutMs } from '@/lib/channel-intro-constants'
+import { INTRO_PROGRESS_STALL_MS } from '@/lib/channel-intro-progress'
 import { attachChannelIntroFrameImages } from '@/lib/channel-intro-frames'
-import { introSegmentsNeedIllustration } from '@/lib/channel-intro-segments'
+import { introSegmentsNeedIllustration, introSegmentsEquivalent } from '@/lib/channel-intro-segments'
 import { collectIntroFrameUrls, preloadIntroFrameImages } from '@/lib/intro-frame-preload'
 import { fetchWithTimeout } from '@/lib/client-fetch'
 import type { AudioSegment } from '@/types/story'
@@ -22,6 +23,17 @@ interface IntroResponse {
   url?: string
   audioSegments?: AudioSegment[]
   error?: string
+  progressStage?: string | null
+  progressStep?: number | null
+  progressTotal?: number | null
+  progressUpdatedAt?: string
+}
+
+export interface ChannelIntroProgress {
+  stage: string | null
+  step: number | null
+  total: number | null
+  stalled: boolean
 }
 
 export function useChannelIntro(
@@ -31,7 +43,11 @@ export function useChannelIntro(
   posterImage?: string | null
 ) {
   const isEnglish = language.trim().toLowerCase() === 'english'
-  const englishSegments = isEnglish ? clientEnglishIntroSegments(showId) : null
+  const englishSegments = useMemo(() => {
+    const stored = isEnglish ? clientEnglishIntroSegments(showId) : null
+    if (!stored?.length) return stored
+    return attachChannelIntroFrameImages(showId, stored)
+  }, [isEnglish, showId])
 
   const [introUrl, setIntroUrl] = useState<string | null>(
     isEnglish && fallbackEnglishUrl ? fallbackEnglishUrl : null
@@ -41,15 +57,23 @@ export function useChannelIntro(
     isEnglish && fallbackEnglishUrl ? 'ready' : 'idle'
   )
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ChannelIntroProgress | null>(null)
   const [framesReady, setFramesReady] = useState(false)
   const preloadGenRef = useRef(0)
+  const preloadKeyRef = useRef<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollStartedRef = useRef<number | null>(null)
   const illustrationPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const illustrationPollStartedRef = useRef<number | null>(null)
   const illustrationEnqueuedRef = useRef(false)
   const enqueueInFlightRef = useRef(false)
+  const progressSnapshotRef = useRef<string | null>(null)
+  const progressUpdatedAtRef = useRef<number | null>(null)
   const languageEpochRef = useRef(0)
+  const syncIntroRef = useRef<((options?: { enqueueIfMissing?: boolean }) => Promise<void>) | null>(null)
+  const maybeStartIllustrationRef = useRef<
+    ((segments: AudioSegment[] | null | undefined) => void) | null
+  >(null)
   const maxPollMs = introPollTimeoutMs(showId)
 
   const isActiveLanguage = useCallback((epoch: number) => epoch === languageEpochRef.current, [])
@@ -66,15 +90,20 @@ export function useChannelIntro(
 
   useEffect(() => {
     if (!introSegments?.length || !posterImage) {
+      preloadKeyRef.current = null
       setFramesReady(false)
       return
     }
+
+    const urls = collectIntroFrameUrls(introSegments, posterImage)
+    const key = `${posterImage}\0${urls.join('\0')}`
+    if (preloadKeyRef.current === key) return
+    preloadKeyRef.current = key
 
     const generation = preloadGenRef.current + 1
     preloadGenRef.current = generation
     setFramesReady(false)
 
-    const urls = collectIntroFrameUrls(introSegments, posterImage)
     void preloadIntroFrameImages(urls)
       .then(() => {
         if (preloadGenRef.current === generation) {
@@ -106,13 +135,23 @@ export function useChannelIntro(
 
   const resolveReadySegments = useCallback(
     (data: IntroResponse): AudioSegment[] | null => {
-      if (!data.audioSegments?.length) {
-        return isEnglish ? englishSegments : null
+      if (data.audioSegments?.length) {
+        return attachChannelIntroFrameImages(showId, data.audioSegments)
       }
-      if (!introSegmentsNeedIllustration(data.audioSegments)) {
-        return data.audioSegments
-      }
-      return attachChannelIntroFrameImages(showId, data.audioSegments)
+      if (isEnglish) return englishSegments
+      if (!data.url) return null
+      // Localized audio may be ready before animatic metadata is available — reuse the
+      // English frame structure; elastic sync scales timings to the mixed MP3 duration.
+      const template = clientEnglishIntroSegments(showId)
+      if (!template?.length) return null
+      return attachChannelIntroFrameImages(
+        showId,
+        template.map((segment) => ({
+          ...segment,
+          introTimelineBackfilled: true,
+          introTimelineProbed: false,
+        }))
+      )
     },
     [englishSegments, isEnglish, showId]
   )
@@ -181,7 +220,9 @@ export function useChannelIntro(
               if (data.status !== 'ready') return
               const nextSegments = resolveReadySegments(data)
               if (nextSegments?.length) {
-                setIntroSegments(nextSegments)
+                setIntroSegments((prev) =>
+                  introSegmentsEquivalent(prev, nextSegments) ? prev : nextSegments
+                )
                 if (!introSegmentsNeedIllustration(nextSegments)) {
                   stopIllustrationPolling()
                   illustrationEnqueuedRef.current = false
@@ -204,13 +245,50 @@ export function useChannelIntro(
     ]
   )
 
+  const applyProgress = useCallback((data: IntroResponse) => {
+    if (data.status !== 'generating') {
+      progressSnapshotRef.current = null
+      progressUpdatedAtRef.current = null
+      setProgress(null)
+      return
+    }
+
+    const snapshot = [
+      data.progressStage ?? 'queued',
+      data.progressStep ?? 0,
+      data.progressTotal ?? '',
+      data.progressUpdatedAt ?? '',
+    ].join(':')
+
+    if (snapshot !== progressSnapshotRef.current) {
+      progressSnapshotRef.current = snapshot
+      progressUpdatedAtRef.current = Date.now()
+    } else if (data.progressUpdatedAt) {
+      const parsed = Date.parse(data.progressUpdatedAt)
+      if (Number.isFinite(parsed)) {
+        progressUpdatedAtRef.current = parsed
+      }
+    }
+
+    const lastUpdate = progressUpdatedAtRef.current
+    const stalled = Boolean(lastUpdate && Date.now() - lastUpdate > INTRO_PROGRESS_STALL_MS)
+
+    setProgress({
+      stage: data.progressStage ?? 'queued',
+      step: data.progressStep ?? null,
+      total: data.progressTotal ?? null,
+      stalled,
+    })
+  }, [])
+
   const applyResponse = useCallback(
     (data: IntroResponse, epoch: number) => {
       if (!isActiveLanguage(epoch)) return false
+      applyProgress(data)
       if (data.status === 'ready' && data.url) {
         const segments = resolveReadySegments(data)
         setIntroUrl(data.url)
-        setIntroSegments(segments)
+        setIntroSegments((prev) => (introSegmentsEquivalent(prev, segments) ? prev : segments))
         setState('ready')
         setError(null)
         stopPolling()
@@ -245,6 +323,7 @@ export function useChannelIntro(
       resolveReadySegments,
       stopPolling,
       isActiveLanguage,
+      applyProgress,
     ]
   )
 
@@ -283,6 +362,10 @@ export function useChannelIntro(
       const data = (await res.json()) as IntroResponse
       if (applyResponse(data, epoch)) return
       startPollingRef.current(epoch)
+    } catch (err) {
+      if (!isActiveLanguage(epoch)) return
+      setState('failed')
+      setError(err instanceof Error ? err.message : 'Failed to prepare intro')
     } finally {
       enqueueInFlightRef.current = false
     }
@@ -356,7 +439,7 @@ export function useChannelIntro(
         if (!isActiveLanguage(epoch)) return
         if (isEnglish && fallbackEnglishUrl) {
           setIntroUrl(fallbackEnglishUrl)
-          setIntroSegments(englishSegments)
+          setIntroSegments((prev) => (prev === englishSegments ? prev : englishSegments))
           setState('ready')
           maybeStartIllustration(englishSegments)
           return
@@ -447,6 +530,23 @@ export function useChannelIntro(
     await enqueue({ force: true })
   }, [enqueue])
 
+  syncIntroRef.current = syncIntro
+  maybeStartIllustrationRef.current = maybeStartIllustration
+
+  useEffect(() => {
+    if (state !== 'preparing') return
+    const id = window.setInterval(() => {
+      const lastUpdate = progressUpdatedAtRef.current
+      if (!lastUpdate) return
+      const stalled = Date.now() - lastUpdate > INTRO_PROGRESS_STALL_MS
+      setProgress((prev) => {
+        if (!prev || prev.stalled === stalled) return prev
+        return { ...prev, stalled }
+      })
+    }, 5000)
+    return () => window.clearInterval(id)
+  }, [state, progress?.stage, progress?.step, progress?.total])
+
   useEffect(() => {
     languageEpochRef.current += 1
     stopPolling()
@@ -454,19 +554,22 @@ export function useChannelIntro(
     illustrationEnqueuedRef.current = false
     enqueueInFlightRef.current = false
     setError(null)
+    setProgress(null)
+    progressSnapshotRef.current = null
+    progressUpdatedAtRef.current = null
 
     if (isEnglish && fallbackEnglishUrl) {
-      setIntroUrl(fallbackEnglishUrl)
-      setIntroSegments(englishSegments)
-      setState('ready')
-      maybeStartIllustration(englishSegments)
+      setIntroUrl((prev) => (prev === fallbackEnglishUrl ? prev : fallbackEnglishUrl))
+      setIntroSegments((prev) => (prev === englishSegments ? prev : englishSegments))
+      setState((prev) => (prev === 'ready' ? prev : 'ready'))
+      maybeStartIllustrationRef.current?.(englishSegments)
     } else {
       setIntroUrl(null)
       setIntroSegments(null)
       setState('loading')
     }
 
-    void syncIntro({ enqueueIfMissing: !isEnglish && canShowIntro })
+    void syncIntroRef.current?.({ enqueueIfMissing: !isEnglish && canShowIntro })
 
     return () => {
       stopPolling()
@@ -476,10 +579,8 @@ export function useChannelIntro(
     showId,
     language,
     fallbackEnglishUrl,
-    syncIntro,
     stopPolling,
     stopIllustrationPolling,
-    maybeStartIllustration,
     isEnglish,
     englishSegments,
     canShowIntro,
@@ -490,6 +591,7 @@ export function useChannelIntro(
     introSegments,
     state,
     error,
+    progress,
     canShowIntro,
     framesReady,
     ensureFramesReady,

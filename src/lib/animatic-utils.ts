@@ -49,6 +49,7 @@ export function segmentHasAnimaticMetadata(segment: AudioSegment): boolean {
   if (segment.role === 'music') return true
   // Host-framed lines are valid without an image prompt.
   if (segment.frameKind === 'host') return true
+  if (segment.visualMedium === 'video' && segment.videoUrl?.trim()) return true
   return Boolean(segment.text?.trim() || segment.imagePrompt?.trim() || segment.scene?.trim())
 }
 
@@ -64,7 +65,9 @@ export function segmentsHaveRenderedImages(segments: AudioSegment[]): boolean {
   // frame exists. Partial failures fall back to the hosts image at playback
   // time, so we never force a full re-render of an animatic that already exists.
   return illustratable.some(
-    (segment) => Boolean(segment.imageUrl) && !segment.imageUrl!.startsWith('/hosts/')
+    (segment) =>
+      (Boolean(segment.imageUrl) && !segment.imageUrl!.startsWith('/hosts/')) ||
+      Boolean(segment.videoUrl?.trim())
   )
 }
 
@@ -186,6 +189,7 @@ export function countPendingAnimaticFrames(
   let imageGroups = 0
   for (const segment of segments) {
     if (!segmentWantsScene(segment)) continue
+    if (segment.visualMedium === 'video' && segment.videoUrl?.trim()) continue
     if (!isRealIllustrationUrl(segment.imageUrl)) imageGroups += 1
   }
 
@@ -201,10 +205,30 @@ export function animaticFramesIncomplete(
 
 export type AnimaticTransitionEffect = 'kenburns' | 'crossfade' | 'slide' | 'zoom'
 
-export function frameAnimationClass(effect: AnimaticTransitionEffect, index: number): string {
+export function sceneFlowMovementClass(movementId?: string | null): string | null {
+  switch (movementId) {
+    case 'kenburns-diagonal-down':
+      return 'ken-burns-diagonal'
+    case 'kenburns-zoom-in':
+      return 'ken-burns-zoom-in'
+    case 'kenburns-horizontal':
+      return 'ken-burns-horizontal'
+    default:
+      return null
+  }
+}
+
+export function frameAnimationClass(
+  effect: AnimaticTransitionEffect,
+  index: number,
+  movementId?: string | null
+): string {
   switch (effect) {
-    case 'kenburns':
+    case 'kenburns': {
+      const directed = sceneFlowMovementClass(movementId)
+      if (directed) return directed
       return index % 2 === 0 ? 'ken-burns-a' : 'ken-burns-b'
+    }
     case 'crossfade':
       return 'animatic-fx-crossfade'
     case 'slide':

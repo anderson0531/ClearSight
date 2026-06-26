@@ -1,5 +1,9 @@
 import { prisma } from '@/lib/db'
+import { withDbRetry } from '@/lib/database-url'
 import { BASE_GENERATION_UNITS } from '@/lib/credit-units'
+
+/** Interactive transactions on serverless Postgres can be slow to acquire. */
+const CREDIT_TX_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const
 
 export class CreditError extends Error {
   constructor(
@@ -58,7 +62,8 @@ export async function verifyAndConsumeCredits(
   userId: string,
   taxonomyKey: string
 ): Promise<{ generationId: string }> {
-  return prisma.$transaction(async (tx) => {
+  return withDbRetry(() =>
+    prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
       where: { id: userId },
       select: { id: true, coreTokens: true, subscriptionActive: true },
@@ -105,7 +110,8 @@ export async function verifyAndConsumeCredits(
     })
 
     return { generationId: generation.id }
-  })
+  }, CREDIT_TX_OPTIONS)
+  )
 }
 
 /**
@@ -120,7 +126,8 @@ export async function consumeCredits(
   description = 'Illustration add-on'
 ): Promise<void> {
   if (amount <= 0) return
-  await prisma.$transaction(async (tx) => {
+  await withDbRetry(() =>
+    prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({
       where: { id: userId },
       select: { coreTokens: true, subscriptionActive: true },
@@ -154,7 +161,8 @@ export async function consumeCredits(
         description,
       },
     })
-  })
+  }, CREDIT_TX_OPTIONS)
+  )
 }
 
 export async function addCoreTokens(

@@ -2,8 +2,13 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { verifyAndConsumeCredits, consumeCredits, addCoreTokens, CreditError } from '@/lib/credits'
 import { BASE_GENERATION_UNITS, ILLUSTRATION_UNITS, newsIllustrationUnits } from '@/lib/credit-units'
-import { isDatabaseUnavailableError } from '@/lib/database-url'
+import {
+  DatabaseUnavailableError,
+  ensureDatabaseResolved,
+  isDatabaseUnavailableError,
+} from '@/lib/database-url'
 import { canGenerateOnDemand } from '@/lib/plans'
+import { resolveShow } from '@/lib/shows'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
 import { PODCAST_GENERATION_REQUESTED } from '@/inngest/client'
@@ -42,11 +47,17 @@ export async function POST(request: Request) {
     )
   }
   const body = parsed.data
-  const includeIllustrations = body.includeIllustrations ?? false
+  const show = resolveShow({
+    contentType: body.contentType,
+    category: body.category,
+  })
+  const forceIllustrations = show.generationProfile === 'sceneFlowLite'
+  const includeIllustrations = forceIllustrations || (body.includeIllustrations ?? false)
 
   const userId = await getCurrentUserId()
 
   try {
+    await ensureDatabaseResolved()
     const user = await ensureDemoUser(userId)
     if (!canGenerateOnDemand(user.plan)) {
       return NextResponse.json(
@@ -116,9 +127,12 @@ export async function POST(request: Request) {
       const status = err.code === 'INSUFFICIENT_TOKENS' ? 402 : 403
       return NextResponse.json({ error: err.message, code: err.code }, { status })
     }
-    if (isDatabaseUnavailableError(err)) {
+    if (err instanceof DatabaseUnavailableError || isDatabaseUnavailableError(err)) {
       return NextResponse.json(
-        { error: 'Database unavailable. Run npm run db:setup once a database is reachable.', code: 'DB_UNAVAILABLE' },
+        {
+          error: err instanceof DatabaseUnavailableError ? err.message : 'Database unavailable. Please try again shortly.',
+          code: 'DB_UNAVAILABLE',
+        },
         { status: 503 }
       )
     }

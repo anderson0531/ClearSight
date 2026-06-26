@@ -1,4 +1,4 @@
-import { Home, Search, Library, Sparkles, Mic2 } from 'lucide-react'
+import { Home, Search, ScanEye, Sparkles, Mic2, Mic } from 'lucide-react'
 import type { MessageKey } from '@/i18n/messages/en'
 import type { Plan } from '@/lib/plans'
 
@@ -10,22 +10,23 @@ export interface PrimaryNavItem {
 
 /**
  * Primary navigation differs per plan:
- * - FREE:    Home, Discover, Your Library, Premium
- * - PREMIUM: Home, Discover, Your Library
- * - CREATOR: Home, Discover, Your Library, Studio
- *
- * On-demand generation is intentionally not a top-level destination: it lives
- * on each ClearSight podcast channel page instead.
+ * - FREE:    Home, Discover, Your Lens, Premium
+ * - PREMIUM: Home, Discover, Your Lens, On-Demand
+ * - CREATOR: Home, Discover, Your Lens, On-Demand, Studio
  */
 export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
   const items: PrimaryNavItem[] = [
     { href: '/', key: 'navHome', icon: Home },
     { href: '/discover', key: 'navSearch', icon: Search },
-    { href: '/library', key: 'navLibrary', icon: Library },
+    { href: '/library', key: 'navLibrary', icon: ScanEye },
   ]
 
   if (plan === 'FREE') {
     items.push({ href: '/premium', key: 'navPremium', icon: Sparkles })
+  }
+
+  if (plan === 'PREMIUM' || plan === 'CREATOR') {
+    items.push({ href: '/on-demand', key: 'navOnDemand', icon: Mic })
   }
 
   if (plan === 'CREATOR') {

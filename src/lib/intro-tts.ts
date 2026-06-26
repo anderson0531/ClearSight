@@ -44,16 +44,28 @@ export function countIntroSpeechUnits(text: string): number {
   return spaceWords.length || 1
 }
 
+export const INTRO_TTS_DIRECTION_PREFIX = '[Voice direction — do not speak aloud]:'
+
+export const INTRO_TTS_TEXT_FIELD_GUARDRAIL =
+  'The script to speak is provided separately in the text field — never repeat or paraphrase the direction above.'
+
 export function buildIntroTtsPrompt(style: string, strict = false): string {
+  const direction = `${INTRO_TTS_DIRECTION_PREFIX} ${style.trim()}`
   if (strict) {
     return [
       INTRO_TTS_VERBATIM_STRICT_PREFIX,
-      style,
+      direction,
       INTRO_TTS_BRACKET_GUARDRAIL,
       INTRO_TTS_VERBATIM_GUARDRAIL,
+      INTRO_TTS_TEXT_FIELD_GUARDRAIL,
     ].join(' ')
   }
-  return [style, INTRO_TTS_BRACKET_GUARDRAIL, INTRO_TTS_VERBATIM_GUARDRAIL].join(' ')
+  return [
+    direction,
+    INTRO_TTS_BRACKET_GUARDRAIL,
+    INTRO_TTS_VERBATIM_GUARDRAIL,
+    INTRO_TTS_TEXT_FIELD_GUARDRAIL,
+  ].join(' ')
 }
 
 export function estimateIntroLineDurationSeconds(text: string): number {

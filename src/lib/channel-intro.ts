@@ -11,11 +11,17 @@ import { parseChannelIntroSegments, serializeChannelIntroSegments, introSegments
 import { buildSyncedIntroAnimaticSegments } from '@/lib/channel-intro-animatic-backfill'
 import { attachChannelIntroFrameImages } from '@/lib/channel-intro-frames'
 import { resolveIntroAnimaticSegments } from '@/lib/channel-intro-resolve'
+import { introProgressTotalSteps, type ChannelIntroProgressStage } from '@/lib/channel-intro-progress'
 import { estimateSpeechDurationSeconds } from '@/lib/channel-intro-timeline'
 import type { AudioSegment } from '@/types/story'
 import type { GenerationStatus } from '@prisma/client'
 
-export { CLEARSIGHT_BRIEF_SHOW_ID, STALE_INTRO_GENERATION_MS, introPollTimeoutMs } from '@/lib/channel-intro-constants'
+export {
+  CLEARSIGHT_BRIEF_SHOW_ID,
+  PATTERN_MATRIX_SHOW_ID,
+  STALE_INTRO_GENERATION_MS,
+  introPollTimeoutMs,
+} from '@/lib/channel-intro-constants'
 
 /** Re-enqueue intro jobs that never left QUEUED/RUNNING (worker missed the event). */
 export const STUCK_INTRO_GENERATION_MS = 2 * 60 * 1000
@@ -27,6 +33,10 @@ export interface ChannelIntroLookup {
   url?: string
   audioSegments?: AudioSegment[]
   error?: string
+  progressStage?: string | null
+  progressStep?: number | null
+  progressTotal?: number | null
+  progressUpdatedAt?: string
 }
 
 /** Map UI / event language strings to the canonical English name in LOCALES. */
@@ -50,6 +60,11 @@ export function isStuckIntroGeneration(updatedAt: Date): boolean {
 }
 
 /** True when ChannelIntroAudio exists but a pending migration column/table is missing. */
+function isUnknownChannelIntroFieldError(message: string, field: string): boolean {
+  if (!message.includes(field)) return false
+  return message.includes('Unknown field') || message.includes('Unknown argument')
+}
+
 export function isIntroSchemaMissingError(error: unknown): boolean {
   if (error && typeof error === 'object' && 'code' in error) {
     const code = (error as { code?: string }).code
@@ -57,14 +72,20 @@ export function isIntroSchemaMissingError(error: unknown): boolean {
     if (code === 'P2022') {
       const column = (error as { meta?: { column?: string } }).meta?.column ?? ''
       if (column.includes('audioSegments')) return true
+      if (column.includes('progressStage') || column.includes('progressStep') || column.includes('progressTotal')) {
+        return true
+      }
       if (column.includes('ChannelIntroAudio') || column.includes('channel_intro')) return true
     }
   }
   const message = error instanceof Error ? error.message : String(error)
   if (message.includes('ChannelIntroAudio') && message.includes('does not exist')) return true
   if (message.includes('audioSegments') && message.includes('does not exist')) return true
-  if (message.includes('Unknown field `audioSegments`') && message.includes('ChannelIntroAudio')) {
-    return true
+  if (message.includes('progressStage') && message.includes('does not exist')) return true
+  if (message.includes('progressStep') && message.includes('does not exist')) return true
+  if (message.includes('progressTotal') && message.includes('does not exist')) return true
+  for (const field of ['audioSegments', 'progressStage', 'progressStep', 'progressTotal'] as const) {
+    if (isUnknownChannelIntroFieldError(message, field)) return true
   }
   return false
 }
@@ -86,64 +107,173 @@ function isEnglish(language: string): boolean {
   return canonicalIntroLanguage(language).toLowerCase() === 'english'
 }
 
-const introRowSelectWithSegments = {
+/** True when the URL is the pre-generated English intro blob for this show. */
+export function isEnglishStaticIntroAudioUrl(
+  showId: string,
+  audioUrl: string | null | undefined
+): boolean {
+  if (!audioUrl?.trim()) return false
+  const staticUrl = SHOW_INTRO_AUDIO[showId]
+  if (staticUrl && audioUrl === staticUrl) return true
+  const lower = audioUrl.toLowerCase()
+  const id = showId.toLowerCase()
+  // Per-language uploads: .../shows/{showId}/intro-{lang}-....mp3
+  if (lower.includes(`/shows/${id}/intro-`)) return false
+  // English static blobs: .../shows/{showId}-intro-....mp3
+  return lower.includes(`${id}-intro-`)
+}
+
+/**
+ * Non-English rows must reference a language-specific blob, not the English static asset.
+ * Stale rows that copied English audio were blocking auto-translation.
+ */
+export function localizedIntroAudioUrlIsValid(
+  showId: string,
+  language: string,
+  audioUrl: string | null | undefined
+): boolean {
+  if (!audioUrl?.trim()) return false
+  if (isEnglish(language)) return true
+  if (isEnglishStaticIntroAudioUrl(showId, audioUrl)) return false
+  const slug = languageSlug(language)
+  const lower = audioUrl.toLowerCase()
+  return lower.includes(`/intro-${slug}-`) || lower.includes(`/intro-${slug}.`)
+}
+
+const introRowSelectLegacy = {
   status: true,
   audioUrl: true,
-  audioSegments: true,
   errorMessage: true,
   updatedAt: true,
 } as const
 
-const introRowSelectWithoutSegments = {
-  status: true,
-  audioUrl: true,
-  errorMessage: true,
-  updatedAt: true,
+const introRowSelectLegacyWithSegments = {
+  ...introRowSelectLegacy,
+  audioSegments: true,
 } as const
+
+const introRowSelectWithSegments = {
+  ...introRowSelectLegacyWithSegments,
+  progressStage: true,
+  progressStep: true,
+  progressTotal: true,
+} as const
+
+const introRowSelectWithoutSegments = {
+  ...introRowSelectLegacy,
+  progressStage: true,
+  progressStep: true,
+  progressTotal: true,
+} as const
+
+type IntroRowSelect =
+  | typeof introRowSelectWithSegments
+  | typeof introRowSelectLegacyWithSegments
+  | typeof introRowSelectWithoutSegments
+  | typeof introRowSelectLegacy
+
+type IntroRowWritePayload = {
+  status: GenerationStatus
+  audioUrl?: string
+  errorMessage?: string | null
+  audioSegments?: object[]
+  progressStage?: string | null
+  progressStep?: number | null
+  progressTotal?: number | null
+}
+
+type IntroRowUpdatePayload = {
+  status?: GenerationStatus
+  audioUrl?: string
+  errorMessage?: string | null
+  audioSegments?: object[]
+  progressStage?: string | null
+  progressStep?: number | null
+  progressTotal?: number | null
+}
+
+function stripIntroRowSegments<T extends IntroRowWritePayload | IntroRowUpdatePayload>(
+  payload: T
+): T {
+  const { audioSegments: _drop, ...rest } = payload as T & { audioSegments?: object[] }
+  return rest as T
+}
+
+function stripIntroRowProgress<T extends IntroRowWritePayload | IntroRowUpdatePayload>(
+  payload: T
+): T {
+  const {
+    progressStage: _stage,
+    progressStep: _step,
+    progressTotal: _total,
+    ...rest
+  } = payload as T & {
+    progressStage?: string | null
+    progressStep?: number | null
+    progressTotal?: number | null
+  }
+  return rest as T
+}
 
 async function upsertIntroRow(
   showId: string,
   lang: string,
-  create: { status: GenerationStatus; audioUrl?: string; errorMessage?: string | null; audioSegments?: object[] },
-  update: { status?: GenerationStatus; audioUrl?: string; errorMessage?: string | null; audioSegments?: object[] }
+  create: IntroRowWritePayload,
+  update: IntroRowUpdatePayload
 ) {
   const where = { showId_language: { showId, language: lang } }
-  const withSegments = create.audioSegments ?? update.audioSegments
+  const attempts: Array<{
+    select: IntroRowSelect
+    stripSegments: boolean
+    stripProgress: boolean
+  }> = [
+    { select: introRowSelectWithSegments, stripSegments: false, stripProgress: false },
+    { select: introRowSelectLegacyWithSegments, stripSegments: false, stripProgress: true },
+    { select: introRowSelectLegacy, stripSegments: true, stripProgress: true },
+  ]
 
-  if (withSegments?.length) {
+  let lastError: unknown
+  for (const attempt of attempts) {
+    let createPayload: IntroRowWritePayload = { ...create }
+    let updatePayload: IntroRowUpdatePayload = { ...update }
+    if (attempt.stripSegments) {
+      createPayload = stripIntroRowSegments(createPayload)
+      updatePayload = stripIntroRowSegments(updatePayload)
+    }
+    if (attempt.stripProgress) {
+      createPayload = stripIntroRowProgress(createPayload)
+      updatePayload = stripIntroRowProgress(updatePayload)
+    }
+
     try {
       return await prisma.channelIntroAudio.upsert({
         where,
-        create: { showId, language: lang, ...create },
-        update,
-        select: introRowSelectWithSegments,
+        create: { showId, language: lang, ...createPayload },
+        update: updatePayload,
+        select: attempt.select,
       })
     } catch (error) {
       if (!isIntroSchemaMissingError(error)) throw error
-      const { audioSegments: _dropCreate, ...createWithoutSegments } = create
-      const { audioSegments: _dropUpdate, ...updateWithoutSegments } = update
-      create = createWithoutSegments
-      update = updateWithoutSegments
+      lastError = error
     }
   }
 
-  return prisma.channelIntroAudio.upsert({
-    where,
-    create: { showId, language: lang, ...create },
-    update,
-    select: introRowSelectWithoutSegments,
-  })
+  throw lastError ?? new Error('ChannelIntroAudio upsert failed')
 }
 
 export function channelIntroNeedsAnimaticRegeneration(
   row: { status: GenerationStatus; audioUrl: string | null; audioSegments?: unknown } | null | undefined,
-  language?: string
+  language?: string,
+  showId?: string
 ): boolean {
   if (!row?.audioUrl) return false
   if (row.status !== 'COMPLETED' && row.status !== 'FAILED') return false
+  const lang = language ? canonicalIntroLanguage(language) : ''
+  if (showId && lang && !isEnglish(lang) && !localizedIntroAudioUrlIsValid(showId, lang, row.audioUrl)) {
+    return true
+  }
   const segments = parseChannelIntroSegments(row.audioSegments)
   if (!segments?.length) return true
-  const lang = language ? canonicalIntroLanguage(language) : ''
   if (lang && !isEnglish(lang)) {
     if (introSegmentsAreBackfilled(segments)) return true
     if (!segments.some((segment) => segment.introTimelineProbed)) return true
@@ -191,18 +321,24 @@ export function backfillIntroAnimaticSegments(showId: string): AudioSegment[] | 
 
 export async function findChannelIntroRow(showId: string, language: string) {
   const lang = canonicalIntroLanguage(language)
-  try {
-    return await prisma.channelIntroAudio.findUnique({
-      where: { showId_language: { showId, language: lang } },
-      select: introRowSelectWithSegments,
-    })
-  } catch (error) {
-    if (!isIntroSchemaMissingError(error)) throw error
-    return prisma.channelIntroAudio.findUnique({
-      where: { showId_language: { showId, language: lang } },
-      select: introRowSelectWithoutSegments,
-    })
+  const where = { showId_language: { showId, language: lang } }
+  const selects: IntroRowSelect[] = [
+    introRowSelectWithSegments,
+    introRowSelectLegacyWithSegments,
+    introRowSelectLegacy,
+  ]
+
+  let lastError: unknown
+  for (const select of selects) {
+    try {
+      return await prisma.channelIntroAudio.findUnique({ where, select })
+    } catch (error) {
+      if (!isIntroSchemaMissingError(error)) throw error
+      lastError = error
+    }
   }
+
+  throw lastError ?? new Error('ChannelIntroAudio lookup failed')
 }
 
 /** Resolve intro audio URL/status for a channel + spoken language. */
@@ -231,7 +367,10 @@ export async function resolveChannelIntro(
 
   if (row.status === 'COMPLETED') {
     if (row.audioUrl) {
-      if (channelIntroNeedsAnimaticRegeneration(row, lang)) {
+      if (!localizedIntroAudioUrlIsValid(showId, lang, row.audioUrl)) {
+        return { status: 'missing' }
+      }
+      if (channelIntroNeedsAnimaticRegeneration(row, lang, showId)) {
         const backfilled = await buildSyncedIntroAnimaticSegments(showId, lang, row.audioUrl)
         if (backfilled?.length) {
           return {
@@ -245,7 +384,9 @@ export async function resolveChannelIntro(
 
       let audioSegments = await resolveIntroAnimaticSegments(showId, lang)
       if (!audioSegments?.length) {
-        const stored = parseChannelIntroSegments(row.audioSegments)
+        const stored = parseChannelIntroSegments(
+          'audioSegments' in row ? row.audioSegments : undefined
+        )
         if (stored?.length) {
           audioSegments = attachChannelIntroFrameImages(showId, stored)
         }
@@ -263,7 +404,7 @@ export async function resolveChannelIntro(
   }
 
   if (row.status === 'FAILED') {
-    if (row.audioUrl) {
+    if (row.audioUrl && localizedIntroAudioUrlIsValid(showId, lang, row.audioUrl)) {
       const backfilled = await buildSyncedIntroAnimaticSegments(showId, lang, row.audioUrl)
       if (backfilled?.length) {
         return {
@@ -287,7 +428,20 @@ export async function resolveChannelIntro(
         error: 'Intro generation timed out. Try again.',
       }
     }
-    return { status: 'generating' }
+    const progressStage = 'progressStage' in row ? row.progressStage : null
+    if (row.status === 'QUEUED' && isStuckIntroGeneration(row.updatedAt) && !progressStage) {
+      return { status: 'missing' }
+    }
+    return {
+      status: 'generating',
+      progressStage: progressStage ?? 'queued',
+      progressStep: 'progressStep' in row ? row.progressStep : null,
+      progressTotal:
+        'progressTotal' in row && row.progressTotal
+          ? row.progressTotal
+          : introProgressTotalSteps(showId),
+      progressUpdatedAt: row.updatedAt.toISOString(),
+    }
   }
 
   return { status: 'missing' }
@@ -298,7 +452,10 @@ export async function upsertChannelIntroQueued(showId: string, language: string)
   const existing = await findChannelIntroRow(showId, lang)
 
   if (existing?.status === 'COMPLETED' && existing.audioUrl) {
-    if (!channelIntroNeedsAnimaticRegeneration(existing, lang)) {
+    if (
+      localizedIntroAudioUrlIsValid(showId, lang, existing.audioUrl) &&
+      !channelIntroNeedsAnimaticRegeneration(existing, lang, showId)
+    ) {
       return existing
     }
   }
@@ -306,19 +463,42 @@ export async function upsertChannelIntroQueued(showId: string, language: string)
   return upsertIntroRow(
     showId,
     lang,
-    { status: 'QUEUED', errorMessage: null },
-    { status: 'QUEUED', errorMessage: null }
+    { status: 'QUEUED', errorMessage: null, progressStage: 'queued', progressStep: 0, progressTotal: introProgressTotalSteps(showId) },
+    { status: 'QUEUED', errorMessage: null, progressStage: 'queued', progressStep: 0, progressTotal: introProgressTotalSteps(showId) }
+  )
+}
+
+export async function markChannelIntroProgress(
+  showId: string,
+  language: string,
+  stage: ChannelIntroProgressStage,
+  step: number,
+  total?: number
+) {
+  const lang = canonicalIntroLanguage(language)
+  const progressTotal = total ?? introProgressTotalSteps(showId)
+  await upsertIntroRow(
+    showId,
+    lang,
+    {
+      status: 'RUNNING',
+      errorMessage: null,
+      progressStage: stage,
+      progressStep: step,
+      progressTotal,
+    },
+    {
+      status: 'RUNNING',
+      progressStage: stage,
+      progressStep: step,
+      progressTotal,
+    }
   )
 }
 
 export async function markChannelIntroRunning(showId: string, language: string) {
   const lang = canonicalIntroLanguage(language)
-  await upsertIntroRow(
-    showId,
-    lang,
-    { status: 'RUNNING', errorMessage: null },
-    { status: 'RUNNING', errorMessage: null }
-  )
+  await markChannelIntroProgress(showId, lang, 'translate', 0)
 }
 
 export async function markChannelIntroCompleted(
@@ -335,6 +515,9 @@ export async function markChannelIntroCompleted(
     status: 'COMPLETED' as const,
     audioUrl,
     errorMessage: null,
+    progressStage: null,
+    progressStep: null,
+    progressTotal: null,
     ...(segmentsJson ? { audioSegments: segmentsJson } : {}),
   }
 

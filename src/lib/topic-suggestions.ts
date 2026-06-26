@@ -547,6 +547,10 @@ Always write the CATEGORY in English even though the Title is written in ${langu
   const specificFormat = `Format each line as a title only (no category prefix).`
 
   if (contentType === 'Education') {
+    const isMath = !isTop && category === 'Mathematics'
+    const durationNote = isMath
+      ? 'Each topic should support a thorough, in-depth mathematics explainer with no fixed time limit — prioritize clarity, applications, and complete explanations over brevity.'
+      : 'Each topic should make an engaging educational episode.'
     const scope = isTop
       ? `Cover a diverse mix across these subjects: ${cats.join(', ')}.
 ${topFormat}`
@@ -554,7 +558,7 @@ ${topFormat}`
 ${specificFormat}`
     return {
       defaultCategory,
-      prompt: `You are programming an educational podcast network. List exactly ${count} compelling, explainer-worthy topics in ${language} that would each make an engaging 5-10 minute educational episode.
+      prompt: `You are programming an educational podcast network. List exactly ${count} compelling, explainer-worthy topics in ${language}. ${durationNote}
 
 Audience geography: ${geoFocus}
 ${focusLine}

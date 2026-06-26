@@ -28,5 +28,5 @@ test('stored imagePrompt yields lean Imagen prompt without scene field', () => {
 
   const lean = promptForImagenRender(imagePrompt, {})
   assert.match(lean, /JuJu Watkins/)
-  assert.match(lean, /Infographic editorial illustration/i)
+  assert.match(lean, /Photorealistic editorial photograph/i)
 })

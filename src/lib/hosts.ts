@@ -45,7 +45,7 @@ export const HOST_SARAH: HostProfile = {
   role: 'The Moderator',
   voiceId: 'Laomedeia',
   ttsStylePrompt:
-    'Bright, relatable, sharp, inquisitive investigative broadcast voice. Energetic modern pacing with intentional punctuation — em-dashes, ellipses, and short question fragments — to create human-like pauses and curiosity inflections. Never read bracket tags aloud.',
+    'Chinese American woman in her early 30s. Bright, polished medium-register broadcast voice with crisp articulate diction — sharp and inquisitive without sounding breathless or announcer-flat. Warm and relatable like a modern investigative moderator; confident approachable energy at a lively natural pace. Uses punctuation for curiosity inflections — em-dashes, ellipses, short questions — but always finishes complete thoughts. Never read bracket tags aloud.',
   speakingRate: 1.0,
   bio: 'Sharp, modern, and articulate. Sarah validates why a story captures attention, then drives the deep dive with probing questions and crisp hand-offs.',
   persona:
@@ -67,8 +67,8 @@ export const HOST_ANDERSON: HostProfile = {
   role: 'The Expert',
   voiceId: 'Algenib',
   ttsStylePrompt:
-    'Engaged conversational analyst — confident, forward-moving, clear inflection; still objective and never condescending. Deliver complex data through vivid analogies with natural broadcast rhythm. Never read bracket tags aloud.',
-  speakingRate: 1.0,
+    'African American man in his early 50s. Warm, polished baritone with calm broadcast authority — the measured voice of a trusted analyst and educator. Composed and self-assured with approachable warmth; crisp clear diction, never cold, announcer-flat, or lecture-like. Slightly unhurried natural pacing; explains complex data through vivid physical analogies, objective and never condescending. Never read bracket tags aloud.',
+  speakingRate: 0.95,
   bio: 'Grounded, confident, and deeply trustworthy. Dr. Anderson delivers factor-by-factor analysis and the forecast with confident authority.',
   persona:
     'The Analytical Anchor: delivers objective, data-driven truth — never condescending; communicates complex scientific, local, or economic data through crisp, memorable physical analogies. Fact trailing: every definitive statement must seamlessly reference a foundational source or footnote anchor from the briefing. Pacing: engaged, broadcast rhythm — confident, conversational, and forward-moving; complete sentences with natural hand-offs to Sarah.',

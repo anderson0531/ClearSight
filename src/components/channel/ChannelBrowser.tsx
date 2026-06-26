@@ -6,8 +6,10 @@ import { Search, Play } from 'lucide-react'
 import { MediaGrid } from '@/components/discovery/MediaGrid'
 import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
 import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
+import { ViewModeToggle } from '@/components/ui/ViewModeToggle'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
+import { useEpisodesViewMode } from '@/hooks/useEpisodesViewMode'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { ensurePushSubscription } from '@/lib/push-client'
 import { toAudioTrack } from '@/lib/discovery-utils'
@@ -62,6 +64,7 @@ export function ChannelBrowser({
 
   const [sort, setSort] = useState<SortKey>('recent')
   const [sinceDays, setSinceDays] = useState(0)
+  const [viewMode, setViewMode] = useEpisodesViewMode('grid')
   const [selectedCategory, setSelectedCategory] = useState<string>(
     initialCategory && categories.includes(initialCategory as Category)
       ? initialCategory
@@ -177,7 +180,7 @@ export function ChannelBrowser({
           geoLocal: story.geoLocal,
         }),
       }).catch(() => {})
-      router.push('/library')
+      router.push('/on-demand')
     },
     [plan, language, contentType, router]
   )
@@ -222,28 +225,44 @@ export function ChannelBrowser({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {SORT_KEYS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSort(key)}
-              className={`filter-pill px-4 py-1.5 font-semibold ${sort === key ? 'filter-pill-active' : ''}`}
-            >
-              {t(label)}
-            </button>
-          ))}
-          <span className="mx-1 hidden h-5 w-px bg-[var(--border)] sm:inline-block" />
-          {DATE_RANGES.map(({ days, label }) => (
-            <button
-              key={days}
-              type="button"
-              onClick={() => setSinceDays(days)}
-              className={`filter-pill px-4 py-1.5 ${sinceDays === days ? 'filter-pill-active-cyan' : ''}`}
-            >
-              {t(label)}
-            </button>
-          ))}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block min-w-[9rem] flex-1 sm:flex-none sm:w-40">
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                {t('channelSortLabel')}
+              </span>
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as SortKey)}
+                className="geo-input w-full"
+              >
+                {SORT_KEYS.map(({ key, label }) => (
+                  <option key={key} value={key}>
+                    {t(label)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block min-w-[9rem] flex-1 sm:flex-none sm:w-44">
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+                {t('channelDateLabel')}
+              </span>
+              <select
+                value={String(sinceDays)}
+                onChange={(event) => setSinceDays(Number.parseInt(event.target.value, 10))}
+                className="geo-input w-full"
+              >
+                {DATE_RANGES.map(({ days, label }) => (
+                  <option key={days} value={String(days)}>
+                    {t(label)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
         </div>
 
         {multiCategory ? (
@@ -296,6 +315,8 @@ export function ChannelBrowser({
           loading={loading}
           loadingStage="catalog"
           loadingPercent={60}
+          viewMode={viewMode}
+          maxItems={undefined}
           onGenerate={canGenerateOnDemand(plan) ? handleGenerate : undefined}
         />
       </div>

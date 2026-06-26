@@ -21,6 +21,9 @@ import {
  */
 export type ShowFormat = 'solo' | 'dialogue'
 
+/** Generation pipeline profile for bespoke channel formats. */
+export type ShowGenerationProfile = 'default' | 'sceneFlowLite'
+
 export interface Show {
   /** Stable identifier persisted with each generation. */
   id: string
@@ -70,6 +73,8 @@ export interface Show {
   coverImage: string
   /** Pre-generated, tap-to-play channel intro audio (undefined until generated). */
   introAudio?: string
+  /** When set, selects a bespoke script/animatic pipeline (e.g. SceneFlow Lite). */
+  generationProfile?: ShowGenerationProfile
 }
 
 // Placeholder studio + portrait artwork. New shows reuse the canonical studio
@@ -112,6 +117,39 @@ export const HOST_DIEGO = host({
   persona:
     'Curious, quick co-host who voices the learner’s questions, surfaces common misconceptions, and checks understanding.',
   aliases: ['diego', 'santos'],
+  speakingImages: [],
+})
+
+// ---------------------------------------------------------------------------
+// Education — ClearSight Pattern Matrix (Amara + Malik, SceneFlow Lite)
+// ---------------------------------------------------------------------------
+export const HOST_AMARA = host({
+  name: 'Amara Vance',
+  shortName: 'Amara Vance',
+  role: 'Pattern Navigator',
+  voiceId: 'Gacrux',
+  ttsStylePrompt:
+    'African American woman in her early 30s. Warm, polished, and self-assured — sharp professional co-host with clear medium-register diction and crisp articulation. Confident and approachable, like a systems analyst who makes complex ideas feel human and inviting; inquisitive and articulate, never lecture-like or announcer-flat. Natural conversational pacing.',
+  speakingRate: 1.0,
+  bio: 'A sharp systems storyteller who tracks where numbers meet culture — from cryptography to market behavior to architectural acoustics.',
+  persona:
+    'Series Lead and Viewer\'s Proxy: approaches mathematics as a historical detective and systems analyst. Uncovers real-world paradoxes, history, and core mysteries. Uses sharp active verbs, modern design idioms, and direct conversational contractions. Take as many frames as the idea needs — clarity over brevity. Trigger lines like "Hold on, Malik, let\'s ground that — what does that boundary actually look like if we zoom in?"',
+  aliases: ['amara', 'vance'],
+  speakingImages: [],
+})
+
+export const HOST_MALIK = host({
+  name: 'Malik Al-Jamil',
+  shortName: 'Malik Al-Jamil',
+  role: 'Structural Topologist',
+  voiceId: 'Iapetus',
+  ttsStylePrompt:
+    'Middle Eastern American man in his late 30s. Calm, clear baritone with a light Levantine inflection — intelligible conversational American English. Composed and self-assured, like a spatial analyst who explains structure with gentle authority; measured pacing and precise diction, warm but never theatrical or announcer-flat. Keep accent subtle, never heavy or difficult to understand.',
+  speakingRate: 0.95,
+  bio: 'A spatial analyst who replaces abstract grids with tangible dimensional analogies — origami folds, crystal geometry, and soundwave physics.',
+  persona:
+    'Spatial Analyst and Technical Guide: deconstructs geometric proof and absolute scale. Detached from academic gatekeeping; views the world as unfolding origami. Uses precise physical vocabulary paired with spatial or mechanical comparisons. Take as many frames as the proof requires — clarity over brevity. Trigger lines like "Think of it not as a static value, Amara, but as a continuous folding operation..."',
+  aliases: ['malik', 'jamil', 'al-jamil'],
   speakingImages: [],
 })
 
@@ -1075,28 +1113,35 @@ export const SHOW_PETS = makeShow({
 // ---------------------------------------------------------------------------
 export const SHOW_MATH = makeShow({
   id: 'clearsight-math',
-  name: 'ClearSight Math',
+  name: 'ClearSight Pattern Matrix',
   description:
-    'Math that finally clicks. Dr. Lena Okafor and Diego Santos build mathematical ideas from first principles — defining the notation, walking through vivid examples, and busting the misconceptions that trip everyone up.',
+    'The hidden blueprint of our universe, decoded on demand. Amara Vance and Malik Al-Jamil treat mathematics as a global storytelling framework — from code-breaking cryptography to chaotic structural systems — in multi-episode series built for screen-off, visual-first learning.',
   focus:
-    'Mathematics — arithmetic to advanced topics, taught from first principles with clear definitions, worked examples, and intuition.',
+    'Mathematics as visual architecture — series-driven education from foundational scaffolding through advanced spatial dimensions; cryptography, fractals, topology, and applied systems thinking.',
   introTagline:
-    'Welcome to ClearSight Math, where we build mathematical ideas from the ground up and make them click.',
+    'Welcome to ClearSight Pattern Matrix — where the hidden blueprint of our universe unfolds one pattern at a time.',
   contentType: 'Education',
   categories: ['Mathematics'],
-  hosts: [HOST_LENA, HOST_DIEGO],
+  hosts: [HOST_AMARA, HOST_MALIK],
+  generationProfile: 'sceneFlowLite',
   visualStyle:
-    'Style: clean, instructional editorial illustration — geometric and diagrammatic motifs, explanatory and clear.',
+    'Motifs: high-contrast photorealistic stills optimized for Ken Burns motion — diagrammatic precision, deep blues and slate greys with luminous accent geometry, macro photography of fractals, blueprints, and spatial topology.',
   scriptStructure: [
-    'Hook: a question or surprising fact that makes the topic matter',
-    'Why it matters: stakes and relevance',
-    'Core concept: explained from first principles, defining each term',
-    'Worked example / analogy: make it concrete and picturable',
-    'Common misconception: surface and correct it',
-    'Recap: the key takeaways to remember',
+    'Practical applications: open by naming real-world uses — where this math shows up in engineering, nature, finance, cryptography, or daily life',
+    'Accessible explanation: Amara and Malik build intuition with vivid analogies, history, and step-by-step scaffolding for non-experts',
+    'Mathematical principles: Malik develops the formal logic, definitions, and reasoning; signal the dashboard math panel via math_foundation_node when a proof belongs on screen',
+    'Summary: recap the core pattern, key formula or insight, and what to remember',
+    'CTA Q&A: invite the listener to Ask the Host on this episode page for clarifications, worked examples, or how the math applies to their question',
   ],
+  scriptPhilosophy:
+    'SHOW PHILOSOPHY — "ClearSight Pattern Matrix" (SceneFlow Lite): Mathematics is the ultimate global storytelling framework. Each episode is one installment in a multi-episode series with explicit series_metadata. Visuals are ALWAYS high-fidelity static illustrations for automated Ken Burns camera scripts — never continuous video.\n' +
+    'DEPTH OVER DURATION: There is NO fixed time limit — use as many timeline_frames as needed to explain the topic clearly and completely. Never truncate a proof or skip a foundational step to save time.\n' +
+    'HOST INTERACTION: Amara surfaces applications, paradox, and accessible intuition; Malik develops formal principles and spatial logic. Alternate hand-offs — one teachable idea per frame.\n' +
+    'AUDIO: Default underscore cue "Mathematical Ambient Pulse" — low metronomic texture ducked for vocal clarity.\n' +
+    'MATH FOUNDATION: When Malik presents a formal calculation or proof, put the exact LaTeX in math_foundation_node (not in spoken dialogue).\n' +
+    'EPISODE ARC: (1) practical applications → (2) accessible explanation → (3) mathematical principles → (4) summary in body frames → (5) Q&A CTA in episode bookends (not in timeline_frames body).',
   sceneDirectorNotes:
-    'Scene: bright teaching studio. Tone: warm, lucid, Socratic. Pace: unhurried and clear.',
+    'Scene: cool-toned geometric motifs in photorealistic stills. Tone: Amara curious and concrete; Malik steady and precise. Pace: unhurried — teach until the listener understands, not until a clock runs out.',
   studioImage: PLACEHOLDER_STUDIO,
 })
 
@@ -1531,7 +1576,8 @@ export function studioImageForSpeaker(speaker?: string | null, showId?: string |
 // visualStyle so illustrations match the subject (the Academy show covers many
 // topics, each with its own look).
 const EDUCATION_TOPIC_VISUAL_STYLES: Record<string, string> = {
-  Mathematics: 'Lean diagrammatic: geometry, graphs, and equations as clean visual motifs.',
+  Mathematics:
+    'Pattern Matrix motifs: cryptography grids, fractal coastlines, Koch snowflakes, magnifying-scale loops, glowing blueprint diagrams, spatial topology folds.',
   'Science & Discovery': 'Lean toward lab apparatus and labeled diagrams.',
   'Space & Astronomy': 'Lean toward photoreal cosmic imagery — planets, telescopes, deep space.',
   History: 'Period- and place-accurate imagery, localized to the setting.',

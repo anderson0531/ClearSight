@@ -150,7 +150,7 @@ export function TopStoriesSearch({
           geoLocal: story.geoLocal,
         }),
       }).catch(() => {})
-      router.push('/library')
+      router.push('/on-demand')
     },
     [canGenerate, filter, onGenerate, router]
   )

@@ -4,6 +4,7 @@ import {
   VERTEX_FAST_MODEL,
   type ImagenSubjectReference,
 } from '@/lib/vertex'
+import { HOST_IMAGEN_RENDER_TAIL, LEAN_IMAGEN_RENDER_TAIL } from '@/lib/frame-illustration-style'
 import type { ContentType } from '@/lib/taxonomy'
 
 export type VisualSubjectKind = 'person' | 'place' | 'organization' | 'event'
@@ -257,6 +258,8 @@ export interface ImagenRenderPromptOptions {
   maxChars?: number
   /** Compact appearance anchors injected into the lean Imagen prompt. */
   subjects?: VisualSubject[]
+  /** When true, allow named channel hosts in the rendered frame. */
+  includeHosts?: boolean
 }
 
 /**
@@ -283,7 +286,7 @@ export function promptForImagenRender(
   const parts = [
     scene,
     ...(options?.subjects?.length ? [formatSubjectAppearanceAnchors(options.subjects)] : []),
-    'Infographic editorial illustration. No text, letters, numbers, logos, captions, or watermarks.',
+    options?.includeHosts ? HOST_IMAGEN_RENDER_TAIL : LEAN_IMAGEN_RENDER_TAIL,
   ]
   if (options?.style?.trim()) parts.push(options.style.trim().slice(0, 200))
   if (options?.localeContext?.trim()) parts.push(options.localeContext.trim().slice(0, 200))
@@ -291,7 +294,7 @@ export function promptForImagenRender(
   let combined = parts.filter((p) => p.trim()).join(' ')
   if (combined.length > maxChars) {
     const anchors = options?.subjects?.length ? formatSubjectAppearanceAnchors(options.subjects) : ''
-    combined = [scene.slice(0, Math.max(180, maxChars - 200)), anchors, 'Infographic editorial illustration. No text or logos.']
+    combined = [scene.slice(0, Math.max(180, maxChars - 200)), anchors, LEAN_IMAGEN_RENDER_TAIL]
       .filter((p) => p.trim())
       .join(' ')
   }
@@ -831,6 +834,64 @@ export function scenePromptNeedsRefinement(
   if (sceneSubjectMismatch(core, subjects, spokenDialogue, episodeTitle)) return true
   if (!spokenDialogue?.trim()) return false
   return sceneDialogueMisaligned(core, spokenDialogue)
+}
+
+/** True when Imagen may depict people (named story subjects only). */
+export function shouldAllowPersonGeneration(
+  frameSubjects: VisualSubject[],
+  sceneText: string,
+  spokenDialogue?: string
+): boolean {
+  const people = frameSubjects.filter((subject) => subject.kind === 'person')
+  if (people.length === 0) return false
+  const haystack = `${sceneText} ${spokenDialogue ?? ''}`
+  return people.some((person) => haystackMentionsSubject(haystack, person))
+}
+
+export interface RefineEducationSceneInput {
+  sceneText: string
+  spokenDialogue?: string
+  episodeTitle: string
+  showName?: string
+}
+
+/**
+ * Render-time pass for Education / SceneFlow frames without a subject bible.
+ * Rewrites weak or generic scenes into one photorealistic sentence.
+ */
+export async function refineEducationScenePrompt(
+  input: RefineEducationSceneInput
+): Promise<string> {
+  const stored = input.sceneText.replace(/\[[^\]]+\]/g, '').trim()
+  if (!stored) return stored
+
+  const dialogue = input.spokenDialogue?.replace(/\[[^\]]+\]/g, '').trim().slice(0, 400)
+  const showLine = input.showName?.trim() ? `Show: "${input.showName.trim()}"` : ''
+
+  const prompt = `Rewrite this podcast frame description into ONE vivid, concrete photorealistic scene sentence for Imagen.
+
+Episode: "${input.episodeTitle}"
+${showLine}
+${dialogue ? `Spoken line at this frame: "${dialogue}"` : ''}
+
+Current scene (may be too generic or off-topic): "${stored.slice(0, 500)}"
+
+Rules:
+- Photorealistic editorial photograph — no cartoon, vector art, clip art, or infographic flat shapes.
+- Depict the mathematical or conceptual subject as a physical environment, object, or installation.
+- No podcast hosts, co-hosts, presenters, studio desks, or human faces.
+- No dialogue quotes, no text in the image.
+- Output ONLY the single scene sentence, nothing else.`
+
+  const refined = await vertexGenerateText(prompt, {
+    temperature: 0.25,
+    maxOutputTokens: 350,
+    model: VERTEX_FAST_MODEL,
+    useSearchGrounding: false,
+  })
+
+  const sentence = refined?.replace(/^["']|["']$/g, '').trim()
+  return sentence && sentence.length >= 20 ? sentence.slice(0, 900) : stored
 }
 
 export interface RefineImagenSceneInput {

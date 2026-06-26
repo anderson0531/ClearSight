@@ -31,6 +31,7 @@ import {
   segmentsHaveRenderedImages,
   countPendingAnimaticFrames,
   resolveAnimaticIsNews,
+  frameAnimationClass,
 } from '@/lib/animatic-utils'
 import type { ContentType } from '@/lib/taxonomy'
 import { useAudioQueue } from '@/store/useAudioQueue'
@@ -86,21 +87,6 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-function frameAnimationClass(effect: TransitionEffect, index: number): string {
-  switch (effect) {
-    case 'kenburns':
-      return index % 2 === 0 ? 'ken-burns-a' : 'ken-burns-b'
-    case 'crossfade':
-      return 'animatic-fx-crossfade'
-    case 'slide':
-      return 'animatic-fx-slide'
-    case 'zoom':
-      return 'animatic-fx-zoom'
-    default:
-      return ''
-  }
 }
 
 /**
@@ -218,7 +204,10 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }, [segments, hasBakedOutro])
 
   const currentSegment = segments?.[segmentIndex]
-  const frameClass = frameAnimationClass(effect, segmentIndex)
+  const frameClass =
+    effect === 'none'
+      ? ''
+      : frameAnimationClass(effect, segmentIndex, currentSegment?.animaticMovement)
 
   const displayOptions = useMemo(
     () => ({ isNews, posterFallback: posterImage ?? null }),
@@ -232,9 +221,11 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     displayOptions
   )
   const frameVideo = segmentDisplayVideo(currentSegment, useIllustrations)
-  // Overlay the episode title on the News title-slide frame (intro) and on the
-  // pre-play poster.
-  const showTitleOverlay = isNews && (!started || currentSegment?.titleSlide === true)
+  const episodePoster = posterImage?.trim() || null
+  // Overlay episode title on the News title-slide frame, and on the pre-play poster.
+  const showTitleOverlay =
+    (isNews && (!started || currentSegment?.titleSlide === true)) ||
+    (!started && Boolean(episodePoster))
 
   // Resolve this episode's cast: prefer the resolved show's hosts (correct
   // names/roles even for shared casts), else derive from the segments' speakers,
@@ -281,17 +272,20 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     )
   }, [segments, show, cast, showId, isNews, posterImage])
 
+  const staticPoster = episodePoster ?? studioPoster
+  const showHostsBanner = !started && !episodePoster
+
   // Every distinct frame the player might show in either mode, resolved up front
   // so we can warm the browser cache before playback (studio poster + each
   // segment's illustration AND host-portrait variant).
   const frameSources = useMemo(() => {
-    const urls = new Set<string>([studioPoster])
+    const urls = new Set<string>([staticPoster, studioPoster])
     ;(segments ?? []).forEach((segment, index) => {
       urls.add(segmentDisplayImage(segment, index, true, showId, displayOptions))
       urls.add(segmentDisplayImage(segment, index, false, showId, displayOptions))
     })
     return Array.from(urls)
-  }, [segments, studioPoster, showId, displayOptions])
+  }, [segments, staticPoster, studioPoster, showId, displayOptions])
 
   // Preload all frames once they're known. Decoding ahead of time removes the
   // visible delay on first display; subsequent loads hit the browser cache.
@@ -424,26 +418,31 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     setError(null)
     setGenerating(true)
     try {
-      const res = await fetch('/api/animatic', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storyId }),
-      })
-      const data = (await res.json().catch(() => null)) as {
-        error?: string
-        segments?: AudioSegment[]
-        framesIncomplete?: boolean
-        pendingCounts?: { total?: number }
-      } | null
+      let incomplete = true
+      while (incomplete) {
+        const res = await fetch('/api/animatic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storyId }),
+        })
+        const data = (await res.json().catch(() => null)) as {
+          error?: string
+          segments?: AudioSegment[]
+          framesIncomplete?: boolean
+          pendingCounts?: { total?: number }
+        } | null
 
-      if (!res.ok) {
-        setError(data?.error ?? t('animaticRenderFailed'))
-        return
-      }
-      if (data?.segments?.length) {
-        setSegments(data.segments)
-        const incomplete = data.framesIncomplete ?? false
-        if (!incomplete) startAnimatic()
+        if (!res.ok) {
+          setError(data?.error ?? t('animaticRenderFailed'))
+          return
+        }
+        if (data?.segments?.length) {
+          setSegments(data.segments)
+        }
+        incomplete = data?.framesIncomplete ?? false
+        if (!incomplete && data?.segments?.length) {
+          startAnimatic()
+        }
       }
     } catch {
       setError(t('animaticRenderFailed'))
@@ -524,7 +523,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       video.load()
     }
     video.loop = true
-    video.volume = videoVolume
+    video.muted = Boolean(segment.videoPrompt?.includes('Silent video'))
+    video.volume = video.muted ? 0 : videoVolume
     if (isPlaying) void video.play().catch(() => {})
     else video.pause()
   }, [started, segmentIndex, isPlaying, segments, useIllustrations, outroPlaying, videoVolume])
@@ -582,8 +582,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       >
         {showStatic ? (
           <Image
-            src={studioPoster}
-            alt={cast.map((h) => h.name).join(' and ') + ' in the ClearSight studio'}
+            src={staticPoster}
+            alt={episodePoster ? title : `${cast.map((h) => h.name).join(' and ')} in the ClearSight studio`}
             fill
             unoptimized
             sizes="(max-width: 768px) 100vw, 768px"
@@ -656,26 +656,27 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
 
         {showStatic ? (
           <>
-            {/* Hosts banner overlay — driven by the episode's resolved cast. */}
-            <div className="absolute inset-x-0 bottom-0 p-3">
-              <div className="relative flex items-end justify-between gap-3">
-                <div className="max-w-[45%] leading-tight">
-                  <p className="text-xs font-semibold text-white">{cast[0]?.name}</p>
-                  <p className="text-[10px] text-white/70">{cast[0]?.role}</p>
-                </div>
-
-                <p className="pointer-events-none absolute inset-x-0 bottom-0 text-center text-[11px] font-semibold uppercase tracking-wider text-white/80">
-                  {t('playerSubtitle')}
-                </p>
-
-                {cast[1] ? (
-                  <div className="max-w-[45%] text-end leading-tight">
-                    <p className="text-xs font-semibold text-white">{cast[1].name}</p>
-                    <p className="text-[10px] text-white/70">{cast[1].role}</p>
+            {showHostsBanner ? (
+              <div className="absolute inset-x-0 bottom-0 p-3">
+                <div className="relative flex items-end justify-between gap-3">
+                  <div className="max-w-[45%] leading-tight">
+                    <p className="text-xs font-semibold text-white">{cast[0]?.name}</p>
+                    <p className="text-[10px] text-white/70">{cast[0]?.role}</p>
                   </div>
-                ) : null}
+
+                  <p className="pointer-events-none absolute inset-x-0 bottom-0 text-center text-[11px] font-semibold uppercase tracking-wider text-white/80">
+                    {t('playerSubtitle')}
+                  </p>
+
+                  {cast[1] ? (
+                    <div className="max-w-[45%] text-end leading-tight">
+                      <p className="text-xs font-semibold text-white">{cast[1].name}</p>
+                      <p className="text-[10px] text-white/70">{cast[1].role}</p>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {/* Centered play control */}
             {!hideInlineControls && canUseAnimatic ? (

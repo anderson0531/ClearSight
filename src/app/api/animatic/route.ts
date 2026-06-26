@@ -14,6 +14,8 @@ const bodySchema = z.object({
   storyId: z.string().min(1),
 })
 
+export const maxDuration = 300
+
 export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
@@ -63,6 +65,7 @@ export async function POST(request: Request) {
     const skipIllustrationCharge = Boolean(prepaidIllustrations)
 
     const result = await renderStoryAnimatic(parsed.data.storyId, {
+      maxNewFramesPerPass: 4,
       onWillRender: async ({ imageGroups, videoClips }) => {
         if (imageGroups > 0 && !skipIllustrationCharge) {
           await consumeCredits(userId, ILLUSTRATION_UNITS)

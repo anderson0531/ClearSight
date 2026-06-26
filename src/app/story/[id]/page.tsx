@@ -2,12 +2,23 @@ import { notFound } from 'next/navigation'
 import { TruthLedger, TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedger'
 import { StoryPageHeader } from '@/components/story/StoryPageHeader'
 import { StoryQASection } from '@/components/story/StoryQASection'
+import { StoryQuizSection } from '@/components/story/StoryQuizSection'
 import { getStoryById } from '@/lib/stories'
 import { extractAudioSegments } from '@/lib/generate-story'
 import { isMusicOnlyStory } from '@/lib/generate-music'
 import { MOCK_STORIES } from '@/lib/mock-stories'
 import { getShowById } from '@/lib/shows'
+import { readMathFoundationNode } from '@/lib/scene-flow-lite'
+import { getSessionUserId } from '@/lib/auth'
 import { getCurrentUserId } from '@/lib/session'
+import {
+  readEpisodeQuiz,
+  serializeEpisodeQuizForClient,
+  serializeQuizProgress,
+  type ClientEpisodeQuiz,
+  type QuizProgressSnapshot,
+} from '@/lib/episode-quiz'
+import { isContentType, typeForCategory } from '@/lib/taxonomy'
 import { serializeStoryQuestion, type SerializedStoryQuestion } from '@/lib/qa'
 import { prisma } from '@/lib/db'
 
@@ -57,6 +68,31 @@ async function getStoryQuestions(storyId: string): Promise<SerializedStoryQuesti
     return rows.map(serializeStoryQuestion)
   } catch {
     return []
+  }
+}
+
+async function getStoryQuizData(
+  storyId: string,
+  sourcesVerified: unknown,
+  resolvedContentType: string | null
+): Promise<{ quiz: ClientEpisodeQuiz | null; progress: QuizProgressSnapshot | null }> {
+  if (resolvedContentType !== 'Education') {
+    return { quiz: null, progress: null }
+  }
+
+  const quizRaw = readEpisodeQuiz(sourcesVerified)
+  if (!quizRaw) return { quiz: null, progress: null }
+
+  const quiz = serializeEpisodeQuizForClient(quizRaw)
+  try {
+    const sessionUserId = await getSessionUserId()
+    if (!sessionUserId) return { quiz, progress: null }
+    const row = await prisma.storyQuizProgress.findUnique({
+      where: { storyId_userId: { storyId, userId: sessionUserId } },
+    })
+    return { quiz, progress: row ? serializeQuizProgress(row) : null }
+  } catch {
+    return { quiz, progress: null }
   }
 }
 
@@ -117,7 +153,13 @@ export default async function StoryPage({ params }: StoryPageProps) {
     | { showId?: string; contentType?: string; seedQuestions?: unknown }
     | null
   const showId = meta?.showId && getShowById(meta.showId) ? meta.showId : null
+  const mathFoundationNode = dbStory ? readMathFoundationNode(dbStory.sourcesVerified) : null
   const contentType = meta?.contentType ?? null
+  const resolvedContentType = isContentType(contentType)
+    ? contentType
+    : dbStory
+      ? typeForCategory(dbStory.category)
+      : null
   const musicOnly = dbStory ? isMusicOnlyStory(dbStory.sourcesVerified) : false
   const seedQuestions = Array.isArray(meta?.seedQuestions)
     ? (meta!.seedQuestions as unknown[])
@@ -126,9 +168,17 @@ export default async function StoryPage({ params }: StoryPageProps) {
         .slice(0, 3)
     : []
 
-  const [{ canDelete, myReaction }, initialQuestions] = dbStory
-    ? await Promise.all([getViewerContext(id), getStoryQuestions(id)])
-    : [{ canDelete: false, myReaction: 0 as ReactionValue }, [] as SerializedStoryQuestion[]]
+  const [{ canDelete, myReaction }, initialQuestions, quizData] = dbStory
+    ? await Promise.all([
+        getViewerContext(id),
+        getStoryQuestions(id),
+        getStoryQuizData(id, dbStory.sourcesVerified, resolvedContentType),
+      ])
+    : [
+        { canDelete: false, myReaction: 0 as ReactionValue },
+        [] as SerializedStoryQuestion[],
+        { quiz: null, progress: null },
+      ]
 
   return (
     <div className="min-h-screen bg-[var(--background)] pb-28">
@@ -158,6 +208,7 @@ export default async function StoryPage({ params }: StoryPageProps) {
         myReaction={myReaction}
         musicOnly={musicOnly}
         priorAccuracyScore={priorAccuracyScore}
+        mathFoundationNode={mathFoundationNode}
       />
       <main className="fade-in mx-auto max-w-3xl px-4 py-8">
         {musicOnly ? (
@@ -169,6 +220,13 @@ export default async function StoryPage({ params }: StoryPageProps) {
         ) : (
           <TruthLedger markdown={markdown} />
         )}
+        {dbStory && !musicOnly && quizData.quiz ? (
+          <StoryQuizSection
+            storyId={id}
+            quiz={quizData.quiz}
+            initialProgress={quizData.progress}
+          />
+        ) : null}
         {dbStory && !musicOnly ? (
           <StoryQASection
             storyId={id}

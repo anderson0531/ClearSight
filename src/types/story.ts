@@ -33,6 +33,15 @@ export type MusicMood =
   | 'urgent'
   | 'uplifting'
 
+/** One Veo clip within a channel intro animatic frame. */
+export interface IntroVideoClip {
+  url: string
+  prompt?: string
+  /** Effective playback duration after trim (≤ 8). */
+  durationSeconds: number
+  dialogueExcerpt?: string
+}
+
 export interface AudioSegment {
   url: string
   durationSeconds: number
@@ -79,6 +88,27 @@ export interface AudioSegment {
   videoUrl?: string | null
   /** Prompt used to generate the Veo reenactment clip. */
   videoPrompt?: string | null
+  /** Multi-clip Veo sequence for long intro dialog frames. */
+  introVideoClips?: IntroVideoClip[]
+  /** SceneFlow Lite: normalized Ken Burns movement id for this frame. */
+  animaticMovement?: string
+  /** SceneFlow Lite: descriptive SFX cue for lightweight playback. */
+  sfxCue?: string
+  /** SceneFlow Lite: formal math proof rendered in the player dashboard. */
+  mathFoundation?: MathFoundationNode
+}
+
+export interface MathFoundationVariable {
+  symbol: string
+  description: string
+}
+
+export interface MathFoundationNode {
+  label: string
+  latex: string
+  variables?: MathFoundationVariable[]
+  computedExample?: string
+  showOnFrameIndex?: number
 }
 
 export type { VisualSubject, VisualSubjectBible, SubjectAppearance } from '@/lib/visual-subjects'

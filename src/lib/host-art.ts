@@ -15,6 +15,14 @@ export const HOST_ART: Record<string, string[]> = {
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/diego-santos-1-NoiVHWUBgguJLWogK6cPP29VM3PgVQ.png",
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/diego-santos-2-EttgmHz4EpUuoA96xb6eNrGxFl6w5C.png"
   ],
+  "Amara Vance": [
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/amara-vance-1-8H1EgCYqQ0cHQv1HyvcEgkgRnwbwSZ.png",
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/amara-vance-2-mdj456knBFyP3yNpZ1trOz0WH2iO50.png"
+  ],
+  "Malik Al-Jamil": [
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/malik-al-jamil-1-iWBDyosdmQZLwnOt6nj8xH1Iun1CDt.png",
+    "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/malik-al-jamil-2-svAzOBP6mU2L3fvN9p5QLYuELDFEYl.png"
+  ],
   "Priya Menon": [
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/priya-menon-1-vLModJijDthw8UKvFNVndNDEm7bSQV.png",
     "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/priya-menon-2-Yve88IoEeNfTTBGwhighXphMezpLgU.png"
@@ -83,6 +91,7 @@ export const SHOW_STUDIO_ART: Record<string, string> = {
   "frame-by-frame": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/frame-by-frame-studio-KgdvnUd7m8ZHpJ2FsnqlVcE7rHXrnl.png",
   "liner-notes": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/liner-notes-studio-ijxvQovS0vNyghpRgt5mg0XFcu19bs.png",
   "player-two": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/player-two-studio-yBJECiKZLzZ5zQodnxjVG25GNux3SS.png",
+  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-studio-Nd5Otlwe7FCqN97gEiF1En1BmU9vHz.png",
 }
 
 /** Show id → host-populated intro image URL (home-page show card). */
@@ -96,6 +105,7 @@ export const SHOW_INTRO_ART: Record<string, string> = {
   "frame-by-frame": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/frame-by-frame-intro-jnzJMZlDTy8C7C1URrDxEqFyfTqXWS.png",
   "liner-notes": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/liner-notes-intro-h9izwsceuId3MGw70htUJy4W3NGHHU.png",
   "player-two": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/player-two-intro-xQPRT0tArXJAg6WeOp8n2SwTrTCMTr.png",
+  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-intro-3xX7q3cy7kegUrwor4R9go2i8AM2EX.png",
 }
 
 /** Show id → fixed cover key-art URL (channel hero + channel cards). */
@@ -120,7 +130,7 @@ export const SHOW_COVER_ART: Record<string, string> = {
   "clearsight-style": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-style-cover-YZmVwCcLTtQ5QYGzp5kltlcCw17MHk.png",
   "clearsight-wellness": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-wellness-cover-6nv85w1lVepzskLfKADYDN6mf6sxr4.png",
   "clearsight-pets": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-pets-cover-mHQt3uZCCKFHXY6NKRWe5pLKwHJ4iv.png",
-  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-cover-o4wk5eT5lX7VG3rvYUyizKsH8RCjEE.png",
+  "clearsight-math": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-math-cover-dPxKAIo5JgIfoLcWWSvCac7JFmRF1I.png",
   "clearsight-science": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-science-cover-PZ7SjQF1o4IghPJFbZpBrRdNR9lrNt.png",
   "clearsight-cosmos": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-cosmos-cover-Xc5lju5RG4M5U90BKAEOmHU2ylGseW.png",
   "clearsight-history": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-history-cover-Hd5hT8SV2cZlapKJfw21Z6GkKBlNN0.png",
@@ -130,4 +140,16 @@ export const SHOW_COVER_ART: Record<string, string> = {
   "clearsight-arts": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-arts-cover-Hj2rAxXMbL2m1bKBTLFLK4uyOTR1eX.png",
   "clearsight-nature": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-nature-cover-NVmSaIwSqJCHsDrWWQlVaeOabGPQFX.png",
   "clearsight-hip-hop": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-hip-hop-cover-E2ohFOnx3tGt9CVCJp2s4RX3UvLnDn.png",
+}
+
+/** Show id → host name → persistent character reference image for Imagen likeness. */
+export const HOST_CHARACTER_REF: Record<string, Record<string, string>> = {
+  "clearsight-math": {
+    "Amara Vance": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/clearsight-math/amara-vance-character-ref-8Gjt1uXY4XylHVCnoX0OREUreS92GN.png",
+    "Malik Al-Jamil": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/clearsight-math/malik-al-jamil-character-ref-Xhupvd75sSNhDBng1q7QwNst9ZV3Id.png",
+  },
+  "clearsight-brief": {
+    "Dr. Benjamin Anderson": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/clearsight-brief/dr-benjamin-anderson-character-ref-CjaN0DrDy4LUbx6SaJG3nJXcBks4n7.png",
+    "Sarah Chen": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/hosts/clearsight-brief/sarah-chen-character-ref-BWpIBFoKAm4gAOZ4sqDVCBcJOOE0VM.png",
+  },
 }

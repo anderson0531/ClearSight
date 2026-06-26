@@ -1,18 +1,14 @@
 'use client'
 
-import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
+import Link from 'next/link'
+import { ArrowRight } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import type { TaxonomyFilter } from '@/lib/taxonomy'
 
 interface LibraryWelcomeEmptyProps {
   canCreateOnDemand: boolean
-  onDemandFilter: TaxonomyFilter
 }
 
-export function LibraryWelcomeEmpty({
-  canCreateOnDemand,
-  onDemandFilter,
-}: LibraryWelcomeEmptyProps) {
+export function LibraryWelcomeEmpty({ canCreateOnDemand }: LibraryWelcomeEmptyProps) {
   const t = useTranslations()
 
   return (
@@ -22,8 +18,14 @@ export function LibraryWelcomeEmpty({
         {t('libraryWelcomeBody')}
       </p>
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+        <Link href="/discover" className="btn-accent">
+          {t('homeStartBrowsing')}
+        </Link>
         {canCreateOnDemand ? (
-          <AddTopicDialog filter={onDemandFilter} buttonLabel={t('libraryCreateOnDemand')} />
+          <Link href="/on-demand" className="btn-secondary">
+            <ArrowRight className="h-4 w-4" />
+            {t('lensGoToOnDemand')}
+          </Link>
         ) : null}
       </div>
     </div>

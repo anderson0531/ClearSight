@@ -4,6 +4,7 @@
  */
 export {
   CLEARSIGHT_BRIEF_INTRO,
+  CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME,
   HOST_VOICES,
   INTRO_MUSIC,
 } from '../src/lib/clearsight-brief-intro-script.ts'

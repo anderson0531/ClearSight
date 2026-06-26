@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { SHOW_INTRO_ANIMATIC } from '@/lib/show-intro-animatic'
 import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import { estimatePatternMatrixTimeline } from '@/lib/pattern-matrix-intro-timeline'
 import {
   buildIntroElasticSyncPlan,
   introSegmentsAreBackfilled,
@@ -29,26 +30,39 @@ test('resolveIntroFrameIndex advances at line end boundaries', () => {
     { url: '', durationSeconds: 5, startOffsetSeconds: 5, text: 'one' },
     { url: '', durationSeconds: 5, startOffsetSeconds: 10, text: 'two' },
   ]
+
+  assert.equal(resolveIntroFrameIndex(segments, 4.5, -1), -1)
+  assert.equal(resolveIntroFrameIndex(segments, 9.5, 0), 0)
+  assert.equal(resolveIntroFrameIndex(segments, 10, 0), 1)
+})
+
+test('resolveIntroFrameIndex elastic plan stretches dialog when audio runs longer', () => {
+  const segments = [
+    { url: '', durationSeconds: 5, startOffsetSeconds: 5, text: 'one' },
+    { url: '', durationSeconds: 5, startOffsetSeconds: 10, text: 'two' },
+  ]
   const audioDuration = 20
 
-  assert.equal(resolveIntroFrameIndex(segments, 4.85, -1, audioDuration), -1)
-  assert.equal(resolveIntroFrameIndex(segments, 9.95, 0, audioDuration), 0)
-  assert.equal(resolveIntroFrameIndex(segments, 10, 0, audioDuration), 1)
+  const plan = buildIntroElasticSyncPlan(segments, audioDuration)
+  assert.equal(resolveIntroFrameIndexFromPlan(plan, 9.5), 1)
+  assert.equal(resolveIntroFrameIndexFromPlan(plan, plan.frameEndSeconds[1]! - 0.05), 1)
+  assert.equal(resolveIntroFrameIndexFromPlan(plan, plan.frameEndSeconds[1]! + 0.05), -1)
 })
 
 test('buildIntroElasticSyncPlan stretches dialog when localized audio runs longer', () => {
-  const segments = SHOW_INTRO_ANIMATIC[CLEARSIGHT_BRIEF_SHOW_ID]!.slice(0, 2).map((segment) => ({
+  const segments = SHOW_INTRO_ANIMATIC[CLEARSIGHT_BRIEF_SHOW_ID]!.slice(1, 3).map((segment) => ({
     ...segment,
     introTimelineBackfilled: true,
+    visualMedium: undefined,
+    videoUrl: undefined,
   }))
   const englishDialogEnd =
     (segments[1]!.startOffsetSeconds ?? 0) + segments[1]!.durationSeconds
   const hindiAudioDuration = englishDialogEnd + 30
 
   const plan = buildIntroElasticSyncPlan(segments, hindiAudioDuration)
-  const englishFirstLineEnd =
-    (segments[0]!.startOffsetSeconds ?? 0) + segments[0]!.durationSeconds
-  assert.ok(plan.frameEndSeconds[0]! > englishFirstLineEnd)
+  const englishFirstLineDuration = segments[0]!.durationSeconds
+  assert.ok(plan.frameEndSeconds[0]! > englishFirstLineDuration)
   assert.equal(resolveIntroFrameIndexFromPlan(plan, plan.frameEndSeconds[0]! - 0.05), 0)
   assert.equal(resolveIntroFrameIndexFromPlan(plan, plan.frameEndSeconds[0]! + 0.05), 1)
 })
@@ -75,8 +89,31 @@ test('syncIntroSegmentsToAudio maps elastic plan onto segment metadata', () => {
     { url: '', durationSeconds: 10, startOffsetSeconds: 17, text: 'two', frameKind: 'scene' },
   ])
   const synced = syncIntroSegmentsToAudio(segments, 40)
-  assert.equal(synced[0]!.startOffsetSeconds, 5)
+  assert.equal(synced[0]!.startOffsetSeconds, 0)
   assert.equal(synced[1]!.startOffsetSeconds, synced[0]!.startOffsetSeconds! + synced[0]!.durationSeconds)
+})
+
+test('buildIntroElasticSyncPlan pins opening video frame and scales dialog only', () => {
+  const segments = markIntroSegmentsProbed([
+    {
+      url: '',
+      durationSeconds: 8,
+      startOffsetSeconds: 0,
+      visualMedium: 'video',
+      videoUrl: 'https://example.com/opening.mp4',
+      frameKind: 'scene',
+    },
+    { url: '', durationSeconds: 10, startOffsetSeconds: 8, text: 'line one', frameKind: 'scene' },
+    { url: '', durationSeconds: 8, startOffsetSeconds: 18, text: 'line two', frameKind: 'scene' },
+  ])
+  const audioDuration = 40
+
+  const plan = buildIntroElasticSyncPlan(segments, audioDuration)
+  assert.equal(plan.frameStartSeconds[0], 0)
+  assert.equal(plan.frameEndSeconds[0], 8)
+  assert.equal(resolveIntroFrameIndexFromPlan(plan, 7.9), 0)
+  assert.equal(resolveIntroFrameIndexFromPlan(plan, 8.05), 1)
+  assert.equal(plan.frameEndSeconds[1], 18)
 })
 
 test('elastic plan preserves poster during theme intro lead-in', () => {
@@ -86,4 +123,15 @@ test('elastic plan preserves poster during theme intro lead-in', () => {
   )
   assert.equal(resolveIntroFrameIndexFromPlan(plan, 2), -1)
   assert.equal(resolveIntroFrameIndexFromPlan(plan, 6), 0)
+})
+
+test('Pattern Matrix manifesto segments include opening video and Ken Burns metadata', () => {
+  const segments = estimatePatternMatrixTimeline()
+  assert.ok(segments.length === 8)
+  assert.equal(segments[0]?.visualMedium, 'video')
+  assert.equal(segments[2]?.animaticMovement, 'kenburns-zoom-in')
+  assert.equal(segments[7]?.role, 'cta')
+  const plan = buildIntroElasticSyncPlan(segments, 190)
+  assert.equal(plan.frameStartSeconds.length, 8)
+  assert.equal(plan.frameStartSeconds[0], 0)
 })

@@ -8,10 +8,14 @@ import { prisma } from '@/lib/db'
 import { ensureEpisodeThumbnail } from '@/lib/generate-story'
 import { renderStoryAnimatic } from '@/lib/animatic'
 import { sendPushToUser } from '@/lib/push'
-import { assertGenerationActive } from '@/lib/generation-cancel'
+import { assertIllustrationsActive } from '@/lib/generation-cancel'
 
 const ILLUSTRATION_ERROR_MESSAGE =
   'Illustrations incomplete — open the story and tap Complete frames to retry.'
+
+/** Stay under the Inngest route maxDuration (300s) with sequential Imagen + backoff. */
+const FRAMES_PER_INNGEST_PASS = 4
+const MAX_ILLUSTRATION_PASSES = 40
 
 /**
  * Renders frame illustrations after the main podcast job has completed and the
@@ -23,15 +27,15 @@ export const renderPodcastIllustrations = inngest.createFunction(
     id: 'render-podcast-illustrations',
     name: 'Render podcast illustrations (background)',
     retries: 2,
-    concurrency: { limit: 3 },
+    concurrency: { limit: 1 },
     triggers: [{ event: PODCAST_ILLUSTRATIONS_REQUESTED }],
   },
   async ({ event, step }) => {
     const { generationId, userId, storyId } =
       event.data as unknown as PodcastIllustrationsRequested
 
-    const initialResult = await step.run('render-illustrations', async () => {
-      await assertGenerationActive(generationId)
+    const prepare = await step.run('prepare-illustrations', async () => {
+      await assertIllustrationsActive(generationId)
 
       const generation = await prisma.generation.findUnique({
         where: { id: generationId },
@@ -53,42 +57,95 @@ export const renderPodcastIllustrations = inngest.createFunction(
         console.error('[inngest] ensure episode thumbnail failed', err)
       })
 
-      try {
-        const result = await renderStoryAnimatic(storyId, { phases: ['images'] })
-        const incomplete =
-          result.framesIncomplete ||
-          (result.failed > 0 && result.newlyRenderedImages === 0)
-
-        if (incomplete && result.newlyRenderedImages === 0 && result.failed > 0) {
-          console.error('[inngest] illustration render produced no images', {
-            storyId,
-            failed: result.failed,
-            pending: result.pendingCounts,
-          })
-        }
-
-        return { skipped: false as const, incomplete, ...result }
-      } catch (err) {
-        console.error('[inngest] background illustration render failed', err)
-        return { skipped: false as const, incomplete: true, failed: true, newlyRenderedImages: 0 }
-      }
+      return { skipped: false as const }
     })
 
-    let renderResult = initialResult
+    if (prepare.skipped) {
+      return { storyId, notified: false, skipped: true }
+    }
+
+    let renderResult: Awaited<ReturnType<typeof renderStoryAnimatic>> | null = null
+    let skipped = false
+
+    for (let pass = 0; pass < MAX_ILLUSTRATION_PASSES; pass++) {
+      const batch = await step.run(`render-illustrations-${pass}`, async () => {
+        await assertIllustrationsActive(generationId)
+
+        const generation = await prisma.generation.findUnique({
+          where: { id: generationId },
+          select: { includeIllustrations: true, storyId: true },
+        })
+        if (!generation) {
+          throw new NonRetriableError(`Generation ${generationId} not found`)
+        }
+        if (!generation.includeIllustrations || generation.storyId !== storyId) {
+          return { skipped: true as const }
+        }
+
+        try {
+          const result = await renderStoryAnimatic(storyId, {
+            phases: ['images'],
+            maxNewFramesPerPass: FRAMES_PER_INNGEST_PASS,
+          })
+          const incomplete =
+            result.framesIncomplete ||
+            (result.failed > 0 && result.newlyRenderedImages === 0)
+
+          if (incomplete && result.newlyRenderedImages === 0 && result.failed > 0) {
+            console.error('[inngest] illustration batch produced no images', {
+              storyId,
+              pass,
+              failed: result.failed,
+              pending: result.pendingCounts,
+            })
+          }
+
+          return { skipped: false as const, incomplete, ...result }
+        } catch (err) {
+          console.error('[inngest] background illustration render failed', err)
+          return {
+            skipped: false as const,
+            incomplete: true,
+            failed: true,
+            newlyRenderedImages: 0,
+            framesIncomplete: true,
+            pendingCounts: { imageGroups: 0, videoClips: 0, total: 0 },
+            segments: [],
+            rendered: 0,
+            newlyRendered: 0,
+            newlyRenderedVideos: 0,
+          }
+        }
+      })
+
+      if (batch.skipped) {
+        skipped = true
+        break
+      }
+
+      renderResult = batch
+
+      if (!batch.framesIncomplete) break
+      if (batch.newlyRenderedImages === 0 && batch.failed > 0) break
+    }
+
+    if (skipped || !renderResult) {
+      return { storyId, notified: false, skipped: true }
+    }
 
     if (
-      !renderResult.skipped &&
-      renderResult.incomplete &&
+      renderResult.framesIncomplete &&
       renderResult.newlyRenderedImages === 0 &&
       typeof renderResult.failed === 'number' &&
       renderResult.failed > 0
     ) {
       renderResult = await step.run('retry-failed-frames', async () => {
-        await assertGenerationActive(generationId)
+        await assertIllustrationsActive(generationId)
         try {
           const result = await renderStoryAnimatic(storyId, {
             phases: ['images'],
             skipSubjectRefs: true,
+            maxNewFramesPerPass: FRAMES_PER_INNGEST_PASS,
           })
           const incomplete =
             result.framesIncomplete ||
@@ -101,31 +158,30 @@ export const renderPodcastIllustrations = inngest.createFunction(
       })
     }
 
-    if (!renderResult.skipped) {
-      await step.run('finalize-illustrations', async () => {
-        await assertGenerationActive(generationId)
-        const incomplete =
-          renderResult.incomplete ||
-          (typeof renderResult.failed === 'number' &&
-            renderResult.failed > 0 &&
-            renderResult.newlyRenderedImages === 0)
-        await prisma.generation.update({
-          where: { id: generationId },
-          data: {
-            stage: 'complete',
-            errorMessage: incomplete ? ILLUSTRATION_ERROR_MESSAGE : null,
-          },
-        })
-        return { incomplete }
+    await step.run('finalize-illustrations', async () => {
+      await assertIllustrationsActive(generationId)
+      const incomplete =
+        renderResult!.framesIncomplete ||
+        (typeof renderResult!.failed === 'number' &&
+          renderResult!.failed > 0 &&
+          renderResult!.newlyRenderedImages === 0)
+      await prisma.generation.update({
+        where: { id: generationId },
+        data: {
+          stage: 'complete',
+          completedAt: new Date(),
+          errorMessage: incomplete ? ILLUSTRATION_ERROR_MESSAGE : null,
+        },
       })
-    }
+      return { incomplete }
+    })
 
-    if (renderResult.skipped || renderResult.incomplete) {
+    if (renderResult.framesIncomplete) {
       return { storyId, notified: false }
     }
 
     await step.run('notify-illustrations', async () => {
-      await assertGenerationActive(generationId)
+      await assertIllustrationsActive(generationId)
       const generation = await prisma.generation.findUnique({
         where: { id: generationId },
         select: { params: true },

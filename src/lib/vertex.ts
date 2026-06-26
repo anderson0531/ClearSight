@@ -1,6 +1,9 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { GoogleAuth, type JWTInput } from 'google-auth-library'
+import {
+  fetchWithImagenRetry,
+} from '@/lib/vertex-retry'
 
 const PROJECT =
   process.env.VERTEX_PROJECT_ID ?? process.env.GCP_PROJECT_ID ?? 'sceneflowai-2d3e6'
@@ -282,15 +285,24 @@ function imagenSubjectCustomizationEnabled(): boolean {
   return process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION === '1'
 }
 
+/** True when Imagen failed due to quota / rate limiting (skip in-frame fallback chains). */
+export function isImagenQuotaError(result: ImagenGenerateResult): boolean {
+  if (result.httpStatus === 429) return true
+  const err = (result.error ?? '').toLowerCase()
+  return err.includes('resource_exhausted') || err.includes('quota')
+}
+
 export async function vertexGenerateImage(
   prompt: string,
   options?: {
     aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
     personGeneration?: 'dont_allow' | 'allow_adult' | 'allow_all'
     /**
-     * Likeness via Imagen 3 subject customization. Opt-in only:
-     * set VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION=1.
+     * Likeness via Imagen 3 subject customization. Enabled for channel host
+     * character refs automatically, or for episode subject-bible refs when
+     * VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION=1.
      */
+    forceSubjectCustomization?: boolean
     subjectReferences?: ImagenSubjectReference[]
     /** When true, never pass subject references (Imagen 4 text-only path). */
     skipSubjectRefs?: boolean
@@ -308,7 +320,9 @@ export async function vertexGenerateImage(
 
   const hasReferences =
     !options?.skipSubjectRefs && (options?.subjectReferences?.length ?? 0) > 0
-  const useSubjectCustomization = hasReferences && imagenSubjectCustomizationEnabled()
+  const useSubjectCustomization =
+    hasReferences &&
+    (options?.forceSubjectCustomization === true || imagenSubjectCustomizationEnabled())
 
   const instance: Record<string, unknown> = { prompt }
   if (useSubjectCustomization && options?.subjectReferences) {
@@ -326,21 +340,23 @@ export async function vertexGenerateImage(
   const model = useSubjectCustomization ? IMAGE_CUSTOMIZATION_MODEL : IMAGE_MODEL
   const endpoint = imagenEndpoint(model)
 
+  const requestBody = JSON.stringify({
+    instances: [instance],
+    parameters: {
+      sampleCount: 1,
+      aspectRatio: options?.aspectRatio ?? '1:1',
+      personGeneration: options?.personGeneration ?? 'allow_adult',
+    },
+  })
+
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithImagenRetry(fetch, endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        instances: [instance],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: options?.aspectRatio ?? '1:1',
-          personGeneration: options?.personGeneration ?? 'allow_adult',
-        },
-      }),
+      body: requestBody,
     })
 
     if (!res.ok) {

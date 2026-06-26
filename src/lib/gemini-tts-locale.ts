@@ -7,6 +7,7 @@ import { getLocaleByEnglishName, type LocaleDefinition } from '@/i18n/locales'
 const GEMINI_TTS_LANGUAGE_OVERRIDES: Record<string, string> = {
   'ar-XA': 'ar-EG',
   'bn-IN': 'bn-BD',
+  'ur-IN': 'ur-PK',
 }
 
 /** BCP-47 language code accepted by Gemini TTS for a spoken locale. */

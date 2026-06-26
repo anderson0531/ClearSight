@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { Heart, HeartOff, ListMusic, Play, Radio, Search as SearchIcon, X } from 'lucide-react'
 import { LibraryEpisodeCard } from '@/components/library/LibraryEpisodeCard'
 import { LibrarySection } from '@/components/library/LibrarySection'
-import { LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
+import { LEGACY_LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { getShowById } from '@/lib/shows'
 import type { FollowedChannel, LikedEpisode } from '@/lib/favorites'
@@ -45,7 +45,7 @@ export function LibraryCollectionsSection({
   return (
     <>
       {liked.length > 0 ? (
-        <LibrarySection id={LIBRARY_SECTION_IDS.liked} title={t('libraryLiked')} icon={Heart}>
+        <LibrarySection id={LEGACY_LIBRARY_SECTION_IDS.liked} title={t('libraryLiked')} icon={Heart}>
           <div className="home-episode-grid home-episode-grid-2 sm:grid-cols-3 lg:grid-cols-4">
             {liked.map((track) => (
               <div key={track.id} className="relative">
@@ -66,7 +66,7 @@ export function LibraryCollectionsSection({
 
       {playlists.length > 0 ? (
         <LibrarySection
-          id={LIBRARY_SECTION_IDS.playlists}
+          id={LEGACY_LIBRARY_SECTION_IDS.playlists}
           title={t('libraryPlaylists')}
           icon={ListMusic}
         >
@@ -146,7 +146,7 @@ export function LibraryCollectionsSection({
 
       {savedSearches.length > 0 ? (
         <LibrarySection
-          id={LIBRARY_SECTION_IDS.saved}
+          id={LEGACY_LIBRARY_SECTION_IDS.saved}
           title={t('librarySavedSearches')}
           icon={SearchIcon}
         >
@@ -177,7 +177,7 @@ export function LibraryCollectionsSection({
 
       {following.length > 0 ? (
         <LibrarySection
-          id={LIBRARY_SECTION_IDS.following}
+          id={LEGACY_LIBRARY_SECTION_IDS.following}
           title={t('libraryFollowing')}
           icon={Radio}
         >

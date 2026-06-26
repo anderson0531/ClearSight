@@ -120,7 +120,7 @@ export function CategoryLanding({ contentType, category }: CategoryLandingProps)
           geoLocal: story.geoLocal,
         }),
       }).catch(() => {})
-      router.push('/library')
+      router.push('/on-demand')
     },
     [filter, plan, router]
   )

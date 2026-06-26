@@ -5,8 +5,9 @@ import Image from 'next/image'
 import { ChevronDown, ChevronUp, Loader2, Mic, Search as SearchIcon } from 'lucide-react'
 import { LibraryEpisodeCard } from '@/components/library/LibraryEpisodeCard'
 import { LibrarySection } from '@/components/library/LibrarySection'
-import { LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
+import { LEGACY_LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
 import { LIBRARY_ON_DEMAND_PREVIEW } from '@/components/library/types'
+import { generationDurationLabel } from '@/lib/generation-ui'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { GenerationJob } from '@/components/library/types'
 import type { AudioTrack } from '@/types/story'
@@ -60,7 +61,7 @@ export function LibraryOnDemandSection({
 
   return (
     <LibrarySection
-      id={LIBRARY_SECTION_IDS.podcasts}
+      id={LEGACY_LIBRARY_SECTION_IDS.podcasts}
       title={t('libraryOnDemandEpisodes')}
       icon={Mic}
       action={
@@ -115,6 +116,7 @@ export function LibraryOnDemandSection({
         <ul className="space-y-2">
           {visible.map((job) => {
             if (!job.storyId) return null
+            const durationLabel = generationDurationLabel(job)
             return (
               <li
                 key={job.id}
@@ -151,6 +153,10 @@ export function LibraryOnDemandSection({
                     {job.illustrationsInProgress ? (
                       <span className="mt-0.5 line-clamp-1 block text-xs font-medium text-[var(--accent)]">
                         {t('libraryIllustrationsRendering')}
+                      </span>
+                    ) : durationLabel ? (
+                      <span className="mt-0.5 line-clamp-1 block text-xs text-[var(--muted-strong)]">
+                        {t(durationLabel.key, durationLabel.params)}
                       </span>
                     ) : job.description ? (
                       <span className="mt-0.5 line-clamp-1 block text-xs text-[var(--muted-strong)]">

@@ -180,11 +180,34 @@ function eduFramework(label: string, focus: string, arc: string): AnalysisFramew
 }
 
 const EDUCATION_TOPIC_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
-  Mathematics: eduFramework(
-    'Mathematics explainer',
-    'a mathematical concept',
-    'Structure: (1) the question it answers → (2) the concept from first principles → (3) a worked example → (4) where it shows up in the world → (5) recap'
-  ),
+  Mathematics: {
+    label: 'Mathematics explainer (Pattern Matrix)',
+    briefingDirectives: [
+      'Open with 2–3 concrete real-world applications of the math — engineering, nature, finance, cryptography, or daily life',
+      'Define every key term plainly the first time it appears',
+      'Build from intuition to formal principles — include a worked example the listener can picture',
+      'Surface and correct the most common misconception about the topic',
+      'Close the briefing with a crisp recap of the core pattern or formula to remember',
+    ],
+    podcastDirectives: [
+      'Section 1 — Practical applications: name where this math matters in the real world before any notation',
+      'Section 2 — Accessible explanation: Amara and Malik build intuition with analogies, history, and scaffolding',
+      'Section 3 — Mathematical principles: develop definitions, logic, and proofs step by step; formal LaTeX belongs in math_foundation_node',
+      'Section 4 — Summary: recap the key insight and what the listener should carry forward',
+      'Take as many frames as the topic requires — no fixed time limit; never skip a foundational step',
+    ],
+    analyticalArc:
+      'Structure: (1) practical applications → (2) engaging accessible explanation → (3) mathematical principles → (4) summary → (5) Ask the Host Q&A invitation in bookends',
+    forecastMandate:
+      'MANDATORY: Close with a concrete recap of the key takeaways, then invite follow-up questions via Ask the Host.',
+    antiFluffRules: [
+      'Ban unexplained jargon and acronyms',
+      'Ban skipping foundational steps the explanation depends on',
+      'Ban arbitrary time limits — completeness and clarity beat brevity',
+      'Every frame must teach an application, intuition, principle, or recap beat',
+      'No filler reactions or hype — clarity over excitement',
+    ],
+  },
   'Science & Discovery': eduFramework(
     'Science explainer',
     'a scientific concept or discovery',

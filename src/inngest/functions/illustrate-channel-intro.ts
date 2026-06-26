@@ -7,12 +7,14 @@ import {
 import {
   canonicalIntroLanguage,
   CLEARSIGHT_BRIEF_SHOW_ID,
+  PATTERN_MATRIX_SHOW_ID,
   findChannelIntroRow,
   markChannelIntroCompleted,
   markChannelIntroFailed,
   markChannelIntroRunning,
 } from '@/lib/channel-intro'
 import { applyBriefIntroFrameImages } from '@/lib/clearsight-brief-intro-images'
+import { applyPatternMatrixIntroFrameImages } from '@/lib/pattern-matrix-intro-images'
 import { illustrateChannelIntroSegments } from '@/lib/channel-intro-illustrations'
 import { introSegmentsNeedIllustration } from '@/lib/channel-intro-segments'
 import { resolveIntroTimelineSegments } from '@/lib/channel-intro-resolve'
@@ -78,6 +80,9 @@ export const illustrateChannelIntroFn = inngest.createFunction(
       const illustrated = await step.run('illustrate-frames', async () => {
         if (showId === CLEARSIGHT_BRIEF_SHOW_ID) {
           return applyBriefIntroFrameImages(timeline.segments)
+        }
+        if (showId === PATTERN_MATRIX_SHOW_ID) {
+          return applyPatternMatrixIntroFrameImages(timeline.segments)
         }
         return illustrateChannelIntroSegments(showId, language, timeline.segments)
       })

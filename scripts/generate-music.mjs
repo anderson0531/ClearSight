@@ -50,6 +50,26 @@ const BED_SPECS = [
   },
 ]
 
+const PATTERN_MATRIX_INTRO_ROCK_BED_SPEC = {
+  pathname: 'clearsight/music/bed-pattern-matrix-intro-rock.wav',
+  prompt:
+    'Anthemic rock channel intro underscore, 30 seconds, electric guitar and drums, confident broadcast energy, driving rhythm, seamless loop-friendly, instrumental only, no vocals',
+  negativePrompt: 'vocals, lyrics, speech, singing, narration, dissonant, chaotic',
+  seed: 42104,
+  targetSeconds: 30,
+  fallbackDuration: 30,
+}
+
+const CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC = {
+  pathname: 'clearsight/music/bed-clearsight-brief-intro-rock.wav',
+  prompt:
+    'News broadcast rock intro bed, 30 seconds, punchy electric guitar and drums, urgent investigative energy, modern podcast opener, seamless loop-friendly, instrumental only, no vocals',
+  negativePrompt: 'vocals, lyrics, speech, singing, narration, dissonant, chaotic, metal',
+  seed: 42105,
+  targetSeconds: 30,
+  fallbackDuration: 30,
+}
+
 const MUSIC_SPECS = [
   {
     key: 'intro',
@@ -233,7 +253,27 @@ async function generateMusic(prompt, { negativePrompt, seed }, attempt = 1) {
   return Buffer.from(encoded, 'base64')
 }
 
-function writeMusicAssetsFile(assets, backgroundMusic) {
+function readExistingPatternMatrixIntroRockBed() {
+  if (!existsSync(MUSIC_ASSETS_PATH)) {
+    return 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav'
+  }
+  const text = readFileSync(MUSIC_ASSETS_PATH, 'utf8')
+  const quoted = text.match(/export const PATTERN_MATRIX_INTRO_ROCK_BED = ("[^"]+")/)
+  if (quoted) return JSON.parse(quoted[1])
+  return 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav'
+}
+
+function readExistingClearsightBriefIntroRockBed() {
+  if (!existsSync(MUSIC_ASSETS_PATH)) {
+    return 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav'
+  }
+  const text = readFileSync(MUSIC_ASSETS_PATH, 'utf8')
+  const quoted = text.match(/export const CLEARSIGHT_BRIEF_INTRO_ROCK_BED = ("[^"]+")/)
+  if (quoted) return JSON.parse(quoted[1])
+  return 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav'
+}
+
+function writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed) {
   const content = `import type { AudioSegment, AudioSegmentRole, MusicMood } from '@/types/story'
 
 /**
@@ -267,6 +307,12 @@ export const BACKGROUND_MUSIC = {
 export const BACKGROUND_MUSIC_VOLUME_RATIO = 0.15
 
 /**
+ * Veo reenactment ambient audio, relative to dialogue volume. Kept low so
+ * documentary ambience supports the hosts without competing with TTS.
+ */
+export const VIDEO_FRAME_VOLUME_RATIO = 0.2
+
+/**
  * Duration of the baked outro music segment that closes every episode. Players
  * cap playback of the (longer) source bed at this length so the sign-off is a
  * consistent ~30s regardless of the source track length.
@@ -286,6 +332,15 @@ export const MUSIC_MOODS: MusicMood[] = [
   'urgent',
   'uplifting',
 ]
+
+/** Pattern Matrix underscore bed (alias until a dedicated track is generated). */
+export const PATTERN_MATRIX_BED = BACKGROUND_MUSIC.content
+
+/** Rock-themed underscore for the Pattern Matrix channel intro manifesto. */
+export const PATTERN_MATRIX_INTRO_ROCK_BED = ${JSON.stringify(patternMatrixIntroRockBed)}
+
+/** Rock-themed underscore for The ClearSight Brief channel intro trailer. */
+export const CLEARSIGHT_BRIEF_INTRO_ROCK_BED = ${JSON.stringify(clearsightBriefIntroRockBed)}
 
 /** Coerce arbitrary model output into a valid {@link MusicMood} (default neutral). */
 export function normalizeMusicMood(value: unknown): MusicMood {
@@ -358,6 +413,8 @@ async function main() {
   }
 
   const bedsOnly = process.argv.includes('--beds-only')
+  const rockOnly = process.argv.includes('--pattern-matrix-rock-only')
+  const briefRockOnly = process.argv.includes('--clearsight-brief-rock-only')
   const assets = {
     intro: { url: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-intro.wav', durationSeconds: 5 },
     sting: { url: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/chapter-sting.wav', durationSeconds: 3 },
@@ -368,6 +425,49 @@ async function main() {
     intro: assets.intro.url,
     content: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav',
     outro: assets.outro.url,
+  }
+
+  let patternMatrixIntroRockBed = readExistingPatternMatrixIntroRockBed()
+  let clearsightBriefIntroRockBed = readExistingClearsightBriefIntroRockBed()
+
+  if (briefRockOnly) {
+    console.log('[generate-music] Generating ClearSight Brief intro rock bed...')
+    const buffer = await generateMusic(CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.prompt, {
+      negativePrompt: CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.negativePrompt,
+      seed: CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.seed,
+    })
+    const trimmed = trimWavSeconds(buffer, CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.targetSeconds)
+    const blob = await put(CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.pathname, trimmed, {
+      access: 'public',
+      contentType: 'audio/wav',
+      addRandomSuffix: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    })
+    clearsightBriefIntroRockBed = blob.url
+    console.log(`[generate-music] clearsight-brief-intro-rock: ${blob.url}`)
+    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
+    console.log('[generate-music] Done.')
+    return
+  }
+
+  if (rockOnly) {
+    console.log('[generate-music] Generating Pattern Matrix intro rock bed...')
+    const buffer = await generateMusic(PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.prompt, {
+      negativePrompt: PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.negativePrompt,
+      seed: PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.seed,
+    })
+    const trimmed = trimWavSeconds(buffer, PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.targetSeconds)
+    const blob = await put(PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.pathname, trimmed, {
+      access: 'public',
+      contentType: 'audio/wav',
+      addRandomSuffix: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    })
+    patternMatrixIntroRockBed = blob.url
+    console.log(`[generate-music] pattern-matrix-intro-rock: ${blob.url}`)
+    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
+    console.log('[generate-music] Done.')
+    return
   }
 
   if (!bedsOnly) {
@@ -391,25 +491,61 @@ async function main() {
     }
   }
 
-  for (const spec of BED_SPECS) {
-    console.log(`[generate-music] Generating background bed ${spec.backgroundKey}...`)
-    const buffer = await generateMusic(spec.prompt, {
-      negativePrompt: spec.negativePrompt,
-      seed: spec.seed,
+  if (bedsOnly) {
+    for (const spec of BED_SPECS) {
+      console.log(`[generate-music] Generating background bed ${spec.backgroundKey}...`)
+      const buffer = await generateMusic(spec.prompt, {
+        negativePrompt: spec.negativePrompt,
+        seed: spec.seed,
+      })
+      const trimmed = trimWavSeconds(buffer, spec.targetSeconds)
+      const blob = await put(spec.pathname, trimmed, {
+        access: 'public',
+        contentType: 'audio/wav',
+        addRandomSuffix: false,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      })
+      backgroundMusic[spec.backgroundKey] = blob.url
+      console.log(`[generate-music] bed-${spec.backgroundKey}: ${blob.url}`)
+      await sleep(3000)
+    }
+  }
+
+  console.log('[generate-music] Generating Pattern Matrix intro rock bed...')
+  {
+    const buffer = await generateMusic(PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.prompt, {
+      negativePrompt: PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.negativePrompt,
+      seed: PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.seed,
     })
-    const trimmed = trimWavSeconds(buffer, spec.targetSeconds)
-    const blob = await put(spec.pathname, trimmed, {
+    const trimmed = trimWavSeconds(buffer, PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.targetSeconds)
+    const blob = await put(PATTERN_MATRIX_INTRO_ROCK_BED_SPEC.pathname, trimmed, {
       access: 'public',
       contentType: 'audio/wav',
       addRandomSuffix: false,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     })
-    backgroundMusic[spec.backgroundKey] = blob.url
-    console.log(`[generate-music] bed-${spec.backgroundKey}: ${blob.url}`)
-    await sleep(3000)
+    patternMatrixIntroRockBed = blob.url
+    console.log(`[generate-music] pattern-matrix-intro-rock: ${blob.url}`)
   }
 
-  writeMusicAssetsFile(assets, backgroundMusic)
+  console.log('[generate-music] Generating ClearSight Brief intro rock bed...')
+  {
+    const buffer = await generateMusic(CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.prompt, {
+      negativePrompt: CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.negativePrompt,
+      seed: CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.seed,
+    })
+    const trimmed = trimWavSeconds(buffer, CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.targetSeconds)
+    const blob = await put(CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC.pathname, trimmed, {
+      access: 'public',
+      contentType: 'audio/wav',
+      addRandomSuffix: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    })
+    clearsightBriefIntroRockBed = blob.url
+    console.log(`[generate-music] clearsight-brief-intro-rock: ${blob.url}`)
+  }
+
+  writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
   console.log('[generate-music] Done.')
 }
 

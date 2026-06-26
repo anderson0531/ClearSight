@@ -2,14 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Heart, Loader2, Pause, Play } from 'lucide-react'
+import { Heart, Loader2, Maximize, Minimize, Pause, Play } from 'lucide-react'
 import { useTranslations, useI18n } from '@/i18n/I18nProvider'
 import { useTranslatedTexts } from '@/lib/use-translated'
 import type { Show } from '@/lib/shows'
 import { FAVORITES_EVENT, isChannelFollowed, toggleFollowChannel } from '@/lib/favorites'
 import { CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
 import { useChannelIntro } from '@/hooks/useChannelIntro'
+import { useFullscreen } from '@/hooks/useFullscreen'
 import { ChannelIntroHeroAnimatic } from '@/components/channel/ChannelIntroHeroAnimatic'
+import { ChannelIntroProgressIndicator } from '@/components/channel/ChannelIntroProgressIndicator'
 import { useAudioQueue } from '@/store/useAudioQueue'
 
 export function ChannelHeader({ show }: { show: Show }) {
@@ -49,7 +51,7 @@ export function ChannelHeader({ show }: { show: Show }) {
 
   const pauseGlobalAudio = useAudioQueue((s) => s.pause)
 
-  const { introUrl, introSegments, state, error, canShowIntro, framesReady, ensureFramesReady, prepareAndPlay, retry } = useChannelIntro(
+  const { introUrl, introSegments, state, error, progress, canShowIntro, framesReady, ensureFramesReady, prepareAndPlay, retry } = useChannelIntro(
     show.id,
     locale.englishName,
     show.introAudio,
@@ -60,6 +62,7 @@ export function ChannelHeader({ show }: { show: Show }) {
     const el = introRef.current
     if (!el) return
     pauseGlobalAudio()
+    setIntroPlaying(true)
     await ensureFramesReady()
     el.src = url
     el.load()
@@ -91,22 +94,21 @@ export function ChannelHeader({ show }: { show: Show }) {
 
   const introBusy = state === 'preparing' || (Boolean(introSegments?.length) && !framesReady)
   const introFailed = state === 'failed'
-  const showHeroAnimatic = Boolean(introSegments?.length)
+  const { ref: heroRef, isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen<HTMLDivElement>()
+  const showFullscreenControl = canShowIntro && Boolean(introSegments?.length)
 
   return (
     <header>
       <div className="channel-hero-bleed">
-        <div className="channel-hero">
-          {!introPlaying ? (
-            <Image
-              src={show.coverImage}
-              alt={show.name}
-              fill
-              priority
-              sizes="100vw"
-              className="channel-hero-img"
-            />
-          ) : null}
+        <div ref={heroRef} className="channel-hero">
+          <Image
+            src={show.coverImage}
+            alt={show.name}
+            fill
+            priority
+            sizes="100vw"
+            className="channel-hero-img"
+          />
           {introSegments?.length ? (
             <ChannelIntroHeroAnimatic
               segments={introSegments}
@@ -154,7 +156,26 @@ export function ChannelHeader({ show }: { show: Show }) {
                       : t('channelPlayIntro')}
               </button>
             ) : null}
+            {showFullscreenControl ? (
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="channel-hero-fullscreen-btn"
+                aria-label={isFullscreen ? t('animaticExitFullscreen') : t('animaticFullscreen')}
+              >
+                {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              </button>
+            ) : null}
           </div>
+          {state === 'preparing' ? (
+            <ChannelIntroProgressIndicator
+              showId={show.id}
+              stage={progress?.stage ?? 'queued'}
+              step={progress?.step ?? 0}
+              total={progress?.total ?? null}
+              stalled={progress?.stalled ?? false}
+            />
+          ) : null}
           {introFailed && error ? (
             <p className="mt-2 text-xs text-[var(--muted-strong)]">{error}</p>
           ) : null}
@@ -168,7 +189,10 @@ export function ChannelHeader({ show }: { show: Show }) {
           preload="metadata"
           onPlay={() => setIntroPlaying(true)}
           onPause={() => setIntroPlaying(false)}
-          onEnded={() => setIntroPlaying(false)}
+          onEnded={() => {
+            setIntroPlaying(false)
+            exitFullscreen()
+          }}
         />
       ) : null}
 

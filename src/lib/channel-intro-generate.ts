@@ -11,7 +11,12 @@ import { put } from '@vercel/blob'
 import { getLocaleByEnglishName } from '@/i18n/locales'
 import { HOST_ANDERSON, HOST_SARAH, type HostProfile } from '@/lib/hosts'
 import { languageSlug, canonicalIntroLanguage } from '@/lib/channel-intro'
-import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import {
+  BRIEF_LINE_OFFSETS,
+  introProgressTotalSteps,
+  type ChannelIntroProgressReporter,
+} from '@/lib/channel-intro-progress'
+import { CLEARSIGHT_BRIEF_SHOW_ID, PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import {
   CLEARSIGHT_BRIEF_INTRO,
   HOST_VOICES,
@@ -20,8 +25,31 @@ import {
   type BriefSpeaker,
 } from '@/lib/clearsight-brief-intro-script'
 import {
+  PATTERN_MATRIX_MANIFESTO,
+  type PatternMatrixManifestoAct,
+} from '@/lib/pattern-matrix-intro-script'
+import { buildPatternMatrixTimeline } from '@/lib/pattern-matrix-intro-timeline'
+import { PATTERN_MATRIX_INTRO_ROCK_BED } from '@/lib/music-assets'
+import { CLEARSIGHT_BRIEF_INTRO_ROCK_BED } from '@/lib/music-assets'
+import {
+  CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME,
+} from '@/lib/clearsight-brief-intro-script'
+import {
+  PATTERN_MATRIX_OPENING_DURATION_SECONDS,
+  PATTERN_MATRIX_OPENING_VIDEO_URL,
+} from '@/lib/pattern-matrix-opening-video'
+import {
+  CLEARSIGHT_BRIEF_OPENING_DURATION_SECONDS,
+  CLEARSIGHT_BRIEF_OPENING_VIDEO_URL,
+} from '@/lib/clearsight-brief-opening-video'
+import {
   buildIntroTtsPrompt,
 } from '@/lib/intro-tts'
+import { synthesizePatternMatrixLine } from '@/lib/pattern-matrix-intro-tts'
+import {
+  applyOpeningDurationToTimeline,
+  markIntroSegmentsProbed,
+} from '@/lib/channel-intro-segments'
 import { resolveGeminiTtsLanguageCode } from '@/lib/gemini-tts-locale'
 import { localizeSegmentTexts } from '@/lib/relocalize'
 import { getShowById, type Show } from '@/lib/shows'
@@ -29,7 +57,9 @@ import { getVertexAccessToken } from '@/lib/vertex'
 import {
   buildBriefActTimeline,
   mergeBriefTrailerTimeline,
+  prependBriefOpeningToTimeline,
 } from '@/lib/channel-intro-timeline'
+import { applyBriefIntroFrameImages } from '@/lib/clearsight-brief-intro-images'
 import type { AudioSegment } from '@/types/story'
 
 const CLEARSIGHT_BRIEF_ID = CLEARSIGHT_BRIEF_SHOW_ID
@@ -178,11 +208,12 @@ async function synthesizeLine(
   text: string,
   languageCode: string,
   stylePrompt: string,
+  strict = false,
   attempt = 1
 ): Promise<Buffer> {
   const body = {
     input: {
-      prompt: buildIntroTtsPrompt(stylePrompt, false),
+      prompt: buildIntroTtsPrompt(stylePrompt, strict),
       text: sanitizeSpokenText(text),
     },
     voice: {
@@ -209,7 +240,7 @@ async function synthesizeLine(
 
     if ((res.status === 429 || res.status >= 500) && attempt < TTS_MAX_ATTEMPTS) {
       await sleep(attempt * 4000)
-      return synthesizeLine(token, host, text, languageCode, stylePrompt, attempt + 1)
+      return synthesizeLine(token, host, text, languageCode, stylePrompt, strict, attempt + 1)
     }
 
     if (!res.ok) {
@@ -222,7 +253,7 @@ async function synthesizeLine(
     if (!data.audioContent) {
       if (attempt < TTS_MAX_ATTEMPTS) {
         await sleep(attempt * 2000)
-        return synthesizeLine(token, host, text, languageCode, stylePrompt, attempt + 1)
+        return synthesizeLine(token, host, text, languageCode, stylePrompt, strict, attempt + 1)
       }
       throw new Error('empty audioContent')
     }
@@ -230,7 +261,7 @@ async function synthesizeLine(
   } catch (err) {
     if (attempt < TTS_MAX_ATTEMPTS) {
       await sleep(attempt * 3000)
-      return synthesizeLine(token, host, text, languageCode, stylePrompt, attempt + 1)
+      return synthesizeLine(token, host, text, languageCode, stylePrompt, strict, attempt + 1)
     }
     throw err
   }
@@ -248,7 +279,7 @@ async function synthesizeBriefTrailerLine(
   const host = HOST_BY_SPEAKER[speaker]
   if (!voice || !host) throw new Error(`Unknown speaker: ${speaker}`)
 
-  return synthesizeLine(token, host, text, languageCode, voice.style)
+  return synthesizeLine(token, host, text, languageCode, host.ttsStylePrompt)
 }
 
 async function synthesizeSpokenText(
@@ -306,6 +337,41 @@ function wavToMp3(wavPath: string, mp3Path: string) {
   runFfmpeg(['-i', wavPath, '-c:a', 'libmp3lame', '-q:a', '2', mp3Path], `wav2mp3:${mp3Path}`)
 }
 
+function trimAudioToDuration(inputPath: string, durationSeconds: number, outputPath: string) {
+  runFfmpeg(
+    ['-i', inputPath, '-t', String(durationSeconds), '-c:a', 'libmp3lame', '-q:a', '2', outputPath],
+    `trim:${outputPath}`
+  )
+}
+
+async function probeOpeningVideoDurationSeconds(
+  workDir: string,
+  videoUrl: string,
+  fallbackSeconds: number
+): Promise<number> {
+  if (!videoUrl.trim()) return 0
+  const videoPath = join(workDir, 'opening-hosts.mp4')
+  await downloadFile(videoUrl, videoPath)
+  const probed = probeDurationSeconds(videoPath)
+  return probed > 0 ? probed : fallbackSeconds
+}
+
+async function probePatternMatrixOpeningDurationSeconds(workDir: string): Promise<number> {
+  return probeOpeningVideoDurationSeconds(
+    workDir,
+    PATTERN_MATRIX_OPENING_VIDEO_URL,
+    PATTERN_MATRIX_OPENING_DURATION_SECONDS
+  )
+}
+
+async function probeBriefOpeningDurationSeconds(workDir: string): Promise<number> {
+  return probeOpeningVideoDurationSeconds(
+    workDir,
+    CLEARSIGHT_BRIEF_OPENING_VIDEO_URL,
+    CLEARSIGHT_BRIEF_OPENING_DURATION_SECONDS
+  )
+}
+
 function mixDialogueWithBed(
   dialoguePath: string,
   bedPath: string,
@@ -336,6 +402,54 @@ function mixDialogueWithBed(
 
 async function loadIntroMusic() {
   return INTRO_MUSIC
+}
+
+async function ensureBriefIntroRockBed(
+  workDir: string,
+  musicCache: Record<string, string>
+): Promise<string> {
+  const bedKey = 'briefIntroRockBed'
+  if (musicCache[bedKey]) return musicCache[bedKey]!
+  const wavPath = join(workDir, `${bedKey}.wav`)
+  await downloadFile(CLEARSIGHT_BRIEF_INTRO_ROCK_BED, wavPath)
+  const bedMp3 = join(workDir, `${bedKey}.mp3`)
+  wavToMp3(wavPath, bedMp3)
+  musicCache[bedKey] = bedMp3
+  return bedMp3
+}
+
+async function buildBriefTrailerFinalAudio(
+  workDir: string,
+  actDialoguePaths: string[],
+  openingDurationSeconds: number,
+  musicCache: Record<string, string>
+): Promise<{ finalPath: string; openingLeadSeconds: number }> {
+  const rockBedPath = await ensureBriefIntroRockBed(workDir, musicCache)
+
+  const allDialoguePath = join(workDir, 'brief-all-dialogue.mp3')
+  concatAudio(actDialoguePaths, allDialoguePath, true)
+
+  const mixedDialoguePath = join(workDir, 'brief-dialogue-rock.mp3')
+  mixDialogueWithBed(
+    allDialoguePath,
+    rockBedPath,
+    CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME,
+    mixedDialoguePath
+  )
+
+  const segmentParts: string[] = []
+  let openingLeadSeconds = 0
+  if (openingDurationSeconds > 0) {
+    const rockLeadPath = join(workDir, 'brief-opening-rock-lead.mp3')
+    trimAudioToDuration(rockBedPath, openingDurationSeconds, rockLeadPath)
+    openingLeadSeconds = probeDurationSeconds(rockLeadPath)
+    segmentParts.push(rockLeadPath)
+  }
+  segmentParts.push(mixedDialoguePath)
+
+  const finalPath = join(workDir, 'clearsight-brief-intro-trailer.mp3')
+  concatAudio(segmentParts, finalPath, true)
+  return { finalPath, openingLeadSeconds }
 }
 
 function resolveMusicKey(
@@ -379,6 +493,95 @@ async function translateBriefActs(acts: BriefAct[], language: string): Promise<B
   return translatedActs
 }
 
+async function translatePatternMatrixAct(
+  act: PatternMatrixManifestoAct,
+  language: string
+): Promise<PatternMatrixManifestoAct> {
+  const segments: AudioSegment[] = act.lines.map((line) => ({
+    url: '',
+    durationSeconds: 0,
+    text: line.text,
+    role: 'body',
+  }))
+
+  const { texts } = await localizeSegmentTexts(segments, language)
+  return {
+    ...act,
+    lines: act.lines.map((line, index) => ({
+      ...line,
+      text: texts[index] ?? line.text,
+    })),
+  }
+}
+
+async function buildPatternMatrixManifestoSegment(
+  act: PatternMatrixManifestoAct,
+  workDir: string,
+  token: string,
+  languageCode: string,
+  musicCache: Record<string, string>,
+  onProgress?: ChannelIntroProgressReporter
+): Promise<{ manifestoPath: string; frames: AudioSegment[]; durationSeconds: number }> {
+  await resolveFfmpegBinaries()
+  const openingDurationSeconds = await probePatternMatrixOpeningDurationSeconds(workDir)
+  const linePaths: string[] = []
+
+  for (const [index, line] of act.lines.entries()) {
+    if (onProgress) {
+      await onProgress('audio', 2 + index)
+    }
+    const label = `manifesto-line${String(index + 1).padStart(2, '0')}-${line.speaker}`
+    const buffer = await synthesizePatternMatrixLine(
+      token,
+      line.speaker,
+      line.text,
+      languageCode,
+      { modelName: TTS_MODEL }
+    )
+    const linePath = join(workDir, `${label}.mp3`)
+    writeFileSync(linePath, buffer)
+    linePaths.push(linePath)
+    await sleep(LINE_DELAY_MS)
+  }
+
+  const lineDurationsSeconds = measureConcatLineDurations(linePaths, workDir)
+  const frames = markIntroSegmentsProbed(
+    buildPatternMatrixTimeline(lineDurationsSeconds, act.lines, {
+      openingDurationSeconds,
+    })
+  )
+
+  const dialoguePath = join(workDir, 'manifesto-dialogue.mp3')
+  concatAudio(linePaths, dialoguePath, true)
+
+  const bedKey = 'patternMatrixIntroRockBed'
+  if (!musicCache[bedKey]) {
+    const wavPath = join(workDir, `${bedKey}.wav`)
+    await downloadFile(PATTERN_MATRIX_INTRO_ROCK_BED, wavPath)
+    const bedMp3 = join(workDir, `${bedKey}.mp3`)
+    wavToMp3(wavPath, bedMp3)
+    musicCache[bedKey] = bedMp3
+  }
+
+  const mixedPath = join(workDir, 'manifesto-mixed.mp3')
+  mixDialogueWithBed(dialoguePath, musicCache[bedKey]!, act.music.bedVolume, mixedPath)
+
+  const segmentParts: string[] = []
+  if (openingDurationSeconds > 0) {
+    const rockLeadPath = join(workDir, 'opening-rock-lead.mp3')
+    trimAudioToDuration(musicCache[bedKey]!, openingDurationSeconds, rockLeadPath)
+    segmentParts.push(rockLeadPath)
+  }
+  segmentParts.push(mixedPath)
+
+  const manifestoPath = join(workDir, 'manifesto-final.mp3')
+  concatAudio(segmentParts, manifestoPath, true)
+  const durationSeconds = probeDurationSeconds(manifestoPath)
+  return { manifestoPath, frames, durationSeconds }
+}
+
+export type { ChannelIntroProgressReporter } from '@/lib/channel-intro-progress'
+
 export interface BriefActRenderResult {
   actUrl: string
   frames: AudioSegment[]
@@ -397,13 +600,23 @@ async function buildActSegment(
   token: string,
   languageCode: string,
   introMusic: typeof INTRO_MUSIC,
-  musicCache: Record<string, string>
-): Promise<{ actPath: string; frames: AudioSegment[]; actDurationSeconds: number }> {
+  musicCache: Record<string, string>,
+  options: {
+    skipPrependTheme?: boolean
+    openingAbsorbsThemeIntro?: boolean
+    rockUnderscoreOnly?: boolean
+    onProgress?: ChannelIntroProgressReporter
+  } = {}
+): Promise<{ actPath: string; frames: AudioSegment[]; actDurationSeconds: number; dialoguePath: string }> {
   const linePaths: string[] = []
   let lineNum = 0
 
   for (const line of act.lines) {
     lineNum += 1
+    if (options.onProgress) {
+      const step = 2 + BRIEF_LINE_OFFSETS[actIndex]! + (lineNum - 1)
+      await options.onProgress('audio', step)
+    }
     const label = `act${actIndex + 1}-line${String(lineNum).padStart(2, '0')}-${line.speaker}`
     const buffer = await synthesizeBriefTrailerLine(
       token,
@@ -421,10 +634,21 @@ async function buildActSegment(
 
   const lineDurationsSeconds = measureConcatLineDurations(linePaths, workDir)
 
-  const frames = buildBriefActTimeline({ act, actIndex, lineDurationsSeconds })
+  const frames = buildBriefActTimeline({
+    act,
+    actIndex,
+    lineDurationsSeconds,
+    openingAbsorbsThemeIntro: options.openingAbsorbsThemeIntro,
+    rockUnderscoreOnly: options.rockUnderscoreOnly,
+  })
 
   const dialoguePath = join(workDir, `${act.id}-dialogue.mp3`)
   concatAudio(linePaths, dialoguePath, true)
+
+  if (options.rockUnderscoreOnly) {
+    const actDurationSeconds = probeDurationSeconds(dialoguePath)
+    return { actPath: dialoguePath, frames, actDurationSeconds, dialoguePath }
+  }
 
   let mixedPath = dialoguePath
   if (act.music.bed) {
@@ -442,7 +666,7 @@ async function buildActSegment(
 
   const segmentParts: string[] = []
 
-  if (act.music.prependTheme) {
+  if (act.music.prependTheme && !options.skipPrependTheme) {
     const themeKey = act.music.prependTheme
     if (!musicCache[themeKey]) {
       const wavPath = join(workDir, `${themeKey}.wav`)
@@ -471,7 +695,7 @@ async function buildActSegment(
   const actPath = join(workDir, `${act.id}-final.mp3`)
   concatAudio(segmentParts, actPath, true)
   const actDurationSeconds = probeDurationSeconds(actPath)
-  return { actPath, frames, actDurationSeconds }
+  return { actPath, frames, actDurationSeconds, dialoguePath }
 }
 
 async function uploadIntroMp3(showId: string, language: string, buffer: Buffer) {
@@ -513,7 +737,12 @@ export async function translateBriefTrailerActs(language: string): Promise<Brief
 export async function renderBriefTrailerAct(
   act: BriefAct,
   actIndex: number,
-  language: string
+  language: string,
+  options: {
+    skipPrependTheme?: boolean
+    openingAbsorbsThemeIntro?: boolean
+    onProgress?: ChannelIntroProgressReporter
+  } = {}
 ): Promise<BriefActRenderResult> {
   await resolveFfmpegBinaries()
   const token = await getVertexAccessToken()
@@ -522,6 +751,8 @@ export async function renderBriefTrailerAct(
   const lang = canonicalIntroLanguage(language)
   const locale = getLocaleByEnglishName(lang)
   const introMusic = await loadIntroMusic()
+  const rockUnderscoreOnly = Boolean(CLEARSIGHT_BRIEF_OPENING_VIDEO_URL.trim())
+  const openingAbsorbsThemeIntro = options.openingAbsorbsThemeIntro ?? rockUnderscoreOnly
   const workDir = join(tmpdir(), `clearsight-brief-intro-act-${actIndex}-${Date.now()}`)
   mkdirSync(workDir, { recursive: true })
 
@@ -533,7 +764,14 @@ export async function renderBriefTrailerAct(
       token,
       resolveGeminiTtsLanguageCode(locale),
       introMusic,
-      {}
+      {},
+      {
+        ...options,
+        openingAbsorbsThemeIntro,
+        rockUnderscoreOnly,
+        skipPrependTheme:
+          options.skipPrependTheme ?? (rockUnderscoreOnly && actIndex === 0),
+      }
     )
     const actUrl = await uploadBriefActMp3(actIndex, lang, readFileSync(actPath))
     return { actUrl, frames, actDurationSeconds }
@@ -542,26 +780,40 @@ export async function renderBriefTrailerAct(
   }
 }
 
-/** Concatenate per-act MP3s and upload the final localized Brief trailer. */
+/** Concatenate per-act dialogue MP3s with rock bed and upload the final Brief trailer. */
 export async function assembleBriefTrailerFromActUrls(
   actUrls: string[],
-  language: string
-): Promise<string> {
+  language: string,
+  options: { openingDurationSeconds?: number } = {}
+): Promise<{ audioUrl: string; openingLeadSeconds: number }> {
   await resolveFfmpegBinaries()
   const lang = canonicalIntroLanguage(language)
   const workDir = join(tmpdir(), `clearsight-brief-intro-assemble-${Date.now()}`)
   mkdirSync(workDir, { recursive: true })
 
   try {
-    const localPaths: string[] = []
+    const actDialoguePaths: string[] = []
     for (const [index, url] of actUrls.entries()) {
-      const localPath = join(workDir, `act-${index}.mp3`)
+      const localPath = join(workDir, `act-${index}-dialogue.mp3`)
       await downloadFile(url, localPath)
-      localPaths.push(localPath)
+      actDialoguePaths.push(localPath)
     }
-    const finalPath = join(workDir, 'clearsight-brief-intro-trailer.mp3')
-    concatAudio(localPaths, finalPath, true)
-    return uploadIntroMp3(CLEARSIGHT_BRIEF_ID, lang, readFileSync(finalPath))
+
+    const openingDurationSeconds =
+      options.openingDurationSeconds ??
+      (CLEARSIGHT_BRIEF_OPENING_VIDEO_URL.trim()
+        ? await probeBriefOpeningDurationSeconds(workDir)
+        : 0)
+
+    const musicCache: Record<string, string> = {}
+    const { finalPath, openingLeadSeconds } = await buildBriefTrailerFinalAudio(
+      workDir,
+      actDialoguePaths,
+      openingDurationSeconds,
+      musicCache
+    )
+    const audioUrl = await uploadIntroMp3(CLEARSIGHT_BRIEF_ID, lang, readFileSync(finalPath))
+    return { audioUrl, openingLeadSeconds }
   } finally {
     rmSync(workDir, { recursive: true, force: true })
   }
@@ -583,18 +835,117 @@ export function mergeBriefActRenderResults(results: BriefActRenderResult[]): Aud
 async function generateBriefTrailer(language: string): Promise<ChannelIntroGenerateResult> {
   const lang = canonicalIntroLanguage(language)
   const acts = await translateBriefTrailerActs(lang)
-  const actResults: BriefActRenderResult[] = []
-  for (const [index, act] of acts.entries()) {
-    actResults.push(await renderBriefTrailerAct(act, index, lang))
+  const workDir = join(tmpdir(), `clearsight-brief-intro-${Date.now()}`)
+  mkdirSync(workDir, { recursive: true })
+
+  try {
+    await resolveFfmpegBinaries()
+    const token = await getVertexAccessToken()
+    if (!token) throw new Error('Missing Vertex credentials for TTS')
+
+    const locale = getLocaleByEnglishName(lang)
+    const languageCode = resolveGeminiTtsLanguageCode(locale)
+    const introMusic = await loadIntroMusic()
+    const musicCache: Record<string, string> = {}
+
+    const openingDurationSeconds = await probeBriefOpeningDurationSeconds(workDir)
+    const rockUnderscoreOnly = openingDurationSeconds > 0
+    const openingAbsorbsThemeIntro = rockUnderscoreOnly
+
+    const actResults: BriefActRenderResult[] = []
+    const actDialoguePaths: string[] = []
+
+    for (const [index, act] of acts.entries()) {
+      const { actPath, frames, actDurationSeconds, dialoguePath } = await buildActSegment(
+        act,
+        index,
+        workDir,
+        token,
+        languageCode,
+        introMusic,
+        musicCache,
+        {
+          skipPrependTheme: rockUnderscoreOnly && index === 0,
+          openingAbsorbsThemeIntro,
+          rockUnderscoreOnly,
+        }
+      )
+      actDialoguePaths.push(dialoguePath)
+      actResults.push({ actUrl: actPath, frames, actDurationSeconds })
+    }
+
+    const { finalPath, openingLeadSeconds } = await buildBriefTrailerFinalAudio(
+      workDir,
+      actDialoguePaths,
+      openingDurationSeconds,
+      musicCache
+    )
+
+    const audioUrl = await uploadIntroMp3(CLEARSIGHT_BRIEF_ID, lang, readFileSync(finalPath))
+
+    let timeline = prependBriefOpeningToTimeline(
+      mergeBriefActRenderResults(actResults),
+      openingDurationSeconds
+    )
+    if (openingLeadSeconds > 0) {
+      timeline = applyOpeningDurationToTimeline(timeline, openingLeadSeconds)
+    }
+
+    return {
+      audioUrl,
+      audioSegments: applyBriefIntroFrameImages(timeline),
+    }
+  } finally {
+    rmSync(workDir, { recursive: true, force: true })
   }
-  const audioUrl = await assembleBriefTrailerFromActUrls(
-    actResults.map((result) => result.actUrl),
-    lang
-  )
-  return {
-    audioUrl,
-    audioSegments: mergeBriefActRenderResults(actResults),
+}
+
+/** Translate Pattern Matrix manifesto lines for a target spoken language. */
+export async function translatePatternMatrixManifesto(
+  language: string
+): Promise<PatternMatrixManifestoAct> {
+  return translatePatternMatrixAct(PATTERN_MATRIX_MANIFESTO.act, canonicalIntroLanguage(language))
+}
+
+/** TTS + mix the Pattern Matrix channel manifesto; upload final MP3. */
+export async function renderPatternMatrixManifesto(
+  language: string,
+  onProgress?: ChannelIntroProgressReporter
+): Promise<ChannelIntroGenerateResult> {
+  await resolveFfmpegBinaries()
+  const token = await getVertexAccessToken()
+  if (!token) throw new Error('Missing Vertex credentials for TTS')
+
+  const lang = canonicalIntroLanguage(language)
+  const locale = getLocaleByEnglishName(lang)
+  const act = await translatePatternMatrixManifesto(lang)
+  if (onProgress) {
+    await onProgress('translate', 1)
   }
+  const workDir = join(tmpdir(), `pattern-matrix-intro-${Date.now()}`)
+  mkdirSync(workDir, { recursive: true })
+
+  try {
+    const { manifestoPath, frames } = await buildPatternMatrixManifestoSegment(
+      act,
+      workDir,
+      token,
+      resolveGeminiTtsLanguageCode(locale),
+      {},
+      onProgress
+    )
+    const audioUrl = await uploadIntroMp3(PATTERN_MATRIX_SHOW_ID, lang, readFileSync(manifestoPath))
+    return { audioUrl, audioSegments: frames }
+  } finally {
+    rmSync(workDir, { recursive: true, force: true })
+  }
+}
+
+async function generatePatternMatrixTrailer(
+  language: string,
+  onProgress?: ChannelIntroProgressReporter
+): Promise<ChannelIntroGenerateResult> {
+  return renderPatternMatrixManifesto(language, onProgress)
 }
 
 async function generateTaglineIntro(show: Show, language: string): Promise<ChannelIntroGenerateResult> {
@@ -647,7 +998,8 @@ async function generateTaglineIntro(show: Show, language: string): Promise<Chann
 /** Generate localized channel intro audio and return the public blob URL + animatic frames. */
 export async function generateChannelIntro(
   showId: string,
-  language: string
+  language: string,
+  onProgress?: ChannelIntroProgressReporter
 ): Promise<ChannelIntroGenerateResult> {
   const lang = canonicalIntroLanguage(language)
   const show = getShowById(showId)
@@ -657,9 +1009,21 @@ export async function generateChannelIntro(
     return generateBriefTrailer(lang)
   }
 
+  if (showId === PATTERN_MATRIX_SHOW_ID) {
+    return generatePatternMatrixTrailer(lang)
+  }
+
   if (!show.introTagline?.trim()) {
     throw new Error(`Show ${showId} has no intro tagline`)
   }
 
-  return generateTaglineIntro(show, lang)
+  if (onProgress) {
+    await onProgress('translate', 0)
+    await onProgress('audio', 1)
+  }
+  const result = await generateTaglineIntro(show, lang)
+  if (onProgress) {
+    await onProgress('finalize', introProgressTotalSteps(showId) - 1)
+  }
+  return result
 }

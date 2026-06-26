@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { isDatabaseUnavailableError } from '@/lib/database-url'
+import { serializeGenerationDurations } from '@/lib/generation-duration'
 import { getCurrentUserId } from '@/lib/session'
 import { addCoreTokens, consumeCredits, CreditError } from '@/lib/credits'
 import { BASE_GENERATION_UNITS, ILLUSTRATION_UNITS, MUSIC_GENERATION_UNITS, newsIllustrationUnits } from '@/lib/credit-units'
@@ -34,12 +35,19 @@ export async function GET(
         params: true,
         createdAt: true,
         updatedAt: true,
+        audioCompletedAt: true,
+        completedAt: true,
       },
     })
 
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const params = row.params as { title?: string; contentType?: string } | null
+    const durations = serializeGenerationDurations({
+      createdAt: row.createdAt,
+      audioCompletedAt: row.audioCompletedAt,
+      completedAt: row.completedAt,
+    })
     return NextResponse.json({
       id: row.id,
       status: row.status,
@@ -51,6 +59,10 @@ export async function GET(
       contentType: params?.contentType ?? null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      audioCompletedAt: row.audioCompletedAt,
+      completedAt: row.completedAt,
+      audioDurationMs: durations.audioDurationMs,
+      totalDurationMs: durations.totalDurationMs,
     })
   } catch (err) {
     if (isDatabaseUnavailableError(err)) {
@@ -200,6 +212,8 @@ export async function POST(
         status: 'QUEUED',
         stage: 'queued',
         errorMessage: null,
+        audioCompletedAt: null,
+        completedAt: null,
         creditsCharged: row.creditsCharged + retryUnits,
       },
     })

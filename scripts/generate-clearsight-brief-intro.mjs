@@ -23,6 +23,7 @@ import { GoogleAuth } from 'google-auth-library'
 import { put } from '@vercel/blob'
 import {
   CLEARSIGHT_BRIEF_INTRO,
+  CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME,
   HOST_VOICES,
   INTRO_MUSIC,
 } from './clearsight-brief-intro-script.mjs'
@@ -30,6 +31,14 @@ import { applyBriefIntroFrameImages } from './clearsight-brief-intro-images.mjs'
 import {
   buildIntroTtsPrompt,
 } from './intro-tts.mjs'
+import { prependBriefOpeningToTimeline } from '../src/lib/channel-intro-timeline.ts'
+import { applyOpeningDurationToTimeline } from '../src/lib/channel-intro-segments.ts'
+import { CLEARSIGHT_BRIEF_INTRO_ROCK_BED } from '../src/lib/music-assets.ts'
+import {
+  CLEARSIGHT_BRIEF_OPENING_DURATION_SECONDS,
+  CLEARSIGHT_BRIEF_OPENING_VIDEO_URL,
+} from '../src/lib/clearsight-brief-opening-video.ts'
+import { SHOW_INTRO_ANIMATIC } from '../src/lib/show-intro-animatic.ts'
 
 let ffmpegPath = 'ffmpeg'
 let ffprobePath = 'ffprobe'
@@ -74,12 +83,27 @@ function themeDurationSeconds(key) {
   return 0
 }
 
-function buildActTimeline(act, actIndex, lineDurationsSeconds) {
+function actUsesPrependTheme(act, actIndex, openingAbsorbsThemeIntro, rockUnderscoreOnly = false) {
+  if (rockUnderscoreOnly) return false
+  if (!act.music.prependTheme) return false
+  if (openingAbsorbsThemeIntro && actIndex === 0 && act.music.prependTheme === 'themeIntro') {
+    return false
+  }
+  return true
+}
+
+function buildActTimeline(
+  act,
+  actIndex,
+  lineDurationsSeconds,
+  openingAbsorbsThemeIntro = false,
+  rockUnderscoreOnly = false
+) {
   const role = ACT_ROLES[actIndex] ?? 'body'
   const frames = []
   let offset = 0
 
-  if (act.music.prependTheme) {
+  if (actUsesPrependTheme(act, actIndex, openingAbsorbsThemeIntro, rockUnderscoreOnly)) {
     offset += themeDurationSeconds(act.music.prependTheme)
   }
 
@@ -319,6 +343,21 @@ function wavToMp3(wavPath, mp3Path) {
   runFfmpeg(['-i', wavPath, '-c:a', 'libmp3lame', '-q:a', '2', mp3Path], `wav2mp3:${mp3Path}`)
 }
 
+function trimAudioToDuration(inputPath, durationSeconds, outputPath) {
+  runFfmpeg(
+    ['-i', inputPath, '-t', String(durationSeconds), '-c:a', 'libmp3lame', '-q:a', '2', outputPath],
+    `trim:${outputPath}`
+  )
+}
+
+async function probeBriefOpeningDurationSeconds(workDir) {
+  if (!CLEARSIGHT_BRIEF_OPENING_VIDEO_URL.trim()) return 0
+  const videoPath = join(workDir, 'opening-hosts.mp4')
+  await downloadFile(CLEARSIGHT_BRIEF_OPENING_VIDEO_URL, videoPath)
+  const probed = probeDurationSeconds(videoPath)
+  return probed > 0 ? probed : CLEARSIGHT_BRIEF_OPENING_DURATION_SECONDS
+}
+
 function mixDialogueWithBed(dialoguePath, bedPath, bedVolume, outputPath) {
   runFfmpeg(
     [
@@ -342,6 +381,51 @@ function mixDialogueWithBed(dialoguePath, bedPath, bedVolume, outputPath) {
   )
 }
 
+async function ensureBriefIntroRockBed(workDir, musicCache) {
+  const bedKey = 'briefIntroRockBed'
+  if (musicCache[bedKey]) return musicCache[bedKey]
+  const wavPath = join(workDir, `${bedKey}.wav`)
+  await downloadFile(CLEARSIGHT_BRIEF_INTRO_ROCK_BED, wavPath)
+  const bedMp3 = join(workDir, `${bedKey}.mp3`)
+  wavToMp3(wavPath, bedMp3)
+  musicCache[bedKey] = bedMp3
+  return bedMp3
+}
+
+async function buildBriefTrailerFinalAudio(
+  workDir,
+  actDialoguePaths,
+  openingDurationSeconds,
+  musicCache
+) {
+  const rockBedPath = await ensureBriefIntroRockBed(workDir, musicCache)
+
+  const allDialoguePath = join(workDir, 'brief-all-dialogue.mp3')
+  concatAudio(actDialoguePaths, allDialoguePath, true)
+
+  const mixedDialoguePath = join(workDir, 'brief-dialogue-rock.mp3')
+  mixDialogueWithBed(
+    allDialoguePath,
+    rockBedPath,
+    CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME,
+    mixedDialoguePath
+  )
+
+  const segmentParts = []
+  let openingLeadSeconds = 0
+  if (openingDurationSeconds > 0) {
+    const rockLeadPath = join(workDir, 'brief-opening-rock-lead.mp3')
+    trimAudioToDuration(rockBedPath, openingDurationSeconds, rockLeadPath)
+    openingLeadSeconds = probeDurationSeconds(rockLeadPath)
+    segmentParts.push(rockLeadPath)
+  }
+  segmentParts.push(mixedDialoguePath)
+
+  const finalPath = join(workDir, 'clearsight-brief-intro-trailer.mp3')
+  concatAudio(segmentParts, finalPath, true)
+  return { finalPath, openingLeadSeconds }
+}
+
 function resolveMusicKey(key) {
   if (key === 'themeIntro') return INTRO_MUSIC.themeIntro.url
   if (key === 'sting') return INTRO_MUSIC.sting.url
@@ -352,7 +436,12 @@ function resolveMusicKey(key) {
   throw new Error(`Unknown music key: ${key}`)
 }
 
-async function buildActSegment(act, actIndex, workDir, token, musicCache) {
+async function buildActSegment(act, actIndex, workDir, token, musicCache, options = {}) {
+  const {
+    skipPrependTheme = false,
+    openingAbsorbsThemeIntro = false,
+    rockUnderscoreOnly = false,
+  } = options
   const linePaths = []
   const lineDurationsSeconds = []
   let lineNum = 0
@@ -369,10 +458,22 @@ async function buildActSegment(act, actIndex, workDir, token, musicCache) {
     await sleep(LINE_DELAY_MS)
   }
 
-  const frames = buildActTimeline(act, actIndex, lineDurationsSeconds)
+  const frames = buildActTimeline(
+    act,
+    actIndex,
+    lineDurationsSeconds,
+    openingAbsorbsThemeIntro,
+    rockUnderscoreOnly
+  )
 
   const dialoguePath = join(workDir, `${act.id}-dialogue.mp3`)
   concatAudio(linePaths, dialoguePath, true)
+
+  if (rockUnderscoreOnly) {
+    const actDurationSeconds = probeDurationSeconds(dialoguePath)
+    console.log(`[generate-clearsight-brief-intro] ${act.id} dialogue (${actDurationSeconds.toFixed(1)}s)`)
+    return { actPath: dialoguePath, frames, actDurationSeconds, dialoguePath }
+  }
 
   let mixedPath = dialoguePath
   if (act.music.bed) {
@@ -390,7 +491,7 @@ async function buildActSegment(act, actIndex, workDir, token, musicCache) {
 
   const segmentParts = []
 
-  if (act.music.prependTheme) {
+  if (act.music.prependTheme && !skipPrependTheme) {
     const themeKey = act.music.prependTheme
     if (!musicCache[themeKey]) {
       const wavPath = join(workDir, `${themeKey}.wav`)
@@ -457,18 +558,23 @@ ${entries}
 }
 
 function writeShowIntroAnimaticFile(segments) {
+  const patternMatrixSegments = SHOW_INTRO_ANIMATIC['clearsight-math'] ?? []
+
   const content = `/**
- * Generated English channel intro animatic frames for The ClearSight Brief.
+ * Generated English channel intro animatic frames.
  *
- * Overwritten by \`npm run generate:clearsight-brief-intro\`.
+ * Overwritten by \`npm run generate:clearsight-brief-intro\` and
+ * \`npm run generate:pattern-matrix-intro\`.
  */
 
-import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import { CLEARSIGHT_BRIEF_SHOW_ID, PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import type { AudioSegment } from '@/types/story'
 
 /** Show id → intro animatic frames (English). */
 export const SHOW_INTRO_ANIMATIC: Record<string, AudioSegment[]> = {
   [CLEARSIGHT_BRIEF_SHOW_ID]: ${JSON.stringify(segments, null, 2)} as AudioSegment[],
+
+  [PATTERN_MATRIX_SHOW_ID]: ${JSON.stringify(patternMatrixSegments, null, 2)} as AudioSegment[],
 }
 `
   writeFileSync(SHOW_INTRO_ANIMATIC_PATH, content, 'utf8')
@@ -501,19 +607,37 @@ async function main() {
     const token = await getAccessToken()
     const musicCache = {}
     const actResults = []
+    const actDialoguePaths = []
+    const openingDurationSeconds = await probeBriefOpeningDurationSeconds(workDir)
+    const rockUnderscoreOnly = openingDurationSeconds > 0
+    const openingAbsorbsThemeIntro = rockUnderscoreOnly
 
     for (const [index, act] of CLEARSIGHT_BRIEF_INTRO.acts.entries()) {
-      actResults.push(await buildActSegment(act, index, workDir, token, musicCache))
+      const result = await buildActSegment(act, index, workDir, token, musicCache, {
+        skipPrependTheme: rockUnderscoreOnly && index === 0,
+        openingAbsorbsThemeIntro,
+        rockUnderscoreOnly,
+      })
+      actResults.push(result)
+      actDialoguePaths.push(result.dialoguePath)
     }
 
-    const finalPath = join(workDir, 'clearsight-brief-intro-trailer.mp3')
-    concatAudio(
-      actResults.map((result) => result.actPath),
-      finalPath,
-      true
+    const { finalPath, openingLeadSeconds } = await buildBriefTrailerFinalAudio(
+      workDir,
+      actDialoguePaths,
+      openingDurationSeconds,
+      musicCache
     )
 
-    const timeline = applyBriefIntroFrameImages(mergeTrailerTimeline(actResults))
+    let timeline = prependBriefOpeningToTimeline(
+      mergeTrailerTimeline(actResults),
+      openingDurationSeconds
+    )
+    if (openingLeadSeconds > 0) {
+      timeline = applyOpeningDurationToTimeline(timeline, openingLeadSeconds)
+    }
+
+    timeline = applyBriefIntroFrameImages(timeline)
     writeShowIntroAnimaticFile(timeline)
     console.log(`[generate-clearsight-brief-intro] Wrote ${timeline.length} animatic frames`)
 

@@ -190,14 +190,7 @@ const SHOW_INTROS = [
     style: 'Down-to-earth practical co-host. Friendly and grounded, sharing hands-on tips at a natural pace.',
   },
   // Education channels — lead voice is Diego Santos (Charon), the last host listed.
-  {
-    id: 'clearsight-math',
-    tagline:
-      'Welcome to ClearSight Math, where we build mathematical ideas from the ground up and make them click.',
-    voiceId: 'Charon',
-    speakingRate: 1.0,
-    style: 'Curious, friendly co-host. Bright and engaged, voicing the smart learner’s questions at a natural pace.',
-  },
+  // clearsight-math uses npm run generate:pattern-matrix-intro (7-frame manifesto).
   {
     id: 'clearsight-science',
     tagline:

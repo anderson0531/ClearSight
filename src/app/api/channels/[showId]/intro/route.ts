@@ -47,6 +47,17 @@ function validateShowAndLanguage(showId: string, language: string) {
   return { show, language: lang }
 }
 
+function introGeneratingPayload(result: Awaited<ReturnType<typeof resolveChannelIntro>>) {
+  if (result.status !== 'generating') return null
+  return {
+    status: 'generating' as const,
+    progressStage: result.progressStage ?? 'queued',
+    progressStep: result.progressStep ?? 0,
+    progressTotal: result.progressTotal ?? undefined,
+    progressUpdatedAt: result.progressUpdatedAt,
+  }
+}
+
 function introReadyPayload(result: Awaited<ReturnType<typeof resolveChannelIntro>>) {
   if (result.status !== 'ready' || !result.url) return null
   return {
@@ -80,7 +91,7 @@ export async function GET(
       return NextResponse.json({ status: 'failed', error: result.error })
     }
     if (result.status === 'generating') {
-      return NextResponse.json({ status: 'generating' })
+      return NextResponse.json(introGeneratingPayload(result))
     }
     return NextResponse.json({ status: 'missing' })
   } catch (error) {
@@ -131,7 +142,8 @@ export async function POST(
       return NextResponse.json(introReadyPayload(ready))
     }
 
-    return NextResponse.json({ status: 'generating' }, { status: 202 })
+    const generating = await resolveChannelIntro(showId, language)
+    return NextResponse.json(introGeneratingPayload(generating) ?? { status: 'generating' }, { status: 202 })
   } catch (error) {
     if (error instanceof InngestUnavailableError) {
       return NextResponse.json(

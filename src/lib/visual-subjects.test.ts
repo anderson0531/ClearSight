@@ -14,6 +14,7 @@ import {
   scenePromptLooksGeneric,
   scenePromptNeedsRefinement,
   sceneSubjectMismatch,
+  shouldAllowPersonGeneration,
   subjectsForFrame,
   stripSubjectReferenceTags,
   type VisualSubject,
@@ -287,4 +288,15 @@ test('applySubjectReferenceTags does not prepend subject when name absent', () =
     },
   ])
   assert.equal(tagged, 'A wide shot of the arena exterior')
+})
+
+test('shouldAllowPersonGeneration requires named subject in scene or dialogue', () => {
+  assert.equal(
+    shouldAllowPersonGeneration(jujuBible, 'JuJu Watkins shoots at USC practice', 'Watkins looked sharp.'),
+    true
+  )
+  assert.equal(
+    shouldAllowPersonGeneration(jujuBible, 'Macro photograph of a basketball court at dusk', 'The arena was empty.'),
+    false
+  )
 })

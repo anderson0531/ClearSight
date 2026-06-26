@@ -1,25 +1,76 @@
 import { put } from '@vercel/blob'
-import { vertexGenerateImage } from '@/lib/vertex'
+import { isImagenQuotaError, vertexGenerateImage } from '@/lib/vertex'
 import {
   extractImagenSceneCore,
   promptForImagenRender,
   stripSubjectReferenceTags,
   type VisualSubject,
 } from '@/lib/visual-subjects'
+import { sceneCoreIsTooShort } from '@/lib/frame-illustration-style'
+import { sleep } from '@/lib/vertex-retry'
 import type { ImagenGenerateResult, ImagenSubjectReference } from '@/lib/vertex'
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 export interface RenderAnimaticFrameImageOptions {
   subjectReferences?: ImagenSubjectReference[]
   skipSubjectRefs?: boolean
+  forceSubjectCustomization?: boolean
+  includeHosts?: boolean
   onImagenAttempt?: (result: ImagenGenerateResult) => void
   style?: string
   localeContext?: string
   frameSubjects?: VisualSubject[]
   blobPrefix?: string
+  personGeneration?: 'dont_allow' | 'allow_adult' | 'allow_all'
+}
+
+function failureKind(result: ImagenGenerateResult): 'quota' | 'content' | 'unknown' {
+  if (isImagenQuotaError(result)) return 'quota'
+  if (result.raiFilteredReason || result.error === 'rai_filtered' || result.error === 'empty_prediction') {
+    return 'content'
+  }
+  return 'unknown'
+}
+
+export interface ImagenFrameFallbackParams {
+  leanPrompt: string
+  sceneCore: string
+  hadRefs: boolean
+  skipSubjectRefs?: boolean
+  frameIndex: number
+  title: string
+}
+
+/** One in-frame Imagen attempt chain (main prompt → strip refs → scene core). */
+export async function generateAnimaticFrameWithFallbacks(
+  generate: (promptText: string, skipRefs: boolean) => Promise<ImagenGenerateResult>,
+  params: ImagenFrameFallbackParams
+): Promise<{ result: ImagenGenerateResult; imagenPrompt: string }> {
+  const { leanPrompt, sceneCore, hadRefs, skipSubjectRefs, frameIndex, title } = params
+
+  let imagenPrompt = leanPrompt
+  let result = await generate(imagenPrompt, Boolean(skipSubjectRefs))
+
+  if (!result.buffer && isImagenQuotaError(result)) {
+    console.warn(
+      `[animatic] frame ${frameIndex}: Imagen quota/rate limit (http=${result.httpStatus ?? 'n/a'}), skipping fallbacks — title: ${title.slice(0, 40)}`
+    )
+  } else if (!result.buffer && hadRefs && !skipSubjectRefs) {
+    const plainPrompt = stripSubjectReferenceTags(imagenPrompt)
+    console.warn(
+      `[animatic] frame ${frameIndex}: subject customization failed (model=${result.model}, http=${result.httpStatus ?? 'n/a'}), falling back to Imagen 4`
+    )
+    result = await generate(plainPrompt, true)
+    imagenPrompt = plainPrompt
+  }
+
+  if (!result.buffer && !isImagenQuotaError(result) && sceneCore && sceneCore !== imagenPrompt) {
+    console.warn(
+      `[animatic] frame ${frameIndex}: retrying with scene core only (http=${result.httpStatus ?? 'n/a'})`
+    )
+    result = await generate(sceneCore.slice(0, 900), true)
+  }
+
+  return { result, imagenPrompt }
 }
 
 /** Render an Imagen 16:9 frame from a prompt and upload it, with retries. */
@@ -33,48 +84,54 @@ export async function renderAnimaticFrameImage(
   const subjectRefs = options?.skipSubjectRefs ? undefined : options?.subjectReferences
   const hadRefs = (subjectRefs?.length ?? 0) > 0
 
+  const storedCore = extractImagenSceneCore(prompt).trim()
+  if (sceneCoreIsTooShort(storedCore)) {
+    console.error(
+      `[animatic] frame ${index}: scene core too short (${storedCore.length} chars), skipping Imagen — title: ${title.slice(0, 40)}`
+    )
+    return null
+  }
+
   const leanPrompt = promptForImagenRender(prompt, {
     style: options?.style,
     localeContext: options?.localeContext,
     subjects: options?.frameSubjects,
+    includeHosts: options?.includeHosts,
   })
-  const sceneCore = extractImagenSceneCore(prompt).trim() || leanPrompt
+  const sceneCore = storedCore || leanPrompt
+
+  const personGeneration = options?.personGeneration ?? 'allow_adult'
 
   const generate = async (promptText: string, skipRefs: boolean) => {
     const result = await vertexGenerateImage(promptText, {
       aspectRatio: '16:9',
-      personGeneration: 'allow_adult',
+      personGeneration,
       subjectReferences: skipRefs ? undefined : subjectRefs,
       skipSubjectRefs: skipRefs || options?.skipSubjectRefs,
+      forceSubjectCustomization: options?.forceSubjectCustomization,
     })
     options?.onImagenAttempt?.(result)
     return result
   }
 
-  let imagenPrompt = leanPrompt
-  let result = await generate(imagenPrompt, Boolean(options?.skipSubjectRefs))
-
-  if (!result.buffer && hadRefs && !options?.skipSubjectRefs) {
-    const plainPrompt = stripSubjectReferenceTags(imagenPrompt)
-    console.warn(
-      `[animatic] frame ${index}: subject customization failed (model=${result.model}), falling back to Imagen 4`
-    )
-    result = await generate(plainPrompt, true)
-    imagenPrompt = plainPrompt
-  }
-
-  if (!result.buffer && sceneCore && sceneCore !== imagenPrompt) {
-    console.warn(`[animatic] frame ${index}: retrying with scene core only`)
-    result = await generate(sceneCore.slice(0, 900), true)
-  }
+  const { result, imagenPrompt } = await generateAnimaticFrameWithFallbacks(generate, {
+    leanPrompt,
+    sceneCore,
+    hadRefs,
+    skipSubjectRefs: options?.skipSubjectRefs,
+    frameIndex: index,
+    title,
+  })
 
   if (!result.buffer) {
-    if (attempt < 3) {
-      await sleep(attempt * 5000)
+    const kind = failureKind(result)
+    if (attempt < 3 && kind !== 'quota') {
+      const delay = attempt * 5000
+      await sleep(delay)
       return renderAnimaticFrameImage(prompt, title, index, options, attempt + 1)
     }
     console.error(
-      `[animatic] Imagen returned no image for frame ${index} (model=${result.model}, refs=${hadRefs}, prompt ${imagenPrompt.length} chars, title: ${title.slice(0, 40)}, error: ${result.error ?? 'unknown'})`
+      `[animatic] Imagen returned no image for frame ${index} (model=${result.model}, http=${result.httpStatus ?? 'n/a'}, failure=${kind}, refs=${hadRefs}, prompt ${imagenPrompt.length} chars, title: ${title.slice(0, 40)}, error: ${result.error ?? 'unknown'})`
     )
     return null
   }

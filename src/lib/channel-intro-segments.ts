@@ -1,7 +1,7 @@
 import { BRIEF_INTRO_OUTRO_TAIL_SECONDS } from '@/lib/channel-intro-constants'
-import type { AudioSegment } from '@/types/story'
+import type { AudioSegment, IntroVideoClip } from '@/types/story'
 
-const FRAME_LEAD_SECONDS = 0.1
+const FRAME_LEAD_SECONDS = 0.35
 const MUSIC_GAP_SECONDS = 2.5
 
 /** Parse channel intro animatic frames stored on ChannelIntroAudio or static registries. */
@@ -31,6 +31,11 @@ export function parseChannelIntroSegments(raw: unknown): AudioSegment[] | null {
       ...(segment.frameKind ? { frameKind: segment.frameKind } : {}),
       ...(segment.introTimelineProbed ? { introTimelineProbed: true } : {}),
       ...(segment.introTimelineBackfilled ? { introTimelineBackfilled: true } : {}),
+      ...(segment.visualMedium ? { visualMedium: segment.visualMedium } : {}),
+      ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
+      ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
+      ...(segment.introVideoClips?.length ? { introVideoClips: segment.introVideoClips } : {}),
+      ...(segment.animaticMovement ? { animaticMovement: segment.animaticMovement } : {}),
     })
   }
 
@@ -53,7 +58,31 @@ export function serializeChannelIntroSegments(segments: AudioSegment[]): object[
     ...(segment.imageUrl != null ? { imageUrl: segment.imageUrl } : {}),
     ...(segment.introTimelineProbed ? { introTimelineProbed: true } : {}),
     ...(segment.introTimelineBackfilled ? { introTimelineBackfilled: true } : {}),
+    ...(segment.visualMedium ? { visualMedium: segment.visualMedium } : {}),
+    ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
+    ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
+    ...(segment.introVideoClips?.length ? { introVideoClips: segment.introVideoClips } : {}),
+    ...(segment.animaticMovement ? { animaticMovement: segment.animaticMovement } : {}),
   }))
+}
+
+/** Stable identity for intro animatic frames — avoids effect loops on equal content. */
+export function introAnimaticSegmentsKey(segments: AudioSegment[]): string {
+  return segments
+    .map(
+      (segment, index) =>
+        `${index}|${segment.url}|${segment.durationSeconds}|${segment.startOffsetSeconds ?? ''}|${segment.text ?? ''}|${segment.imageUrl ?? ''}|${segment.videoUrl ?? ''}|${segment.introVideoClips?.map((clip) => clip.url).join(',') ?? ''}|${segment.frameKind ?? ''}`
+    )
+    .join('\n')
+}
+
+export function introSegmentsEquivalent(
+  left: AudioSegment[] | null | undefined,
+  right: AudioSegment[] | null | undefined
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return introAnimaticSegmentsKey(left) === introAnimaticSegmentsKey(right)
 }
 
 export function introSegmentsAreBackfilled(
@@ -75,6 +104,41 @@ export function introSegmentsHaveProbedTiming(segments: AudioSegment[] | null | 
 
 function introSegmentEndSeconds(segment: AudioSegment): number {
   return (segment.startOffsetSeconds ?? 0) + segment.durationSeconds
+}
+
+/** Opening hosts video prepended as animatic frame 0 (Brief or Pattern Matrix). */
+export function isOpeningVideoIntroFrame(segment: AudioSegment | null | undefined): boolean {
+  const url = segment?.videoUrl?.trim()
+  if (!url || segment?.visualMedium !== 'video') return false
+  return /opening-hosts(?:\.mp4)?(?:\?|$)/i.test(url)
+}
+
+/** Align frame 0 with the probed rock lead duration in the final MP3. */
+export function applyOpeningDurationToTimeline(
+  segments: AudioSegment[],
+  openingDurationSeconds: number
+): AudioSegment[] {
+  if (segments.length === 0 || openingDurationSeconds <= 0) return segments
+  const opening = segments[0]
+  if (!isOpeningVideoIntroFrame(opening)) return segments
+
+  const previousDuration = opening!.durationSeconds
+  const delta = openingDurationSeconds - previousDuration
+  if (Math.abs(delta) < 0.01) {
+    return segments.map((segment, index) =>
+      index === 0 ? { ...segment, durationSeconds: openingDurationSeconds } : segment
+    )
+  }
+
+  return segments.map((segment, index) => {
+    if (index === 0) {
+      return { ...segment, durationSeconds: openingDurationSeconds }
+    }
+    return {
+      ...segment,
+      startOffsetSeconds: (segment.startOffsetSeconds ?? 0) + delta,
+    }
+  })
 }
 
 /** Snap micro-gaps/overlaps from probed TTS timings so frame boundaries stay contiguous. */
@@ -136,8 +200,11 @@ export function buildIntroElasticSyncPlan(
     }
   }
 
-  const dialogStart = normalized[0]!.startOffsetSeconds ?? 0
-  const lineDurations = normalized.map((segment) => segment.durationSeconds)
+  const openingPinned = count > 0 && isOpeningVideoIntroFrame(normalized[0]!)
+  const openingDuration = openingPinned ? normalized[0]!.durationSeconds : 0
+  const leadInSeconds = openingPinned
+    ? openingDuration
+    : (normalized[0]!.startOffsetSeconds ?? 0)
 
   const musicGapsAfterLine: number[] = []
   for (let i = 0; i < count - 1; i++) {
@@ -155,29 +222,42 @@ export function buildIntroElasticSyncPlan(
       ? measuredOutroTail
       : BRIEF_INTRO_OUTRO_TAIL_SECONDS
 
-  const rawLineSum = lineDurations.reduce((sum, value) => sum + value, 0)
-  const dialogBudget = Math.max(
-    rawLineSum,
-    audioDurationSeconds - dialogStart - fixedGapTotal - outroTail
+  const dialogIndexes = openingPinned
+    ? Array.from({ length: count - 1 }, (_, index) => index + 1)
+    : Array.from({ length: count }, (_, index) => index)
+
+  const rawDialogSum = dialogIndexes.reduce(
+    (sum, index) => sum + normalized[index]!.durationSeconds,
+    0
   )
-  const lineScale = rawLineSum > 0 ? dialogBudget / rawLineSum : 1
+  const dialogBudget = Math.max(
+    rawDialogSum,
+    audioDurationSeconds - leadInSeconds - fixedGapTotal - outroTail
+  )
+  const lineScale = rawDialogSum > 0 ? dialogBudget / rawDialogSum : 1
 
   const frameStartSeconds: number[] = []
   const frameEndSeconds: number[] = []
-  let cursor = dialogStart
+  let cursor = 0
 
-  for (let i = 0; i < count; i++) {
+  if (openingPinned) {
+    frameStartSeconds.push(0)
+    cursor = openingDuration
+    frameEndSeconds.push(Math.round(openingDuration * 1000) / 1000)
+  }
+
+  for (const segmentIndex of dialogIndexes) {
     frameStartSeconds.push(Math.round(cursor * 1000) / 1000)
-    cursor += lineDurations[i]! * lineScale
+    cursor += normalized[segmentIndex]!.durationSeconds * lineScale
     frameEndSeconds.push(Math.round(cursor * 1000) / 1000)
-    if (i < musicGapsAfterLine.length) {
-      cursor += musicGapsAfterLine[i]!
+    if (segmentIndex < musicGapsAfterLine.length) {
+      cursor += musicGapsAfterLine[segmentIndex]!
     }
   }
 
   const posterIntervals: Array<{ start: number; end: number }> = []
-  if (dialogStart > 0) {
-    posterIntervals.push({ start: 0, end: dialogStart })
+  if (!openingPinned && leadInSeconds > 0) {
+    posterIntervals.push({ start: 0, end: leadInSeconds })
   }
   for (let i = 0; i < musicGapsAfterLine.length; i++) {
     const gap = musicGapsAfterLine[i]!
@@ -188,13 +268,13 @@ export function buildIntroElasticSyncPlan(
       })
     }
   }
-  const lastEnd = frameEndSeconds[count - 1] ?? dialogStart
+  const lastEnd = frameEndSeconds[frameEndSeconds.length - 1] ?? leadInSeconds
   if (audioDurationSeconds > lastEnd + 0.05) {
     posterIntervals.push({ start: lastEnd, end: audioDurationSeconds })
   }
 
   return {
-    dialogStartSeconds: dialogStart,
+    dialogStartSeconds: leadInSeconds,
     frameStartSeconds,
     frameEndSeconds,
     posterIntervals,
@@ -212,7 +292,7 @@ export function resolveIntroFrameIndexFromPlan(
   for (let i = 0; i < plan.frameEndSeconds.length; i++) {
     const start = plan.frameStartSeconds[i]!
     const end = plan.frameEndSeconds[i]!
-    if (currentTime >= start && currentTime < end) {
+    if (currentTime >= start - FRAME_LEAD_SECONDS && currentTime < end) {
       return i
     }
   }
@@ -289,12 +369,68 @@ function isRealIntroIllustration(url?: string | null): boolean {
   return Boolean(url) && !url!.startsWith('/hosts/')
 }
 
+function segmentHasIntroIllustration(segment: AudioSegment): boolean {
+  if (segment.frameKind === 'host') return true
+  if (isRealIntroIllustration(segment.imageUrl)) return true
+  if (segment.introVideoClips?.some((clip) => clip.url.trim())) return true
+  if (segment.videoUrl?.trim()) return true
+  return false
+}
+
 /** True when any scene frame is still missing a generated illustration URL. */
 export function introSegmentsNeedIllustration(segments: AudioSegment[] | null | undefined): boolean {
   if (!segments?.length) return false
-  return segments.some(
-    (segment) => segment.frameKind !== 'host' && !isRealIntroIllustration(segment.imageUrl)
-  )
+  return segments.some((segment) => !segmentHasIntroIllustration(segment))
+}
+
+/** Remaining Ken Burns duration after an I2V clip ends within a sync frame window. */
+export function introFrameKenBurnsDurationSeconds(
+  syncPlan: IntroElasticSyncPlan,
+  frameIndex: number,
+  currentTimeSeconds: number,
+  options: { frozen: boolean; fullFrameSeconds: number }
+): number {
+  const frameEnd = syncPlan.frameEndSeconds[frameIndex]
+  if (options.frozen && frameEnd != null && Number.isFinite(currentTimeSeconds)) {
+    return Math.max(1, frameEnd - currentTimeSeconds)
+  }
+  return Math.max(1, options.fullFrameSeconds)
+}
+
+/** Ordered Veo clips for an intro frame (legacy single videoUrl included). */
+export function introFrameVideoClips(segment: AudioSegment | null | undefined): IntroVideoClip[] {
+  if (segment?.introVideoClips?.length) {
+    return segment.introVideoClips
+  }
+  if (segment?.visualMedium === 'video' && segment.videoUrl?.trim()) {
+    return [
+      {
+        url: segment.videoUrl,
+        durationSeconds: 8,
+        ...(segment.videoPrompt ? { prompt: segment.videoPrompt } : {}),
+      },
+    ]
+  }
+  return []
+}
+
+/** Active clip metadata within a multi-clip intro frame. */
+export function introFrameActiveClip(
+  segment: AudioSegment | null | undefined,
+  clipIndex: number
+): IntroVideoClip | null {
+  const clips = introFrameVideoClips(segment)
+  if (clips.length === 0) return null
+  return clips[clipIndex] ?? clips[clips.length - 1] ?? null
+}
+
+/** Channel intro hero: Veo MP4 URL for clip index (default first clip). */
+export function introFrameDisplayVideo(
+  segment: AudioSegment | null | undefined,
+  clipIndex = 0
+): string | null {
+  const clip = introFrameActiveClip(segment, clipIndex)
+  return clip?.url.trim() ? clip.url : null
 }
 
 /** Channel intro hero: scene illustration or cover — never host speaking portraits. */

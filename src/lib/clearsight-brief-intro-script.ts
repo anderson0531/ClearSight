@@ -3,19 +3,19 @@
  * Shared by JIT generation and CLI seed scripts.
  */
 
-/** Voice configs mirrored from src/lib/hosts.ts (Sarah Chen + Dr. Benjamin Anderson). */
+import { HOST_ANDERSON, HOST_SARAH } from '@/lib/hosts'
+
+/** Voice configs derived from HOST_SARAH / HOST_ANDERSON in hosts.ts. */
 export const HOST_VOICES = {
   sarah: {
-    voiceId: 'Laomedeia',
-    speakingRate: 1.0,
-    style:
-      'Bright, relatable, sharp, inquisitive investigative broadcast voice. Energetic modern pacing with intentional punctuation — em-dashes, ellipses, and short question fragments — to create human-like pauses and curiosity inflections. Never read bracket tags aloud.',
+    voiceId: HOST_SARAH.voiceId,
+    speakingRate: HOST_SARAH.speakingRate,
+    style: HOST_SARAH.ttsStylePrompt,
   },
   benjamin: {
-    voiceId: 'Algenib',
-    speakingRate: 1.0,
-    style:
-      'Engaged conversational analyst — confident, forward-moving, clear inflection; still objective and never condescending. Natural broadcast rhythm. Never read bracket tags aloud.',
+    voiceId: HOST_ANDERSON.voiceId,
+    speakingRate: HOST_ANDERSON.speakingRate,
+    style: HOST_ANDERSON.ttsStylePrompt,
   },
 } as const
 
@@ -55,6 +55,9 @@ export interface BriefAct {
   }
   lines: BriefLine[]
 }
+
+/** Rock underscore config for the Brief channel intro trailer. */
+export const CLEARSIGHT_BRIEF_INTRO_ROCK_BED_VOLUME = 0.2
 
 export const CLEARSIGHT_BRIEF_INTRO = {
   title: 'Intro Trailer: Your Podcast, On-Demand',

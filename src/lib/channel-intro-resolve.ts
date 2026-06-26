@@ -69,7 +69,9 @@ export async function resolveIntroTimelineSegments(
   }
 
   const row = await findChannelIntroRow(showId, lang)
-  const stored = parseChannelIntroSegments(row?.audioSegments)
+  const stored = parseChannelIntroSegments(
+    row && 'audioSegments' in row ? row.audioSegments : undefined
+  )
   if (stored?.length) {
     return stored
   }
@@ -87,11 +89,13 @@ export async function resolveIntroAnimaticSegments(
   if (!timeline?.length) return undefined
 
   if (!introSegmentsNeedIllustration(timeline)) {
-    return timeline
+    return attachChannelIntroFrameImages(showId, timeline)
   }
 
   const row = await findChannelIntroRow(showId, lang)
-  const stored = parseChannelIntroSegments(row?.audioSegments)
+  const stored = parseChannelIntroSegments(
+    row && 'audioSegments' in row ? row.audioSegments : undefined
+  )
   const merged = mergeTimelineWithIllustrations(timeline, stored)
   return attachChannelIntroFrameImages(showId, merged)
 }

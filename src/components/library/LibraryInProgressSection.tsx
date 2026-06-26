@@ -4,11 +4,12 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { AlertTriangle, Loader2, Mic, X } from 'lucide-react'
 import { LibrarySection } from '@/components/library/LibrarySection'
-import { LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
+import { LEGACY_LIBRARY_SECTION_IDS } from '@/components/library/LibraryJumpNav'
 import {
   generationProgressPercent,
   generationStageLabelKey,
 } from '@/lib/generation-progress'
+import { canCancelGeneration, generationDurationLabel, isGenerationInProgress } from '@/lib/generation-ui'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { GenerationJob } from '@/components/library/types'
 
@@ -35,7 +36,7 @@ export function LibraryInProgressSection({
 
   return (
     <LibrarySection
-      id={LIBRARY_SECTION_IDS.inProgress}
+      id={LEGACY_LIBRARY_SECTION_IDS.inProgress}
       title={t('libraryInProgress')}
       icon={Loader2}
     >
@@ -45,8 +46,7 @@ export function LibraryInProgressSection({
       <ul className="space-y-2">
         {jobs.map((job) => {
           const illustrationsPending = Boolean(job.illustrationsInProgress)
-          const isActive =
-            job.status === 'QUEUED' || job.status === 'RUNNING' || illustrationsPending
+          const isActive = isGenerationInProgress(job)
           const progressOptions = { illustrationsInProgress: illustrationsPending }
           const percent = generationProgressPercent(job.stage, job.status, progressOptions)
           const activityLabel = illustrationsPending
@@ -56,6 +56,7 @@ export function LibraryInProgressSection({
               )
           const secondaryText =
             job.status === 'FAILED' ? (job.errorMessage ?? t('libraryGenFailed')) : null
+          const durationLabel = generationDurationLabel(job)
 
           return (
             <li
@@ -125,6 +126,11 @@ export function LibraryInProgressSection({
                       <p className="mt-2 text-xs font-semibold text-[var(--accent)]">
                         {activityLabel}
                       </p>
+                      {illustrationsPending && durationLabel ? (
+                        <p className="mt-1 text-xs text-[var(--muted-strong)]">
+                          {t(durationLabel.key, durationLabel.params)}
+                        </p>
+                      ) : null}
                       <div className="mt-1.5 flex items-center gap-2">
                         <div
                           className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10"
@@ -144,13 +150,17 @@ export function LibraryInProgressSection({
                         </span>
                       </div>
                     </>
+                  ) : durationLabel ? (
+                    <p className="mt-1 text-xs text-[var(--muted-strong)]">
+                      {t(durationLabel.key, durationLabel.params)}
+                    </p>
                   ) : secondaryText ? (
                     <p className="mt-1 truncate text-xs text-[var(--muted-strong)]">{secondaryText}</p>
                   ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {job.status === 'QUEUED' || job.status === 'RUNNING' ? (
+                {canCancelGeneration(job) ? (
                   <button
                     type="button"
                     onClick={() => onCancel(job.id)}

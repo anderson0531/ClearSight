@@ -19,9 +19,9 @@ export const MUSIC_ASSETS: {
  * beds with: npm run generate:music -- --beds-only
  */
 export const BACKGROUND_MUSIC = {
-  intro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-intro.wav",
+  intro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-intro.wav",
   content: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav",
-  outro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-outro.wav",
+  outro: "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-outro.wav",
 } as const
 
 /**
@@ -56,6 +56,15 @@ export const MUSIC_MOODS: MusicMood[] = [
   'urgent',
   'uplifting',
 ]
+
+/** Pattern Matrix underscore bed (alias until a dedicated track is generated). */
+export const PATTERN_MATRIX_BED = BACKGROUND_MUSIC.content
+
+/** Rock-themed underscore for the Pattern Matrix channel intro manifesto. */
+export const PATTERN_MATRIX_INTRO_ROCK_BED = "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-pattern-matrix-intro-rock.wav"
+
+/** Rock-themed underscore for The ClearSight Brief channel intro trailer. */
+export const CLEARSIGHT_BRIEF_INTRO_ROCK_BED = "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-clearsight-brief-intro-rock.wav"
 
 /** Coerce arbitrary model output into a valid {@link MusicMood} (default neutral). */
 export function normalizeMusicMood(value: unknown): MusicMood {

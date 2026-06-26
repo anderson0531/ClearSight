@@ -200,10 +200,17 @@ export const generatePodcast = inngest.createFunction(
 
     await step.run('complete', async () => {
       await assertGenerationActive(generationId)
+      const now = new Date()
       return prisma.generation.update({
         where: { id: generationId },
         data: completed
-          ? { status: 'COMPLETED', stage: 'complete', storyId }
+          ? {
+              status: 'COMPLETED',
+              stage: job.includeIllustrations ? 'illustrations' : 'complete',
+              storyId,
+              audioCompletedAt: now,
+              ...(job.includeIllustrations ? {} : { completedAt: now }),
+            }
           : {
               status: 'FAILED',
               stage: 'audio',

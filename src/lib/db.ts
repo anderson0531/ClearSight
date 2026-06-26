@@ -1,46 +1,48 @@
 import { PrismaClient } from '@prisma/client'
 import {
+  applyCandidateToProcessEnv,
   buildDatabaseCandidates,
   ensureDatabaseResolved,
   getCachedDatabaseCandidate,
   invalidateResolvedDatabase,
   registerDatabaseFailoverHandler,
   resolveDatabaseCandidate,
+  type DatabaseCandidate,
 } from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined }
 
-function createPrismaClient(url: string) {
+function createPrismaClient(candidate: DatabaseCandidate) {
+  // Prisma reads directUrl from env at construction time; set it before init.
+  applyCandidateToProcessEnv(candidate)
   return new PrismaClient({
-    datasources: { db: { url } },
+    datasources: { db: { url: candidate.url } },
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
 }
 
-function getConnectionUrl(): string {
-  const cached = getCachedDatabaseCandidate()?.url
+function getConnectionCandidate(): DatabaseCandidate {
+  const cached = getCachedDatabaseCandidate()
   if (cached) return cached
 
-  // Respect DATABASE_PROVIDER and candidate ordering (not a blind GCP ?? Neon pick).
-  const candidates = buildDatabaseCandidates()
-  return candidates[0]?.url ?? process.env.GCP_DATABASE_URL ?? process.env.DATABASE_URL ?? ''
+  const candidate = buildDatabaseCandidates()[0]
+  if (!candidate?.url) {
+    throw new Error('No database URL configured')
+  }
+  return candidate
 }
 
 function getPrismaClient(): PrismaClient {
   // After `prisma generate` adds models, a hot-reloaded dev server can keep a
   // stale client missing new delegates (e.g. storyQuestion) until restart.
   const existing = globalForPrisma.prisma
-  if (existing && !('storyQuestion' in existing)) {
+  if (existing && (!('storyQuestion' in existing) || !('storyQuizProgress' in existing))) {
     void (existing as PrismaClient).$disconnect().catch(() => {})
     globalForPrisma.prisma = undefined
   }
 
   if (!globalForPrisma.prisma) {
-    const url = getConnectionUrl()
-    if (!url) {
-      throw new Error('No database URL configured')
-    }
-    globalForPrisma.prisma = createPrismaClient(url)
+    globalForPrisma.prisma = createPrismaClient(getConnectionCandidate())
   }
   return globalForPrisma.prisma
 }
@@ -53,7 +55,7 @@ function getPrismaClient(): PrismaClient {
  * active connection actually changed.
  */
 async function failoverToHealthyDatabase(): Promise<boolean> {
-  const currentUrl = getCachedDatabaseCandidate()?.url ?? getConnectionUrl()
+  const currentUrl = getCachedDatabaseCandidate()?.url ?? getConnectionCandidate().url
   invalidateResolvedDatabase()
 
   let healthy
@@ -63,16 +65,18 @@ async function failoverToHealthyDatabase(): Promise<boolean> {
     return false
   }
 
-  if (!healthy.url || healthy.url === currentUrl) {
-    return false
-  }
-
   const previous = globalForPrisma.prisma
-  globalForPrisma.prisma = createPrismaClient(healthy.url)
+  globalForPrisma.prisma = createPrismaClient(healthy)
   if (previous) {
     void previous.$disconnect().catch(() => {})
   }
-  console.warn(`[db] Failed over to ${healthy.provider} database`)
+
+  if (healthy.url !== currentUrl) {
+    console.warn(`[db] Failed over to ${healthy.provider} database`)
+  } else {
+    console.warn(`[db] Recreated ${healthy.provider} database client (stale connection)`)
+  }
+  // Retry even when the URL is unchanged — P2028 often means directUrl/client drift, not a dead host.
   return true
 }
 
@@ -81,7 +85,19 @@ registerDatabaseFailoverHandler(failoverToHealthyDatabase)
 export async function warmDatabaseConnection(): Promise<void> {
   try {
     await ensureDatabaseResolved()
-    getPrismaClient()
+    const resolved = getCachedDatabaseCandidate()
+    if (resolved) {
+      if (process.env.DATABASE_PROVIDER === 'gcp') {
+        console.info('[db] Dev mode: GCP primary (Neon skipped)')
+      }
+      const previous = globalForPrisma.prisma
+      globalForPrisma.prisma = createPrismaClient(resolved)
+      if (previous) {
+        void previous.$disconnect().catch(() => {})
+      }
+    } else {
+      getPrismaClient()
+    }
   } catch (error) {
     console.warn(
       '[db] Startup database warmup skipped:',

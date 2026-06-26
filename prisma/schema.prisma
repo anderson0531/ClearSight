@@ -126,6 +126,7 @@ model Story {
   updatedAt        DateTime @updatedAt
   reactions        StoryReaction[]
   questions        StoryQuestion[]
+  quizProgress     StoryQuizProgress[]
 
   @@index([language, category, geoScope])
   @@index([language, category, geoScope, geoCountry])
@@ -180,6 +181,22 @@ model StoryQuestion {
   @@index([storyId, createdAt])
 }
 
+model StoryQuizProgress {
+  id            String   @id @default(cuid())
+  storyId       String
+  story         Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  userId        String
+  bestScore     Int
+  bestTotal     Int
+  lastScore     Int
+  lastTotal     Int
+  lastAttemptAt DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([storyId, userId])
+  @@index([userId])
+}
+
 model Generation {
   id                   String           @id @default(cuid())
   userId               String
@@ -200,6 +217,8 @@ model Generation {
   // Stored in credit units (1 displayed credit = 100 units). See src/lib/credit-units.ts.
   creditsCharged       Int              @default(100)
   errorMessage         String?
+  audioCompletedAt     DateTime?
+  completedAt          DateTime?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt @default(now())
 
@@ -225,6 +244,9 @@ model ChannelIntroAudio {
   status        GenerationStatus @default(QUEUED)
   audioUrl      String?
   audioSegments Json?
+  progressStage String?
+  progressStep  Int?
+  progressTotal Int?
   errorMessage  String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt

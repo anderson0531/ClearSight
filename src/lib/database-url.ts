@@ -121,10 +121,37 @@ export function buildFailoverCandidates(): DatabaseCandidate[] {
   return candidates
 }
 
+/**
+ * Sync resolved database URLs into process.env so Prisma's schema `directUrl`
+ * matches the active pooled connection (required for interactive transactions).
+ */
+export function applyCandidateToProcessEnv(candidate: DatabaseCandidate): void {
+  process.env.DATABASE_URL = candidate.url
+  process.env.DATABASE_URL_UNPOOLED = candidate.directUrl
+  process.env.ACTIVE_DATABASE_PROVIDER = candidate.provider
+}
+
+/**
+ * Typed error for transient database connectivity failures. Callers can use this
+ * to distinguish "the DB blipped" (retry / keep prior state) from a genuine
+ * "not found" (e.g. no session). Crucial for auth: a connectivity blip must NOT
+ * be treated as "logged out".
+ */
+export class DatabaseUnavailableError extends Error {
+  constructor(message = 'Database temporarily unavailable') {
+    super(message)
+    this.name = 'DatabaseUnavailableError'
+  }
+}
+
 export function isDatabaseUnavailableError(error: unknown): boolean {
+  if (error instanceof DatabaseUnavailableError) {
+    return true
+  }
   if (error && typeof error === 'object' && 'code' in error) {
     const code = (error as { code?: string }).code
-    if (code === 'P2021' || code === 'P2022') {
+    // P2028: interactive transaction lost (pooler timeout, failover, cold start).
+    if (code === 'P2021' || code === 'P2022' || code === 'P2028') {
       return true
     }
   }
@@ -132,6 +159,7 @@ export function isDatabaseUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return (
     message.includes("Can't reach database server") ||
+    message.includes('Transaction not found') ||
     message.includes('data transfer quota') ||
     message.includes('ECONNREFUSED') ||
     message.includes('ETIMEDOUT') ||
@@ -148,19 +176,6 @@ export function getDatabaseUnavailableMessage(error: unknown): string {
     return 'Database quota exceeded. Please upgrade your Neon plan or try again after the quota resets.'
   }
   return 'Database unavailable. Please try again shortly.'
-}
-
-/**
- * Typed error for transient database connectivity failures. Callers can use this
- * to distinguish "the DB blipped" (retry / keep prior state) from a genuine
- * "not found" (e.g. no session). Crucial for auth: a connectivity blip must NOT
- * be treated as "logged out".
- */
-export class DatabaseUnavailableError extends Error {
-  constructor(message = 'Database temporarily unavailable') {
-    super(message)
-    this.name = 'DatabaseUnavailableError'
-  }
 }
 
 /**

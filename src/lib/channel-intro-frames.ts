@@ -1,5 +1,6 @@
-import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import { CLEARSIGHT_BRIEF_SHOW_ID, PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import { applyBriefIntroFrameImages } from '@/lib/clearsight-brief-intro-images'
+import { applyPatternMatrixIntroFrameImages } from '@/lib/pattern-matrix-intro-images'
 import { getShowById } from '@/lib/shows'
 import type { AudioSegment } from '@/types/story'
 
@@ -10,6 +11,10 @@ export function attachChannelIntroFrameImages(
 ): AudioSegment[] {
   if (showId === CLEARSIGHT_BRIEF_SHOW_ID) {
     return applyBriefIntroFrameImages(segments)
+  }
+
+  if (showId === PATTERN_MATRIX_SHOW_ID) {
+    return applyPatternMatrixIntroFrameImages(segments)
   }
 
   const show = getShowById(showId)
