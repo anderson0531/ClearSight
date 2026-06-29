@@ -306,7 +306,11 @@ export function AddTopicDialog({
       // A transient failure (model/parse error) is not an editorial rejection —
       // show a retry prompt instead of the "needs changes" block panel.
       if (result.transient) {
-        setError(t('topicReviewTransientError'))
+        setError(
+          result.errorCode === 'quota_exhausted'
+            ? t('topicReviewQuotaError')
+            : t('topicReviewTransientError')
+        )
         return
       }
       setReview(result)

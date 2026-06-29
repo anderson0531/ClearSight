@@ -49,18 +49,17 @@ function SignupForm() {
         return
       }
 
-      // If the user picked a paid plan on the landing page, auto-subscribe
-      // (test bypass auto-confirms; production returns a checkout URL).
-      if (planParam && isPlan(planParam) && planParam !== 'FREE') {
-        const sub = await fetch('/api/billing/subscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plan: planParam }),
-        })
-        const subData = await sub.json().catch(() => null)
-        if (subData?.bypass === false && subData?.checkoutUrl) {
-          window.open(subData.checkoutUrl, '_blank', 'noopener,noreferrer')
-        }
+      await refresh()
+
+      const planToActivate = planParam && isPlan(planParam) ? planParam : 'FREE'
+      const sub = await fetch('/api/billing/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: planToActivate }),
+      })
+      const subData = await sub.json().catch(() => null)
+      if (subData?.bypass === false && subData?.checkoutUrl && planToActivate !== 'FREE') {
+        window.open(subData.checkoutUrl, '_blank', 'noopener,noreferrer')
       }
 
       await refresh()

@@ -3,24 +3,22 @@ import { describe, it } from 'node:test'
 import { buildPrimaryNav } from '@/components/layout/primaryNav'
 
 describe('buildPrimaryNav', () => {
-  it('shows Premium upgrade for Free plan', () => {
+  it('FREE users see Premium upsell instead of On-Demand', () => {
     const keys = buildPrimaryNav('FREE').map((item) => item.key)
-    assert.deepEqual(keys, ['navHome', 'navSearch', 'navLibrary', 'navPremium'])
+    assert.ok(keys.includes('navPremium'))
+    assert.ok(!keys.includes('navOnDemand'))
   })
 
-  it('shows On-Demand for Premium plan', () => {
+  it('PREMIUM users see On-Demand', () => {
     const keys = buildPrimaryNav('PREMIUM').map((item) => item.key)
-    assert.deepEqual(keys, ['navHome', 'navSearch', 'navLibrary', 'navOnDemand'])
+    assert.ok(keys.includes('navOnDemand'))
   })
 
-  it('shows On-Demand and Studio for Creator plan', () => {
-    const keys = buildPrimaryNav('CREATOR').map((item) => item.key)
-    assert.deepEqual(keys, [
-      'navHome',
-      'navSearch',
-      'navLibrary',
-      'navOnDemand',
-      'navStudio',
-    ])
+  it('PREMIUM_ELITE users see On-Demand without Studio', () => {
+    const items = buildPrimaryNav('PREMIUM_ELITE')
+    const keys = items.map((item) => item.key)
+    const hrefs = items.map((item) => item.href)
+    assert.ok(keys.includes('navOnDemand'))
+    assert.ok(!hrefs.includes('/studio'))
   })
 })

@@ -11,7 +11,7 @@
     "vercel-build": "prisma generate && node scripts/migrate-deploy.mjs && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import tsx --test src/lib/visual-subjects.test.ts src/lib/episode-thumbnail.test.ts src/lib/audio-segments.test.ts src/lib/animatic-render.test.ts src/lib/vertex-retry.test.ts src/lib/vertex-imagen.test.ts src/lib/animatic-frame-image.test.ts src/lib/math-foundation-latex.test.ts src/lib/pattern-matrix-opening-video.test.ts src/lib/clearsight-brief-opening-video.test.ts src/lib/pattern-matrix-intro-timeline.test.ts src/lib/channel-intro-segments.test.ts src/lib/channel-intro-timeline.test.ts src/lib/clearsight-brief-intro-images.test.ts src/lib/clearsight-brief-intro-video-clips.test.ts src/lib/generation-stuck-constants.test.ts src/lib/generation-duration.test.ts src/lib/intro-frame-video-plan.test.ts src/lib/episode-quiz.test.ts src/lib/host-character-ref.test.ts src/lib/scene-flow-lite-visual.test.ts",
+    "test": "node --import tsx --test src/lib/visual-subjects.test.ts src/lib/episode-thumbnail.test.ts src/lib/audio-segments.test.ts src/lib/animatic-render.test.ts src/lib/animatic-character-refs.test.ts src/lib/vertex-retry.test.ts src/lib/vertex-imagen.test.ts src/lib/animatic-frame-image.test.ts src/lib/math-foundation-latex.test.ts src/lib/pattern-matrix-opening-video.test.ts src/lib/pattern-matrix-frame-prompt.test.ts src/lib/dialogue-illustration-prompt.test.ts src/lib/episode-character-bible.test.ts src/lib/episode-hosts-video-bookends.test.ts src/lib/clearsight-brief-opening-video.test.ts src/lib/pattern-matrix-intro-timeline.test.ts src/lib/channel-intro-segments.test.ts src/lib/channel-intro-timeline.test.ts src/lib/clearsight-brief-intro-images.test.ts src/lib/clearsight-brief-intro-video-clips.test.ts src/lib/generation-stuck-constants.test.ts src/lib/generation-duration.test.ts src/lib/intro-frame-video-plan.test.ts src/lib/episode-quiz.test.ts src/lib/host-character-ref.test.ts src/lib/scene-flow-lite-visual.test.ts src/lib/scene-flow-lite.test.ts",
     "i18n:gen": "node scripts/translate-ui.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -44,7 +44,8 @@
     "generate:vapid": "node scripts/generate-vapid-keys.mjs",
     "db:gcp": "node scripts/start-gcp-db.mjs",
     "db:use-gcp": "node scripts/use-gcp-db.mjs",
-    "db:push": "node scripts/db-push.mjs"
+    "db:push": "node scripts/db-push.mjs",
+    "replace:diffie-frame": "node scripts/replace-diffie-frame-from-url.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

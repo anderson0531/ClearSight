@@ -2,6 +2,10 @@ import { prisma } from '@/lib/db'
 import { extractAudioSegments, serializeAudioSegments } from '@/lib/audio-segments'
 import { segmentHasAnimaticMetadata, segmentWantsScene, countPendingAnimaticFrames } from '@/lib/animatic-utils'
 import { resolveShow, showById, type Show } from '@/lib/shows'
+import {
+  buildDialogueIllustrationImagenPrompt,
+  dialogueIllustrationPromptsFromDialogue,
+} from '@/lib/dialogue-illustration-prompt'
 import { resolveFrameReferenceBundle } from '@/lib/host-character-ref'
 import { renderAnimaticFrameImage, type RenderAnimaticFrameImageOptions } from '@/lib/animatic-frame-image'
 import type { AudioSegment, AudioSegmentRole } from '@/types/story'
@@ -289,7 +293,9 @@ function buildFrameImagenPrompts(params: {
         localeContext: params.localeContext,
         subjectBible: frameSubjects,
       })
-    : buildImagenScenePrompt(sceneText, {
+    : params.omitDialogueContext
+      ? buildDialogueIllustrationImagenPrompt(sceneText)
+      : buildImagenScenePrompt(sceneText, {
         subjectBible: frameSubjects,
         spokenDialogue: params.segment.text,
         style: params.style,
@@ -517,6 +523,37 @@ export interface RenderFrameCounts {
   videoClips: number
 }
 
+/** Render one episode frame illustration (sceneFlowLite / Pattern Matrix path). */
+export async function renderEpisodeFrameImage(
+  segment: AudioSegment,
+  title: string,
+  index: number,
+  show: Show,
+  category?: string,
+  options?: {
+    subjectBible?: VisualSubject[]
+    sourcesVerified?: unknown
+  }
+): Promise<string | null> {
+  const subjectBible = options?.subjectBible ?? []
+  const subjectRefs =
+    subjectBible.length > 0 ? await resolveSubjectReferences(subjectBible) : []
+  return renderSegmentImage(
+    segment,
+    title,
+    index,
+    show.studioImage,
+    show,
+    subjectRefs,
+    {
+      category,
+      omitDialogueContext: show.generationProfile === 'sceneFlowLite',
+      subjectBible,
+      sourcesVerified: options?.sourcesVerified,
+    }
+  )
+}
+
 interface RenderStoryAnimaticOptions {
   /** Which News render passes to run. Defaults to images + videos for News. */
   phases?: RenderAnimaticPhase[]
@@ -734,11 +771,19 @@ export async function renderStoryAnimatic(
     const match = renderedUrls.find((item) => item.index === index)
     if (match?.url) {
       rendered += 1
+      const dialoguePrompts =
+        show.generationProfile === 'sceneFlowLite'
+          ? dialogueIllustrationPromptsFromDialogue(segment.text)
+          : null
       const sceneText = resolveSegmentSceneText(segment, story.sourcesVerified)
       return {
         ...segment,
         imageUrl: match.url,
-        ...(sceneText && !segment.scene ? { scene: sceneText } : {}),
+        ...(dialoguePrompts
+          ? { scene: dialoguePrompts.scene, imagePrompt: dialoguePrompts.imagePrompt }
+          : sceneText && !segment.scene
+            ? { scene: sceneText }
+            : {}),
       }
     }
 

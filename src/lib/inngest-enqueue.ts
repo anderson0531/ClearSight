@@ -21,7 +21,11 @@ function isConnectionFailure(err: unknown): boolean {
  */
 export async function sendInngestEvent(
   event: { name: string; data: Record<string, unknown> },
-  refund?: { userId: string; generationId: string; creditsCharged: number }
+  refund?: {
+    userId: string
+    generationId: string
+    creditsCharged: number
+  }
 ): Promise<void> {
   try {
     await inngest.send(event)

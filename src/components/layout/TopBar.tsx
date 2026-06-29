@@ -10,10 +10,11 @@ import { GlobalGeoFocusPicker } from '@/components/layout/GlobalGeoFocusPicker'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { Plan } from '@/lib/plans'
+import { planRank } from '@/lib/plans'
 import { formatCreditsDisplay } from '@/lib/credit-units'
 
 function showUpgradeButton(plan: Plan): boolean {
-  return plan === 'FREE' || plan === 'PREMIUM'
+  return planRank(plan) < planRank('PREMIUM_ELITE')
 }
 
 export function TopBar() {
@@ -51,7 +52,7 @@ export function TopBar() {
   return (
     <header className="top-bar">
       <Link href="/" className="top-bar-logo group" aria-label="ClearSight home">
-        <ClearSightLogo className="!h-10 !w-auto transition-transform duration-300 group-hover:scale-[1.02] sm:!h-11 lg:!h-12" />
+        <ClearSightLogo brandClassName="clearsight-brand--header" className="transition-transform duration-300 group-hover:scale-[1.02]" />
       </Link>
 
       <div className="top-bar-menu" ref={menuRef}>

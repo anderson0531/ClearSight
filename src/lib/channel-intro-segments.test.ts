@@ -6,13 +6,16 @@ import { estimatePatternMatrixTimeline } from '@/lib/pattern-matrix-intro-timeli
 import {
   buildIntroElasticSyncPlan,
   introSegmentsAreBackfilled,
+  isOpeningVideoIntroFrame,
   markIntroSegmentsProbed,
   normalizeIntroSegmentTimelines,
   resolveIntroFrameIndex,
   resolveIntroFrameIndexFromPlan,
+  resolveOpeningVideoPlaybackRate,
   scaleBackfilledBriefIntroSegments,
   syncIntroSegmentsToAudio,
 } from '@/lib/channel-intro-segments'
+import { OPENING_HOSTS_VIDEO_PLAYBACK_RATE } from '@/lib/channel-intro-constants'
 
 test('normalizeIntroSegmentTimelines removes overlaps between consecutive frames', () => {
   const normalized = normalizeIntroSegmentTimelines([
@@ -134,4 +137,20 @@ test('Pattern Matrix manifesto segments include opening video and Ken Burns meta
   const plan = buildIntroElasticSyncPlan(segments, 190)
   assert.equal(plan.frameStartSeconds.length, 8)
   assert.equal(plan.frameStartSeconds[0], 0)
+})
+
+test('resolveOpeningVideoPlaybackRate slows opening-hosts clips', () => {
+  const opening = {
+    url: '',
+    durationSeconds: 8,
+    visualMedium: 'video' as const,
+    videoUrl: 'https://example.com/clearsight-math-opening-hosts.mp4',
+  }
+  assert.equal(isOpeningVideoIntroFrame(opening), true)
+  assert.equal(resolveOpeningVideoPlaybackRate(opening), OPENING_HOSTS_VIDEO_PLAYBACK_RATE)
+  assert.equal(
+    resolveOpeningVideoPlaybackRate({ ...opening, videoPlaybackRate: 0.75 }),
+    0.75
+  )
+  assert.equal(resolveOpeningVideoPlaybackRate({ url: 'x', durationSeconds: 5 }), 1)
 })

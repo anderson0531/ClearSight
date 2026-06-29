@@ -62,3 +62,7 @@ export const RELOCALIZE_UNITS = toUnits(0.5)
 export const QA_QUESTION_UNITS = toUnits(0.25)
 /** On-demand HD music track generation (Lyria 3 Pro): 1 credit. */
 export const MUSIC_GENERATION_UNITS = toUnits(1)
+
+/** Single bundled lesson generation (Creator track): script + audio + SceneFlow frames. */
+/** @deprecated Legacy alias; on-demand generation uses one credit unit. */
+export const LESSON_GENERATION_UNITS = BASE_GENERATION_UNITS

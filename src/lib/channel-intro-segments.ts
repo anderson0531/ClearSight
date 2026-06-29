@@ -1,4 +1,4 @@
-import { BRIEF_INTRO_OUTRO_TAIL_SECONDS } from '@/lib/channel-intro-constants'
+import { BRIEF_INTRO_OUTRO_TAIL_SECONDS, OPENING_HOSTS_VIDEO_PLAYBACK_RATE } from '@/lib/channel-intro-constants'
 import type { AudioSegment, IntroVideoClip } from '@/types/story'
 
 const FRAME_LEAD_SECONDS = 0.35
@@ -111,6 +111,16 @@ export function isOpeningVideoIntroFrame(segment: AudioSegment | null | undefine
   const url = segment?.videoUrl?.trim()
   if (!url || segment?.visualMedium !== 'video') return false
   return /opening-hosts(?:\.mp4)?(?:\?|$)/i.test(url)
+}
+
+/** Slow opening-hosts clips so ~7s source better fills the ~8s frame slot. */
+export function resolveOpeningVideoPlaybackRate(
+  segment: AudioSegment | null | undefined
+): number {
+  if (typeof segment?.videoPlaybackRate === 'number' && segment.videoPlaybackRate > 0) {
+    return segment.videoPlaybackRate
+  }
+  return isOpeningVideoIntroFrame(segment) ? OPENING_HOSTS_VIDEO_PLAYBACK_RATE : 1
 }
 
 /** Align frame 0 with the probed rock lead duration in the final MP3. */

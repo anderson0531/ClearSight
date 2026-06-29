@@ -1,5 +1,11 @@
 import { SHOW_COVER_ART } from '@/lib/host-art'
-import { PATTERN_MATRIX_SHOW_ID } from '@/lib/scene-flow-lite'
+import {
+  PATTERN_MATRIX_EPISODE_BED,
+  PATTERN_MATRIX_EPISODE_MUSIC_VOLUME,
+  PATTERN_MATRIX_OPENING_MUSIC_VOLUME,
+} from '@/lib/music-assets'
+import { OPENING_HOSTS_VIDEO_PLAYBACK_RATE } from '@/lib/channel-intro-constants'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import type { AudioSegmentRole, VisualMedium } from '@/types/story'
 
 /** Channel hero cover — first frame for the welcoming hosts opening clip. */
@@ -55,5 +61,8 @@ export function buildPatternMatrixOpeningFrame(durationSeconds: number): AudioSe
     videoUrl: PATTERN_MATRIX_OPENING_VIDEO_URL,
     imageUrl: PATTERN_MATRIX_OPENING_FRAME_URL,
     videoPrompt: PATTERN_MATRIX_OPENING_VIDEO_PROMPT,
+    videoPlaybackRate: OPENING_HOSTS_VIDEO_PLAYBACK_RATE,
+    musicBedUrl: PATTERN_MATRIX_EPISODE_BED,
+    musicVolumeRatio: PATTERN_MATRIX_OPENING_MUSIC_VOLUME,
   }
 }

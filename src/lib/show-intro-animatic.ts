@@ -19,7 +19,7 @@ export const SHOW_INTRO_ANIMATIC: Record<string, AudioSegment[]> = {
     "frameKind": "scene",
     "visualMedium": "video",
     "videoUrl": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-opening-hosts.mp4",
-    "imageUrl": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png",
+    "imageUrl": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-cover-s5RMxcPoUhAPcPJZYnEwBslZjccXJs.png",
     "videoPrompt": "The two podcast hosts smile warmly with a welcoming and confident demeanor. Subtle natural motion only — relaxed expressions, gentle nods, soft breathing. No speaking, no lip sync, no dialogue. Silent video."
   },
   {
@@ -290,7 +290,7 @@ export const SHOW_INTRO_ANIMATIC: Record<string, AudioSegment[]> = {
     "speaker": "Dr. Benjamin Anderson",
     "role": "cta",
     "frameKind": "scene",
-    "imageUrl": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png",
+    "imageUrl": "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-cover-s5RMxcPoUhAPcPJZYnEwBslZjccXJs.png",
     "animaticMovement": "kenburns-zoom-in",
     "visualMedium": "video",
     "introVideoClips": [

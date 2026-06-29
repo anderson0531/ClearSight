@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Mic2, Play, ArrowRight } from 'lucide-react'
+import { Play, ArrowRight } from 'lucide-react'
 import { LensCollectionsHub } from '@/components/library/LensCollectionsHub'
 import { LensTypePreferencesSection } from '@/components/library/LensTypePreferencesSection'
 import { LibraryContinueSection } from '@/components/library/LibraryContinueSection'
@@ -61,7 +61,6 @@ export default function LibraryPage() {
 
   const language = locale.englishName
   const canCreateOnDemand = canGenerateOnDemand(plan)
-  const isCreator = plan === 'CREATOR'
 
   useEffect(() => {
     const sync = () => setSavedSearches(loadSavedSearches())
@@ -225,14 +224,6 @@ export default function LibraryPage() {
           />
         </>
       )}
-
-      {isCreator ? (
-        <LibrarySection title={t('libraryChannels')} icon={Mic2}>
-          <div className="glass-panel rounded-xl px-5 py-6 text-sm text-[var(--muted-strong)]">
-            {t('libraryChannelsEmpty')}
-          </div>
-        </LibrarySection>
-      ) : null}
     </main>
   )
 }

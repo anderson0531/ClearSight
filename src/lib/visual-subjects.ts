@@ -1,3 +1,4 @@
+import { IMAGEN_PRIMARY_SCENE_MARKER } from '@/lib/imagen-prompt-constants'
 import {
   vertexGenerateGrounded,
   vertexGenerateText,
@@ -213,7 +214,7 @@ export function formatSubjectNameSpellingBlock(subjects: VisualSubject[]): strin
 }
 
 /** Marker wrapping the scene sentence in Imagen prompts (used for extraction). */
-export const IMAGEN_PRIMARY_SCENE_MARKER = 'PRIMARY SCENE (render this exactly):'
+export { IMAGEN_PRIMARY_SCENE_MARKER } from '@/lib/imagen-prompt-constants'
 
 /**
  * Pull the scene sentence from a stored Imagen prompt. Supports the current

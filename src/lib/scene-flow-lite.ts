@@ -1,9 +1,10 @@
 import { normalizeMusicMood } from '@/lib/music-assets'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import type { Show } from '@/lib/shows'
 import type { MathFoundationNode, MusicMood } from '@/types/story'
 import { sanitizeMathFoundationLatex } from '@/lib/math-foundation-latex'
 
-export const PATTERN_MATRIX_SHOW_ID = 'clearsight-math' as const
+export { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 
 export interface SceneFlowSeriesMetadata {
   series_title: string
@@ -97,6 +98,9 @@ export function sceneFlowSeriesKey(meta: Pick<SceneFlowSeriesMetadata, 'series_i
 
 export function mapLyriaThemeToMood(cue?: string | null): MusicMood {
   const lower = (cue ?? '').trim().toLowerCase()
+  if (lower.includes('post-rock') || lower.includes('cinematic post')) {
+    return 'reflective'
+  }
   if (lower.includes('mathematical ambient') || lower.includes('ambient pulse')) {
     return 'reflective'
   }
@@ -225,17 +229,21 @@ export function extractSceneFlowJsonObject(raw: string): Record<string, unknown>
 export const SCENEFLOW_MIN_VISUAL_PROMPT_CHARS = 50
 
 const GENERIC_VISUAL_PROMPT_RE =
-  /^(a\s+)?(mathematical|math|abstract|conceptual|generic)\s+(concept|idea|scene|image|visual)/i
+  /^(a\s+)?(mathematical|math|abstract|conceptual|symbolic|generic)\s+(concept|idea|scene|image|visual)/i
+
+const ABSTRACT_VISUAL_RE =
+  /\b(abstract|conceptual|symbolic|metaphorical|surreal|dreamlike|ethereal|floating shapes|gradient background|generic pattern|visual metaphor)\b/i
 
 const GENERIC_HOST_STUDIO_RE =
   /\b(podcast\s+(hosts?|studio)|co-hosts?|presenters?|talking[- ]head)\b/i
 
-/** True when a SceneFlow visual_prompt is too short, generic, or a non-renderable studio placeholder. */
+/** True when a SceneFlow visual_prompt is too short, generic, abstract, or a non-renderable studio placeholder. */
 export function isWeakSceneFlowVisualPrompt(visual: string): boolean {
   const trimmed = visual.trim()
   if (trimmed.length < SCENEFLOW_MIN_VISUAL_PROMPT_CHARS) return true
-  if (GENERIC_VISUAL_PROMPT_RE.test(trimmed) && trimmed.length < 80) return true
-  if (GENERIC_HOST_STUDIO_RE.test(trimmed) && trimmed.length < 90) return true
+  if (GENERIC_VISUAL_PROMPT_RE.test(trimmed)) return true
+  if (ABSTRACT_VISUAL_RE.test(trimmed) && trimmed.length < 120) return true
+  if (GENERIC_HOST_STUDIO_RE.test(trimmed)) return true
   return false
 }
 
@@ -251,25 +259,34 @@ export function parseSceneFlowLitePayload(raw: string, show: Show): SceneFlowPar
 
   const mathFoundationNode = parseMathFoundationNode(obj.math_foundation_node)
   const turns: SceneFlowParsedTurn[] = []
+  const isPatternMatrix = show.id === PATTERN_MATRIX_SHOW_ID
 
   for (const item of framesRaw) {
     if (!item || typeof item !== 'object') continue
     const frame = item as Record<string, unknown>
     const dialogue = typeof frame.dialogue === 'string' ? frame.dialogue.trim() : ''
     if (!dialogue) continue
-    const visual =
-      typeof frame.visual_prompt === 'string'
-        ? frame.visual_prompt.trim()
-        : typeof frame.scene === 'string'
-          ? frame.scene.trim()
-          : ''
-    if (!visual) continue
-    if (isWeakSceneFlowVisualPrompt(visual)) {
-      console.warn('[scene-flow-lite] dropping weak visual_prompt', {
-        frame_id: frame.frame_id,
-        excerpt: visual.slice(0, 80),
-      })
-      continue
+
+    let visual: string
+    if (isPatternMatrix) {
+      // Illustration scenes are derived server-side from dialogue in generate-story.
+      visual = ''
+    } else {
+      const modelVisual =
+        typeof frame.visual_prompt === 'string'
+          ? frame.visual_prompt.trim()
+          : typeof frame.scene === 'string'
+            ? frame.scene.trim()
+            : ''
+      if (!modelVisual) continue
+      if (isWeakSceneFlowVisualPrompt(modelVisual)) {
+        console.warn('[scene-flow-lite] dropping weak visual_prompt', {
+          frame_id: frame.frame_id,
+          excerpt: modelVisual.slice(0, 80),
+        })
+        continue
+      }
+      visual = modelVisual
     }
 
     const speaker = matchHost(show, typeof frame.speaker === 'string' ? frame.speaker : '')

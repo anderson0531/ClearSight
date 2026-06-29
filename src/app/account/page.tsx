@@ -6,14 +6,14 @@ import Link from 'next/link'
 import { PageShell } from '@/components/layout/PageShell'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n, useTranslations } from '@/i18n/I18nProvider'
-import { CREDIT_PACKS, PLAN_DETAILS, PLANS, type Plan } from '@/lib/plans'
+import { ON_DEMAND_CREDIT_PACKS, PLAN_DETAILS, PLANS, canPurchaseOnDemandCredits, type Plan } from '@/lib/plans'
 import { formatCreditsDisplay } from '@/lib/credit-units'
 
 interface CreditTxn {
   id: string
   amount: number
   balanceAfter: number
-  type: 'SUBSCRIPTION' | 'PURCHASE' | 'GENERATION' | 'REFUND' | 'ADJUSTMENT'
+  type: 'SUBSCRIPTION' | 'PURCHASE' | 'GENERATION' | 'REFUND' | 'ADJUSTMENT' | 'AD_SPONSORED'
   description: string | null
   createdAt: string
 }
@@ -24,6 +24,7 @@ const TXN_LABEL_KEYS: Record<CreditTxn['type'], string> = {
   GENERATION: 'txnGeneration',
   REFUND: 'txnRefund',
   ADJUSTMENT: 'txnAdjustment',
+  AD_SPONSORED: 'txnAdSponsored',
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -189,8 +190,8 @@ export default function AccountPage() {
     }
   }
 
-  const handleBuyCredits = async (pack: number) => {
-    setBusy(`pack:${pack}`)
+  const handleBuyOnDemandCredits = async (pack: number) => {
+    setBusy(`od:${pack}`)
     try {
       await fetch('/api/billing/credits', {
         method: 'POST',
@@ -224,7 +225,7 @@ export default function AccountPage() {
     }
   }
 
-  const canBuyCredits = plan === 'PREMIUM' || plan === 'CREATOR'
+  const showOnDemandTopUps = canPurchaseOnDemandCredits(plan)
 
   return (
     <PageShell title={t('accountTitle')}>
@@ -288,7 +289,9 @@ export default function AccountPage() {
             <div className="flex items-center justify-between">
               <dt className="text-[var(--muted-strong)]">{t('creditsBalance')}</dt>
               <dd className="font-medium text-[var(--foreground)]">
-                {coreTokens != null ? t('creditsCount', { count: formatCreditsDisplay(coreTokens) }) : '—'}
+                {coreTokens != null
+                  ? t('creditsCount', { count: formatCreditsDisplay(coreTokens) })
+                  : '—'}
               </dd>
             </div>
           </dl>
@@ -325,27 +328,27 @@ export default function AccountPage() {
             </button>
           ) : null}
 
-          {canBuyCredits ? (
+          {showOnDemandTopUps ? (
             <div className="mt-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
                 {t('accountBuyCredits')}
               </p>
               <p className="mt-1 text-xs text-[var(--muted)]">{t('accountBuyCreditsHint')}</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                {CREDIT_PACKS.map((pack) => (
+                {ON_DEMAND_CREDIT_PACKS.map((pack) => (
                   <div
-                    key={pack}
+                    key={pack.id}
                     className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-center"
                   >
-                    <p className="text-2xl font-bold text-[var(--accent-credit)]">{pack}</p>
-                    <p className="text-xs text-[var(--muted)]">{t('credits')}</p>
+                    <p className="text-2xl font-bold text-[var(--accent-credit)]">{pack.credits}</p>
+                    <p className="text-xs text-[var(--muted)]">{pack.priceLabel}</p>
                     <button
                       type="button"
                       disabled={busy !== null}
-                      onClick={() => void handleBuyCredits(pack)}
+                      onClick={() => void handleBuyOnDemandCredits(pack.credits)}
                       className="btn-ghost mt-3 w-full text-xs"
                     >
-                      {busy === `pack:${pack}` ? t('accountProcessing') : t('accountBuyPack', { count: pack })}
+                      {busy === `od:${pack.credits}` ? t('accountProcessing') : t('accountBuyPack', { count: pack.credits })}
                     </button>
                   </div>
                 ))}

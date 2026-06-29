@@ -7,7 +7,7 @@ import {
   ensureDatabaseResolved,
   isDatabaseUnavailableError,
 } from '@/lib/database-url'
-import { canGenerateOnDemand } from '@/lib/plans'
+import { canGenerateOnDemand, hasPriorityJitAudio } from '@/lib/plans'
 import { resolveShow } from '@/lib/shows'
 import { ensureDemoUser, getCurrentUserId } from '@/lib/session'
 import { prisma } from '@/lib/db'
@@ -61,23 +61,22 @@ export async function POST(request: Request) {
     const user = await ensureDemoUser(userId)
     if (!canGenerateOnDemand(user.plan)) {
       return NextResponse.json(
-        { error: 'Premium or Creator plan required for on-demand podcasts', code: 'PLAN_REQUIRED' },
+        { error: 'A paid plan is required for on-demand podcasts', code: 'PLAN_REQUIRED' },
         { status: 403 }
       )
     }
 
     const taxonomyKey = [body.language, body.category, body.geoScope].join('|')
-    // Charges 1 core token and creates the Generation row (QUEUED by default).
-    const { generationId } = await verifyAndConsumeCredits(userId, taxonomyKey)
+    let creditsCharged: number
+    let generationId: string
 
-    let creditsCharged = BASE_GENERATION_UNITS
+    const result = await verifyAndConsumeCredits(userId, taxonomyKey)
+    generationId = result.generationId
+    creditsCharged = BASE_GENERATION_UNITS
+
     if (includeIllustrations) {
       const illustrationUnits =
         body.contentType === 'News' ? newsIllustrationUnits() : ILLUSTRATION_UNITS
-      // Charge the illustration add-on now so the whole request is paid up front
-      // and can be refunded atomically on failure. If this charge fails (e.g.
-      // insufficient balance for the add-on), refund the base token and mark the
-      // never-enqueued job FAILED so we don't strand a QUEUED row or a charge.
       try {
         await consumeCredits(userId, illustrationUnits, 'On-demand illustrations')
         creditsCharged += illustrationUnits
@@ -106,7 +105,7 @@ export async function POST(request: Request) {
     await sendInngestEvent(
       {
         name: PODCAST_GENERATION_REQUESTED,
-        data: { generationId, userId },
+        data: { generationId, userId, priorityJit: hasPriorityJitAudio(user.plan) },
       },
       { userId, generationId, creditsCharged }
     )

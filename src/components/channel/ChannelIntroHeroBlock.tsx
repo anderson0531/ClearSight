@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Loader2, Maximize, Minimize, Pause, Play } from 'lucide-react'
+import { Loader2, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from 'lucide-react'
 import { useTranslations, useI18n } from '@/i18n/I18nProvider'
+import { useUser } from '@/components/providers/UserProvider'
+import { useScreenOffAudioGate } from '@/hooks/useScreenOffAudioGate'
 import type { Show } from '@/lib/shows'
 import { useChannelIntro } from '@/hooks/useChannelIntro'
 import { useFullscreen } from '@/hooks/useFullscreen'
@@ -19,6 +21,10 @@ interface ChannelIntroHeroBlockProps {
   bleed?: boolean
   /** Shorter hero for embedded surfaces like dialogs. */
   compact?: boolean
+  /** Start playback automatically once the intro is ready. */
+  autoPlay?: boolean
+  /** Hide the description paragraph below the hero frame. */
+  hideDescription?: boolean
   /** Optional description below the hero (outside the image overlay). */
   description?: string
 }
@@ -28,15 +34,32 @@ export function ChannelIntroHeroBlock({
   active = true,
   bleed = false,
   compact = false,
+  autoPlay = false,
+  hideDescription = false,
   description,
 }: ChannelIntroHeroBlockProps) {
   const t = useTranslations()
   const { locale } = useI18n()
+  const { plan } = useUser()
   const introRef = useRef<HTMLAudioElement | null>(null)
   const [introPlaying, setIntroPlaying] = useState(false)
+  const [muted, setMuted] = useState(true)
+  const [volume, setVolume] = useState(1)
   const pendingPlayRef = useRef(false)
 
   const pauseGlobalAudio = useAudioQueue((s) => s.pause)
+
+  const pauseIntro = useCallback(() => {
+    introRef.current?.pause()
+    setIntroPlaying(false)
+  }, [])
+
+  useScreenOffAudioGate({
+    plan,
+    isPlaying: introPlaying,
+    pause: pauseIntro,
+    enabled: active,
+  })
 
   const { introUrl, introSegments, state, error, progress, canShowIntro, framesReady, ensureFramesReady, prepareAndPlay, retry } =
     useChannelIntro(show.id, locale.englishName, show.introAudio, show.coverImage)
@@ -45,12 +68,21 @@ export function ChannelIntroHeroBlock({
     const el = introRef.current
     if (!el) return
     pauseGlobalAudio()
+    el.muted = muted
+    el.volume = volume
     setIntroPlaying(true)
     await ensureFramesReady()
     el.src = url
     el.load()
     void el.play().catch(() => setIntroPlaying(false))
   }
+
+  useEffect(() => {
+    const el = introRef.current
+    if (!el) return
+    el.muted = muted
+    el.volume = volume
+  }, [muted, volume, introUrl])
 
   useEffect(() => {
     if (introUrl && pendingPlayRef.current && state === 'ready') {
@@ -68,6 +100,7 @@ export function ChannelIntroHeroBlock({
 
   useEffect(() => {
     pendingPlayRef.current = false
+    setMuted(true)
     const el = introRef.current
     if (el && !el.paused) el.pause()
   }, [show.id])
@@ -91,7 +124,8 @@ export function ChannelIntroHeroBlock({
   const introBusy = state === 'preparing' || (Boolean(introSegments?.length) && !framesReady)
   const introFailed = state === 'failed'
   const hostNames = show.hosts.map((host) => host.shortName).join(' & ')
-  const bodyDescription = description ?? show.description
+  const bodyDescription = hideDescription ? null : (description ?? show.description)
+  const autoPlayedRef = useRef(false)
   const { ref: heroRef, isFullscreen, toggleFullscreen, exitFullscreen } = useFullscreen<HTMLDivElement>()
   const showFullscreenControl = canShowIntro && Boolean(introSegments?.length)
 
@@ -99,6 +133,20 @@ export function ChannelIntroHeroBlock({
     if (active) return
     exitFullscreen()
   }, [active, exitFullscreen])
+
+  useEffect(() => {
+    if (!autoPlay || !active || autoPlayedRef.current) return
+    if (introUrl && state === 'ready' && !introPlaying) {
+      autoPlayedRef.current = true
+      pendingPlayRef.current = true
+      void prepareAndPlay(playIntro)
+    }
+  }, [autoPlay, active, introUrl, state, introPlaying, prepareAndPlay])
+
+  useEffect(() => {
+    autoPlayedRef.current = false
+    pendingPlayRef.current = false
+  }, [show.id, locale.englishName])
 
   return (
     <div className={bleed ? '-mx-5 sm:-mx-6' : undefined}>
@@ -156,6 +204,38 @@ export function ChannelIntroHeroBlock({
                   {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
                 </button>
               ) : null}
+              <div className="channel-hero-audio-controls">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (muted) {
+                      setVolume((current) => (current > 0 ? current : 1))
+                      setMuted(false)
+                      return
+                    }
+                    setMuted(true)
+                  }}
+                  className="channel-hero-fullscreen-btn"
+                  aria-label={muted ? t('channelIntroUnmute') : t('channelIntroMute')}
+                  aria-pressed={!muted}
+                >
+                  {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={muted ? 0 : volume}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    setVolume(next)
+                    setMuted(next === 0)
+                  }}
+                  aria-label={t('animaticVolume')}
+                  className="channel-hero-volume"
+                />
+              </div>
             </div>
           ) : null}
           {state === 'preparing' ? (
@@ -188,6 +268,7 @@ export function ChannelIntroHeroBlock({
           ref={introRef}
           src={introUrl ?? undefined}
           preload="metadata"
+          muted={muted}
           onPlay={() => setIntroPlaying(true)}
           onPause={() => setIntroPlaying(false)}
           onEnded={() => {

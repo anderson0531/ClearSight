@@ -5,15 +5,16 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { splitBriefingMarkdown } from '@/lib/briefing-sections'
+import { parseBriefingPreamble, splitBriefingMarkdown, usesObjectiveBriefLabel } from '@/lib/briefing-sections'
 
 interface TruthLedgerProps {
   markdown: string
+  contentType?: string | null
 }
 
 const markdownComponents = {
   h2: ({ children }: { children?: ReactNode }) => (
-    <h2 className="mb-4 mt-8 border-b border-[var(--border)] pb-2 text-xl font-bold uppercase tracking-wide text-[var(--foreground)]">
+    <h2 className="mb-4 mt-0 border-b border-[var(--border)] pb-2 text-xl font-bold uppercase tracking-wide text-[var(--foreground)]">
       {children}
     </h2>
   ),
@@ -93,10 +94,27 @@ function CollapsibleBriefingSection({
   )
 }
 
-export function TruthLedger({ markdown }: TruthLedgerProps) {
+export function TruthLedger({ markdown, contentType }: TruthLedgerProps) {
+  const t = useTranslations()
   const { preamble, sections } = splitBriefingMarkdown(markdown)
+  const parsed = parseBriefingPreamble(preamble)
+  const summarySectionTitle = usesObjectiveBriefLabel(contentType)
+    ? t('briefingObjectiveBriefSection')
+    : t('briefingSummarySection')
 
   if (sections.length === 0) {
+    if (parsed.summaryBody) {
+      return (
+        <article className="prose prose-invert max-w-none">
+          {parsed.episodeTitle ? (
+            <h2 className="mb-4 mt-0 border-b border-[var(--border)] pb-2 text-xl font-bold uppercase tracking-wide text-[var(--foreground)]">
+              {parsed.episodeTitle}
+            </h2>
+          ) : null}
+          <CollapsibleBriefingSection title={summarySectionTitle} body={parsed.summaryBody} />
+        </article>
+      )
+    }
     return (
       <article className="prose prose-invert max-w-none">
         <MarkdownBody content={markdown} />
@@ -106,7 +124,16 @@ export function TruthLedger({ markdown }: TruthLedgerProps) {
 
   return (
     <article className="prose prose-invert max-w-none">
-      {preamble ? <MarkdownBody content={preamble} /> : null}
+      {parsed.episodeTitle ? (
+        <h2 className="mb-4 mt-0 border-b border-[var(--border)] pb-2 text-xl font-bold uppercase tracking-wide text-[var(--foreground)]">
+          {parsed.episodeTitle}
+        </h2>
+      ) : null}
+      {parsed.summaryBody ? (
+        <CollapsibleBriefingSection title={summarySectionTitle} body={parsed.summaryBody} />
+      ) : preamble ? (
+        <MarkdownBody content={preamble} />
+      ) : null}
       {sections.map((section, index) => (
         <CollapsibleBriefingSection
           key={`${section.title}-${index}`}

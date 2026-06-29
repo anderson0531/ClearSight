@@ -17,3 +17,9 @@ export const BRIEF_INTRO_OUTRO_TAIL_SECONDS = 22
 
 /** Crossfade duration between intro hero frames, clips, and stills. */
 export const CHANNEL_INTRO_HERO_DISSOLVE_MS = 1400
+
+/**
+ * Playback rate for silent opening-hosts clips (~7s source vs ~8s frame).
+ * Slightly slower playback stretches the clip toward the segment duration.
+ */
+export const OPENING_HOSTS_VIDEO_PLAYBACK_RATE = 0.9

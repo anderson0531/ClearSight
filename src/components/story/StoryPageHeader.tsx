@@ -14,7 +14,7 @@ import { ResynthesizeAudioButton } from '@/components/story/ResynthesizeAudioBut
 import { StoryEngagementBar } from '@/components/story/StoryEngagementBar'
 import { AnimaticStage, type AnimaticStageHandle, type AnimaticStageState } from '@/components/story/AnimaticStage'
 import { MathFoundationPanel } from '@/components/story/MathFoundationPanel'
-import { PATTERN_MATRIX_SHOW_ID } from '@/lib/scene-flow-lite'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import { useUser } from '@/components/providers/UserProvider'
 import { canGenerateOnDemand } from '@/lib/plans'
 import { showById } from '@/lib/shows'

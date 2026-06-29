@@ -11,7 +11,8 @@ datasource db {
 enum Plan {
   FREE
   PREMIUM
-  CREATOR
+  PREMIUM_PLUS
+  PREMIUM_ELITE
 }
 
 enum CreditTxnType {
@@ -20,6 +21,7 @@ enum CreditTxnType {
   GENERATION
   REFUND
   ADJUSTMENT
+  AD_SPONSORED
 }
 
 enum GenerationStatus {

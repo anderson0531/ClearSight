@@ -1,6 +1,6 @@
-import { Home, Search, ScanEye, Sparkles, Mic2, Mic } from 'lucide-react'
+import { Home, Search, ScanEye, Sparkles, Mic } from 'lucide-react'
 import type { MessageKey } from '@/i18n/messages/en'
-import type { Plan } from '@/lib/plans'
+import { canGenerateOnDemand, type Plan } from '@/lib/plans'
 
 export interface PrimaryNavItem {
   href: string
@@ -9,10 +9,7 @@ export interface PrimaryNavItem {
 }
 
 /**
- * Primary navigation differs per plan:
- * - FREE:    Home, Discover, Your Lens, Premium
- * - PREMIUM: Home, Discover, Your Lens, On-Demand
- * - CREATOR: Home, Discover, Your Lens, On-Demand, Studio
+ * Primary navigation differs per plan tier entitlements.
  */
 export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
   const items: PrimaryNavItem[] = [
@@ -21,16 +18,10 @@ export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
     { href: '/library', key: 'navLibrary', icon: ScanEye },
   ]
 
-  if (plan === 'FREE') {
+  if (!canGenerateOnDemand(plan)) {
     items.push({ href: '/premium', key: 'navPremium', icon: Sparkles })
-  }
-
-  if (plan === 'PREMIUM' || plan === 'CREATOR') {
+  } else {
     items.push({ href: '/on-demand', key: 'navOnDemand', icon: Mic })
-  }
-
-  if (plan === 'CREATOR') {
-    items.push({ href: '/studio', key: 'navStudio', icon: Mic2 })
   }
 
   return items

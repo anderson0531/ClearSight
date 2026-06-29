@@ -39,6 +39,17 @@ export function extractAudioSegments(sourcesVerified: unknown): AudioSegment[] |
       ...(visualMedium ? { visualMedium } : {}),
       ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
       ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
+      ...(segment.animaticMovement ? { animaticMovement: segment.animaticMovement } : {}),
+      ...(segment.sfxCue ? { sfxCue: segment.sfxCue } : {}),
+      ...(segment.mathFoundation ? { mathFoundation: segment.mathFoundation } : {}),
+      ...(segment.musicBedUrl ? { musicBedUrl: segment.musicBedUrl } : {}),
+      ...(typeof segment.musicVolumeRatio === 'number'
+        ? { musicVolumeRatio: segment.musicVolumeRatio }
+        : {}),
+      ...(typeof segment.videoPlaybackRate === 'number'
+        ? { videoPlaybackRate: segment.videoPlaybackRate }
+        : {}),
+      ...(segment.hostsVideoBookend ? { hostsVideoBookend: segment.hostsVideoBookend } : {}),
     })
   }
 
@@ -62,5 +73,16 @@ export function serializeAudioSegments(segments: AudioSegment[]): Record<string,
     ...(segment.visualMedium ? { visualMedium: segment.visualMedium } : {}),
     ...(segment.videoUrl != null ? { videoUrl: segment.videoUrl } : {}),
     ...(segment.videoPrompt ? { videoPrompt: segment.videoPrompt } : {}),
+    ...(segment.animaticMovement ? { animaticMovement: segment.animaticMovement } : {}),
+    ...(segment.sfxCue ? { sfxCue: segment.sfxCue } : {}),
+    ...(segment.mathFoundation ? { mathFoundation: segment.mathFoundation } : {}),
+    ...(segment.musicBedUrl ? { musicBedUrl: segment.musicBedUrl } : {}),
+    ...(typeof segment.musicVolumeRatio === 'number'
+      ? { musicVolumeRatio: segment.musicVolumeRatio }
+      : {}),
+    ...(typeof segment.videoPlaybackRate === 'number'
+      ? { videoPlaybackRate: segment.videoPlaybackRate }
+      : {}),
+    ...(segment.hostsVideoBookend ? { hostsVideoBookend: segment.hostsVideoBookend } : {}),
   }))
 }

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  canonicalizeCategory,
   categoriesForType,
   CONTENT_CATEGORIES,
   isTopCategory,
@@ -65,43 +66,43 @@ const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
     'Cross-border law enforcement operations',
     'Financial fraud investigations and regulatory actions',
   ],
-  // Education
-  Mathematics: [
+  // Knowledge & Career
+  'Math & Patterns': [
     'Why prime numbers underpin modern encryption',
     'The surprising math behind everyday probability',
     'How calculus describes a world in motion',
   ],
-  'Science & Discovery': [
+  'Science & Evidence': [
     'How ecosystems recover after major disturbances',
     'The physics behind everyday phenomena',
     'Recent discoveries reshaping our understanding of the universe',
   ],
-  'Space & Astronomy': [
+  'Space & Cosmos': [
     'What black holes reveal about the limits of physics',
     'How astronomers detect planets around distant stars',
     'The life cycle of a star, from nebula to supernova',
   ],
-  History: [
+  'History & Context': [
     'Turning points that changed the modern world',
     'Everyday life in ancient civilizations',
     'The hidden history behind a famous landmark',
   ],
-  'Medicine & Health': [
+  'Health & the Body': [
     'How vaccines train the immune system',
     'What sleep actually does for the brain and body',
     'The science of how chronic stress affects health',
   ],
-  'Technology & Coding': [
+  'Technology & Systems': [
     'How large language models actually work',
     'The fundamentals of how the internet routes data',
     'A beginner-friendly tour of modern programming languages',
   ],
-  'Money & Economics': [
+  'Markets & Money': [
     'How inflation quietly reshapes everyday spending',
     'What really drives interest rates',
     'The economics behind why some cities boom and others fade',
   ],
-  'Career & Job Market': [
+  'Careers & Work': [
     'Skills that are rising in value as work changes',
     'How automation is reshaping common career paths',
     'Practical steps to pivot into a fast-growing field',
@@ -111,7 +112,7 @@ const CATEGORY_TOPICS: Partial<Record<ContentCategory, string[]>> = {
     'The cultural forces behind a global music genre',
     'Why certain stories endure across centuries',
   ],
-  'Nature & Environment': [
+  'Earth & Environment': [
     'How keystone species hold ecosystems together',
     'The hidden water cycle that sustains a continent',
     'What coral reefs reveal about ocean health',
@@ -547,10 +548,10 @@ Always write the CATEGORY in English even though the Title is written in ${langu
   const specificFormat = `Format each line as a title only (no category prefix).`
 
   if (contentType === 'Education') {
-    const isMath = !isTop && category === 'Mathematics'
+    const isMath = !isTop && canonicalizeCategory(category) === 'Math & Patterns'
     const durationNote = isMath
       ? 'Each topic should support a thorough, in-depth mathematics explainer with no fixed time limit — prioritize clarity, applications, and complete explanations over brevity.'
-      : 'Each topic should make an engaging educational episode.'
+      : 'Each topic should make a compelling knowledge explainer episode.'
     const scope = isTop
       ? `Cover a diverse mix across these subjects: ${cats.join(', ')}.
 ${topFormat}`
@@ -558,7 +559,7 @@ ${topFormat}`
 ${specificFormat}`
     return {
       defaultCategory,
-      prompt: `You are programming an educational podcast network. List exactly ${count} compelling, explainer-worthy topics in ${language}. ${durationNote}
+      prompt: `You are programming a knowledge explainer network. List exactly ${count} compelling, explainer-worthy topics in ${language}. ${durationNote}
 
 Audience geography: ${geoFocus}
 ${focusLine}

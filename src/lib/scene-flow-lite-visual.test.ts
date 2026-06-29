@@ -18,14 +18,15 @@ describe('frame-illustration-style', () => {
     assert.doesNotMatch(frameIllustrationStyle(), /flat-vector/i)
   })
 
-  it('composes show and category overlays', () => {
-    const style = resolveFrameIllustrationStyle(SHOW_MATH, 'Mathematics')
-    assert.ok(style.includes('photorealistic'))
-    assert.ok(style.includes('fractal') || style.includes('Pattern Matrix'))
+  it('composes cinematic style for Pattern Matrix', () => {
+    const style = resolveFrameIllustrationStyle(SHOW_MATH, 'Math & Patterns')
+    assert.match(style, /cinematic/i)
+    assert.match(style, /No podcast hosts/i)
+    assert.doesNotMatch(style, /photorealistic editorial photograph/i)
   })
 
   it('omits host guardrail when includeHosts is true', () => {
-    const style = resolveFrameIllustrationStyle(SHOW_MATH, 'Mathematics', { includeHosts: true })
+    const style = resolveFrameIllustrationStyle(SHOW_MATH, 'Math & Patterns', { includeHosts: true })
     assert.doesNotMatch(style, /No podcast hosts/i)
   })
 

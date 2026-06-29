@@ -7,6 +7,8 @@ import {
 import { prisma } from '@/lib/db'
 import { ensureEpisodeThumbnail } from '@/lib/generate-story'
 import { renderStoryAnimatic } from '@/lib/animatic'
+import { extractAudioSegments } from '@/lib/audio-segments'
+import { animaticFramesIncomplete } from '@/lib/animatic-utils'
 import { sendPushToUser } from '@/lib/push'
 import { assertIllustrationsActive } from '@/lib/generation-cancel'
 
@@ -56,6 +58,19 @@ export const renderPodcastIllustrations = inngest.createFunction(
       await ensureEpisodeThumbnail(storyId).catch((err) => {
         console.error('[inngest] ensure episode thumbnail failed', err)
       })
+
+      const story = await prisma.story.findUnique({
+        where: { id: storyId },
+        select: { sourcesVerified: true },
+      })
+      const segments = extractAudioSegments(story?.sourcesVerified) ?? []
+      if (segments.length > 0 && !animaticFramesIncomplete(segments, { isNews: false })) {
+        await prisma.generation.update({
+          where: { id: generationId },
+          data: { stage: 'complete', completedAt: new Date(), errorMessage: null },
+        })
+        return { skipped: true as const, reason: 'no-pending-frames' as const }
+      }
 
       return { skipped: false as const }
     })

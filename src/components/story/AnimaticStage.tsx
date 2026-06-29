@@ -4,6 +4,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import Image from 'next/image'
 import Link from 'next/link'
 import {
+  ChevronLeft,
+  ChevronRight,
   Images,
   Loader2,
   Maximize,
@@ -20,10 +22,17 @@ import {
 } from 'lucide-react'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
-import { canGenerateOnDemand } from '@/lib/plans'
+import { useScreenOffAudioGate } from '@/hooks/useScreenOffAudioGate'
+import { canGenerateOnDemand, hasAccountabilityLedgerUnlimited } from '@/lib/plans'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
 import { hostBySpeaker, showById } from '@/lib/shows'
 import { BACKGROUND_MUSIC, BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole, VIDEO_FRAME_VOLUME_RATIO } from '@/lib/music-assets'
+import {
+  isSilentEpisodeSegment,
+  resolveEpisodeMusicBed,
+  resolveEpisodeMusicVolumeRatio,
+} from '@/lib/pattern-matrix-episode-audio'
+import { resolveOpeningVideoPlaybackRate } from '@/lib/channel-intro-segments'
 import {
   segmentDisplayImage,
   segmentDisplayVideo,
@@ -120,6 +129,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const musicRef = useRef<HTMLAudioElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const outroTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingSegmentStartRef = useRef(false)
   const stageRef = useRef<HTMLDivElement>(null)
 
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -325,7 +335,29 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     }
   }, [clearOutroTimer])
 
-  const musicVolume = (muted ? 0 : volume) * BACKGROUND_MUSIC_VOLUME_RATIO
+  const pauseAnimatic = useCallback(() => {
+    stopOutroMusic()
+    setIsPlaying(false)
+  }, [stopOutroMusic])
+
+  useScreenOffAudioGate({
+    plan,
+    isPlaying: started && (isPlaying || outroPlaying),
+    pause: pauseAnimatic,
+    enabled: started,
+  })
+
+  const musicVolumeRatio = useMemo(
+    () =>
+      resolveEpisodeMusicVolumeRatio(
+        segments?.[segmentIndex],
+        showId,
+        BACKGROUND_MUSIC_VOLUME_RATIO
+      ),
+    [segments, segmentIndex, showId]
+  )
+
+  const musicVolume = (muted ? 0 : volume) * musicVolumeRatio
   const videoVolume = (muted ? 0 : volume) * VIDEO_FRAME_VOLUME_RATIO
 
   const playOutroTail = useCallback(() => {
@@ -355,11 +387,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       const music = musicRef.current
       if (!music || outroPlaying) return
 
-      // Three-phase underscore: intro bed under hook/intro, one CONTINUOUS
-      // content bed under the body, outro bed under the cta. Consecutive body
-      // frames resolve to the same URL, so the guard below keeps the bed
-      // playing without restarting between frames.
-      const bed = musicBedForRole(segment?.role)
+      const bed =
+        resolveEpisodeMusicBed(segment, showId) ?? musicBedForRole(segment?.role)
 
       if (!bed) {
         music.pause()
@@ -371,11 +400,12 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         music.loop = bed.loop
         music.load()
       }
-      music.volume = musicVolume
+      const ratio = resolveEpisodeMusicVolumeRatio(segment, showId, BACKGROUND_MUSIC_VOLUME_RATIO)
+      music.volume = (muted ? 0 : volume) * ratio
       if (playing) void music.play().catch(() => {})
       else music.pause()
     },
-    [outroPlaying, musicVolume]
+    [outroPlaying, showId, volume, muted]
   )
 
   const startAnimatic = useCallback(() => {
@@ -392,11 +422,41 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     audio?.pause()
     videoRef.current?.pause()
     stopOutroMusic()
+    pendingSegmentStartRef.current = false
     setStarted(false)
     setIsPlaying(false)
     setSegmentIndex(0)
     setCurrentTime(0)
   }, [stopOutroMusic])
+
+  const goToSegment = useCallback(
+    (targetIndex: number) => {
+      if (!segments?.length || outroPlaying) return
+      const clamped = Math.max(0, Math.min(segments.length - 1, targetIndex))
+      if (clamped === segmentIndex) return
+
+      stopOutroMusic()
+      pendingSegmentStartRef.current = true
+      setSegmentIndex(clamped)
+      setCurrentTime(offsets[clamped] ?? 0)
+
+      const audio = audioRef.current
+      const segment = segments[clamped]
+      if (audio && segment?.url && audio.src === segment.url) {
+        audio.currentTime = 0
+        pendingSegmentStartRef.current = false
+      }
+    },
+    [segments, segmentIndex, offsets, outroPlaying, stopOutroMusic]
+  )
+
+  const goToPreviousFrame = useCallback(() => {
+    goToSegment(segmentIndex - 1)
+  }, [goToSegment, segmentIndex])
+
+  const goToNextFrame = useCallback(() => {
+    goToSegment(segmentIndex + 1)
+  }, [goToSegment, segmentIndex])
 
   const toggleFullscreen = useCallback(() => {
     const el = stageRef.current
@@ -494,16 +554,43 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     const segment = segments?.[segmentIndex]
     if (!segment) return
 
+    syncBackgroundMusic(segment, isPlaying)
+
+    if (isSilentEpisodeSegment(segment)) {
+      audio.pause()
+      return
+    }
+
     if (audio.src !== segment.url) {
       audio.src = segment.url
       audio.load()
     }
     audio.volume = muted ? 0 : volume
-    syncBackgroundMusic(segment, isPlaying)
-
     if (isPlaying) void audio.play().catch(() => setIsPlaying(false))
     else audio.pause()
   }, [started, segmentIndex, isPlaying, segments, syncBackgroundMusic, outroPlaying, volume, muted])
+
+  // Advance silent opening frames on a timer (no TTS audio).
+  useEffect(() => {
+    if (!started || outroPlaying || !isPlaying) return
+    const segment = segments?.[segmentIndex]
+    if (!isSilentEpisodeSegment(segment)) return
+
+    const startedAt = performance.now()
+    const interval = window.setInterval(() => {
+      const elapsed = (performance.now() - startedAt) / 1000
+      setCurrentTime((offsets[segmentIndex] ?? 0) + elapsed)
+      if (elapsed >= (segment?.durationSeconds ?? 0)) {
+        if (!segments) return
+        if (segmentIndex >= segments.length - 1) {
+          setIsPlaying(false)
+        } else {
+          setSegmentIndex((index) => index + 1)
+        }
+      }
+    }, 100)
+    return () => window.clearInterval(interval)
+  }, [started, segmentIndex, isPlaying, segments, outroPlaying, offsets])
 
   // Sync Veo reenactment clips to dialogue playback at reduced ambient volume.
   useEffect(() => {
@@ -522,7 +609,11 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
       video.src = src
       video.load()
     }
-    video.loop = true
+    const playbackRate = resolveOpeningVideoPlaybackRate(segment)
+    video.playbackRate = playbackRate
+    // Opening hosts clips are shorter than the frame slot — slow playback and
+    // hold the last frame instead of looping visibly.
+    video.loop = playbackRate >= 1
     video.muted = Boolean(segment.videoPrompt?.includes('Silent video'))
     video.volume = video.muted ? 0 : videoVolume
     if (isPlaying) void video.play().catch(() => {})
@@ -534,10 +625,14 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     const audio = audioRef.current
     if (audio) audio.volume = muted ? 0 : volume
     const music = musicRef.current
-    if (music) music.volume = musicVolume
+    if (music) {
+      const segment = segments?.[segmentIndex]
+      const ratio = resolveEpisodeMusicVolumeRatio(segment, showId, BACKGROUND_MUSIC_VOLUME_RATIO)
+      music.volume = (muted ? 0 : volume) * ratio
+    }
     const video = videoRef.current
     if (video) video.volume = videoVolume
-  }, [volume, muted, musicVolume, videoVolume])
+  }, [volume, muted, videoVolume, segments, segmentIndex, showId])
 
   // Advance the progress clock during the outro music tail.
   useEffect(() => {
@@ -569,6 +664,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   }
 
   const progress = totalDuration > 0 ? Math.min(100, (currentTime / totalDuration) * 100) : 0
+  const segmentCount = segments?.length ?? 0
+  const canGoPrevious = !outroPlaying && segmentIndex > 0
+  const canGoNext = !outroPlaying && segmentIndex < segmentCount - 1
 
   const showStatic = !started
 
@@ -595,7 +693,6 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             src={frameVideo}
             poster={frameSrc}
             playsInline
-            loop
             className={`absolute inset-0 h-full w-full ${isFullscreen ? 'object-contain' : 'object-cover'}`}
           />
         ) : (
@@ -639,6 +736,12 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
           preload="auto"
           className="hidden"
           onEnded={handleEnded}
+          onLoadedMetadata={(event) => {
+            if (pendingSegmentStartRef.current) {
+              event.currentTarget.currentTime = 0
+              pendingSegmentStartRef.current = false
+            }
+          }}
           onTimeUpdate={(event) => {
             if (outroPlaying) return
             const local = event.currentTarget.currentTime
@@ -735,7 +838,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
             </button>
 
             {/* Visual Accuracy Tag */}
-            {priorAccuracyScore !== undefined && priorAccuracyScore !== null ? (
+            {hasAccountabilityLedgerUnlimited(plan) &&
+            priorAccuracyScore !== undefined &&
+            priorAccuracyScore !== null ? (
               <div className="absolute start-3 top-3 z-10 inline-flex items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-semibold text-green-100 shadow-sm backdrop-blur-md">
                 <Shield className="h-3.5 w-3.5 text-green-400" />
                 Accuracy Tracking: {priorAccuracyScore}%
@@ -764,7 +869,16 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={goToPreviousFrame}
+                  disabled={!canGoPrevious}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+                  aria-label={t('animaticPreviousFrame')}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -780,6 +894,18 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
                     <Play className="ms-0.5 h-4 w-4" />
                   )}
                 </button>
+                <button
+                  type="button"
+                  onClick={goToNextFrame}
+                  disabled={!canGoNext}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+                  aria-label={t('animaticNextFrame')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+                <span className="text-[11px] tabular-nums text-white/80">
+                  {t('animaticFrameCounter', { current: segmentIndex + 1, total: segmentCount })}
+                </span>
                 <span className="text-[11px] tabular-nums text-white/80">
                   {formatTime(currentTime)} / {formatTime(totalDuration)}
                 </span>

@@ -3,6 +3,7 @@ import { TruthLedger, TRUTH_LEDGER_TEMPLATE } from '@/components/truth/TruthLedg
 import { StoryPageHeader } from '@/components/story/StoryPageHeader'
 import { StoryQASection } from '@/components/story/StoryQASection'
 import { StoryQuizSection } from '@/components/story/StoryQuizSection'
+import { TopicalPollingGraphs } from '@/components/story/TopicalPollingGraphs'
 import { getStoryById } from '@/lib/stories'
 import { extractAudioSegments } from '@/lib/generate-story'
 import { isMusicOnlyStory } from '@/lib/generate-music'
@@ -218,7 +219,10 @@ export default async function StoryPage({ params }: StoryPageProps) {
             </section>
           ) : null
         ) : (
-          <TruthLedger markdown={markdown} />
+          <>
+            <TruthLedger markdown={markdown} contentType={resolvedContentType} />
+            {dbStory ? <TopicalPollingGraphs storyId={id} title={dbStory.title} /> : null}
+          </>
         )}
         {dbStory && !musicOnly && quizData.quiz ? (
           <StoryQuizSection

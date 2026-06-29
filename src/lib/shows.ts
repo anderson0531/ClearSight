@@ -445,7 +445,7 @@ export const SHOW_NEWS = makeShow({
     'Scene: modern intelligence newsroom. Tone: analytical, dense, energetic — no fluff. Pace: natural with thoughtful pauses.',
   studioImage: HOSTS_IMAGE,
   introImage:
-    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png',
+    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-cover-s5RMxcPoUhAPcPJZYnEwBslZjccXJs.png',
 })
 
 export const SHOW_ACADEMY = makeShow({
@@ -485,7 +485,7 @@ export const SHOW_PIVOT = makeShow({
   introTagline:
     'Welcome to The Pivot, where we turn a fast-changing job market into your next concrete move.',
   contentType: 'Education',
-  categories: ['Career & Job Market'],
+  categories: ['Careers & Work'],
   hosts: [HOST_PRIYA],
   visualStyle:
     'Style: modern, practical workplace editorial illustration — clean infographic feel, professional palette.',
@@ -1121,7 +1121,7 @@ export const SHOW_MATH = makeShow({
   introTagline:
     'Welcome to ClearSight Pattern Matrix — where the hidden blueprint of our universe unfolds one pattern at a time.',
   contentType: 'Education',
-  categories: ['Mathematics'],
+  categories: ['Math & Patterns'],
   hosts: [HOST_AMARA, HOST_MALIK],
   generationProfile: 'sceneFlowLite',
   visualStyle:
@@ -1137,7 +1137,7 @@ export const SHOW_MATH = makeShow({
     'SHOW PHILOSOPHY — "ClearSight Pattern Matrix" (SceneFlow Lite): Mathematics is the ultimate global storytelling framework. Each episode is one installment in a multi-episode series with explicit series_metadata. Visuals are ALWAYS high-fidelity static illustrations for automated Ken Burns camera scripts — never continuous video.\n' +
     'DEPTH OVER DURATION: There is NO fixed time limit — use as many timeline_frames as needed to explain the topic clearly and completely. Never truncate a proof or skip a foundational step to save time.\n' +
     'HOST INTERACTION: Amara surfaces applications, paradox, and accessible intuition; Malik develops formal principles and spatial logic. Alternate hand-offs — one teachable idea per frame.\n' +
-    'AUDIO: Default underscore cue "Mathematical Ambient Pulse" — low metronomic texture ducked for vocal clarity.\n' +
+    'AUDIO: Default underscore cue "Cinematic Post-Rock Pulse" — engaging atmospheric post-rock (instrumental, cinematic) ducked under dialogue after the silent hosts opening video.\n' +
     'MATH FOUNDATION: When Malik presents a formal calculation or proof, put the exact LaTeX in math_foundation_node (not in spoken dialogue).\n' +
     'EPISODE ARC: (1) practical applications → (2) accessible explanation → (3) mathematical principles → (4) summary in body frames → (5) Q&A CTA in episode bookends (not in timeline_frames body).',
   sceneDirectorNotes:
@@ -1155,7 +1155,7 @@ export const SHOW_SCIENCE = makeShow({
   introTagline:
     'Welcome to ClearSight Science, where we unpack how the world works, one clear idea at a time.',
   contentType: 'Education',
-  categories: ['Science & Discovery'],
+  categories: ['Science & Evidence'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: clear, instructional editorial illustration — scientific and experimental motifs, explanatory and vivid.',
@@ -1182,7 +1182,7 @@ export const SHOW_COSMOS = makeShow({
   introTagline:
     'Welcome to ClearSight Cosmos, where we make the universe feel a little closer and a lot clearer.',
   contentType: 'Education',
-  categories: ['Space & Astronomy'],
+  categories: ['Space & Cosmos'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: awe-inspiring, instructional editorial illustration — cosmic and celestial motifs, deep space palette, explanatory.',
@@ -1209,7 +1209,7 @@ export const SHOW_HISTORY = makeShow({
   introTagline:
     'Welcome to ClearSight History, where we turn the past into a story you can actually follow.',
   contentType: 'Education',
-  categories: ['History'],
+  categories: ['History & Context'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: rich, instructional editorial illustration — historical and archival motifs, warm palette, explanatory.',
@@ -1236,7 +1236,7 @@ export const SHOW_MEDICINE = makeShow({
   introTagline:
     'Welcome to ClearSight Medicine, where we make how the body and medicine work clear and approachable.',
   contentType: 'Education',
-  categories: ['Medicine & Health'],
+  categories: ['Health & the Body'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: clean, instructional editorial illustration — anatomical and medical motifs, calm palette, explanatory.',
@@ -1263,7 +1263,7 @@ export const SHOW_TECH = makeShow({
   introTagline:
     'Welcome to ClearSight Tech, where we make how technology works clear, one concept at a time.',
   contentType: 'Education',
-  categories: ['Technology & Coding'],
+  categories: ['Technology & Systems'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: clean, instructional editorial illustration — computing and circuitry motifs, modern palette, explanatory.',
@@ -1290,7 +1290,7 @@ export const SHOW_ECONOMICS = makeShow({
   introTagline:
     'Welcome to ClearSight Economics, where we turn money and markets into ideas you can actually follow.',
   contentType: 'Education',
-  categories: ['Money & Economics'],
+  categories: ['Markets & Money'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: clean, instructional editorial illustration — economic and market motifs, modern palette, explanatory.',
@@ -1344,7 +1344,7 @@ export const SHOW_NATURE = makeShow({
   introTagline:
     'Welcome to ClearSight Nature, where we make the natural world clearer and closer.',
   contentType: 'Education',
-  categories: ['Nature & Environment'],
+  categories: ['Earth & Environment'],
   hosts: [HOST_LENA, HOST_DIEGO],
   visualStyle:
     'Style: lush, instructional editorial illustration — natural-world and ecosystem motifs, organic palette, explanatory.',
@@ -1524,7 +1524,8 @@ export function resolveShow(input: ResolveShowInput): Show {
 
   if (type === 'News') return SHOW_NEWS
 
-  const byCategory = input.category ? SHOW_BY_CATEGORY[input.category.toLowerCase()] : undefined
+  const canonical = input.category ? canonicalizeCategory(input.category) : undefined
+  const byCategory = canonical ? SHOW_BY_CATEGORY[canonical.toLowerCase()] : undefined
   if (byCategory && byCategory.contentType === type) return byCategory
 
   return DEFAULT_SHOW_BY_TYPE[type] ?? SHOW_NEWS
@@ -1576,17 +1577,17 @@ export function studioImageForSpeaker(speaker?: string | null, showId?: string |
 // visualStyle so illustrations match the subject (the Academy show covers many
 // topics, each with its own look).
 const EDUCATION_TOPIC_VISUAL_STYLES: Record<string, string> = {
-  Mathematics:
+  'Math & Patterns':
     'Pattern Matrix motifs: cryptography grids, fractal coastlines, Koch snowflakes, magnifying-scale loops, glowing blueprint diagrams, spatial topology folds.',
-  'Science & Discovery': 'Lean toward lab apparatus and labeled diagrams.',
-  'Space & Astronomy': 'Lean toward photoreal cosmic imagery — planets, telescopes, deep space.',
-  History: 'Period- and place-accurate imagery, localized to the setting.',
-  'Medicine & Health': 'Clinical clarity — anatomy and clinical settings, careful and non-graphic.',
-  'Technology & Coding': 'Modern and schematic — interfaces, circuits, and code motifs.',
-  'Money & Economics': 'Data/infographic feel — charts, currency, and market motifs.',
-  'Career & Job Market': 'Practical workplace imagery — offices, tools of the trade, career paths.',
+  'Science & Evidence': 'Lean toward lab apparatus and labeled diagrams.',
+  'Space & Cosmos': 'Lean toward photoreal cosmic imagery — planets, telescopes, deep space.',
+  'History & Context': 'Period- and place-accurate imagery, localized to the setting.',
+  'Health & the Body': 'Clinical clarity — anatomy and clinical settings, careful and non-graphic.',
+  'Technology & Systems': 'Modern and schematic — interfaces, circuits, and code motifs.',
+  'Markets & Money': 'Data/infographic feel — charts, currency, and market motifs.',
+  'Careers & Work': 'Practical workplace imagery — offices, tools of the trade, career paths.',
   'Arts & Culture': 'Expressive imagery true to the culture depicted.',
-  'Nature & Environment': 'Natural-world imagery — ecosystems, landscapes, and wildlife.',
+  'Earth & Environment': 'Natural-world imagery — ecosystems, landscapes, and wildlife.',
 }
 
 /** Optional topic-specific visual overlay appended to a show's base style. */

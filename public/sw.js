@@ -20,7 +20,7 @@ self.addEventListener('push', (event) => {
   }
 
   const ICON_URL =
-    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/pwa/icon-192-Pq0tN22C6FwxK5ZNKelFn9DuToIho5.png'
+    'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/pwa/icon-192-BCkBHVUeKcuuhx1hOpvzhzDeSGdKVP.png'
   const title = payload.title || 'ClearSight'
   const url = payload.url || '/'
   const options = {

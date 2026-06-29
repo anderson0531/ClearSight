@@ -119,7 +119,7 @@ export function AppHeader({
         <div className="flex items-center justify-between gap-3 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="group flex shrink-0 items-center">
-              <ClearSightLogo className="!h-10 !w-auto transition-transform duration-300 group-hover:scale-[1.02] sm:!h-11 lg:!h-12" />
+              <ClearSightLogo brandClassName="clearsight-brand--header" className="transition-transform duration-300 group-hover:scale-[1.02]" />
             </Link>
           </div>
 

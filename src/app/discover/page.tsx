@@ -30,7 +30,7 @@ import { isSearchSaved, saveSearch } from '@/lib/saved-searches'
 import { mergeUserTopicsWithStories } from '@/lib/user-topics'
 import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
 import { TopStoriesSearch } from '@/components/discovery/TopStoriesSearch'
-import { canGenerateOnDemand } from '@/lib/plans'
+import { canGenerateOnDemand, hasDiscoveryEarlyAccess } from '@/lib/plans'
 import { ensurePushSubscription } from '@/lib/push-client'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
@@ -345,7 +345,16 @@ function DiscoverPageContent() {
         }
 
         if (!cancelled) {
-          setBaseStories(loadedStories ?? filterMockStories(filter))
+          let stories = loadedStories ?? filterMockStories(filter)
+          if (hasDiscoveryEarlyAccess(plan) && filter.geoRegion) {
+            const region = filter.geoRegion
+            stories = [...stories].sort((a, b) => {
+              const aMatch = a.geoRegion === region ? 1 : 0
+              const bMatch = b.geoRegion === region ? 1 : 0
+              return bMatch - aMatch
+            })
+          }
+          setBaseStories(stories)
         }
       } catch {
         if (!cancelled) setBaseStories(filterMockStories(filter))
@@ -362,7 +371,7 @@ function DiscoverPageContent() {
       cancelled = true
       controller.abort()
     }
-  }, [filter, filtersReady])
+  }, [filter, filtersReady, plan])
 
   useEffect(() => {
     if (!filtersReady) return

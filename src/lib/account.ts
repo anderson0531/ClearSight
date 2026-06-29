@@ -30,7 +30,6 @@ export function serializeUser(user: SerializableUser, authenticated: boolean): P
     email: user.email ?? null,
     name: user.name ?? null,
     plan: user.plan,
-    // DB stores credit units; expose human credits (may be fractional) to clients.
     coreTokens: fromUnits(user.coreTokens),
     subscriptionActive: user.subscriptionActive,
     authenticated,

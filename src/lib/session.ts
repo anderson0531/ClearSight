@@ -15,13 +15,10 @@ export function resolveUserIdFromCookie(cookieValue: string | undefined): string
 
 /**
  * Whether unauthenticated visitors fall back to the shared demo account.
- * Enabled in non-production by default; disable with ALLOW_DEMO_USER=false.
+ * Disabled by default — set ALLOW_DEMO_USER=true for local demos only.
  */
 export function demoFallbackEnabled(): boolean {
-  const flag = process.env.ALLOW_DEMO_USER
-  if (flag === 'true') return true
-  if (flag === 'false') return false
-  return process.env.NODE_ENV !== 'production'
+  return process.env.ALLOW_DEMO_USER === 'true'
 }
 
 /**
@@ -45,14 +42,14 @@ export async function ensureDemoUser(userId: string = DEMO_USER_ID) {
     where: { id: userId },
     update:
       userId === DEMO_USER_ID
-        ? { plan: 'CREATOR', subscriptionActive: true }
+        ? { plan: 'PREMIUM_ELITE', subscriptionActive: true }
         : {},
     create: {
       id: userId,
       email: 'demo@clearsight.local',
-      plan: 'CREATOR',
+      plan: 'PREMIUM_ELITE',
       subscriptionActive: true,
-      coreTokens: toUnits(5000),
+      coreTokens: toUnits(50),
     },
     select: {
       id: true,

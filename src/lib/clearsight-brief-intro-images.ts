@@ -26,7 +26,7 @@ export const CLEARSIGHT_BRIEF_INTRO_FRAME_IMAGES: readonly string[] = [
   `${BLOB_BASE}/Gemini_Generated_Image_r759ndr759ndr759%20%281%29.png`,
   `${BLOB_BASE}/Gemini_Generated_Image_r759ndr759ndr759%20%281%29.png`,
   // Line 9 (verified facts): use opening hero frame — avoids I2V hallucinations from abstract still.
-  `${BLOB_BASE}/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png`,
+  `${BLOB_BASE}/clearsight/shows/clearsight-brief-cover-s5RMxcPoUhAPcPJZYnEwBslZjccXJs.png`,
   `${BLOB_BASE}/Gemini_Generated_Image_9pfer69pfer69pfe.png`,
 ]
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import {
   Pause,
   Play,
@@ -13,8 +14,11 @@ import {
   Timer,
   ChevronDown,
   ChevronUp,
+  X,
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { useUser } from '@/components/providers/UserProvider'
+import { useScreenOffAudioGate } from '@/hooks/useScreenOffAudioGate'
 import { BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole } from '@/lib/music-assets'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import { useMediaSession } from '@/hooks/useMediaSession'
@@ -44,6 +48,7 @@ function getTrackSegments(track: AudioTrack | null): AudioSegment[] {
 export function AudioPlayer() {
   useMediaSession()
   const t = useTranslations()
+  const { plan } = useUser()
   const audioRef = useRef<HTMLAudioElement>(null)
   const musicRef = useRef<HTMLAudioElement>(null)
   const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -79,6 +84,12 @@ export function AudioPlayer() {
   const pause = useAudioQueue((s) => s.pause)
   const resume = useAudioQueue((s) => s.resume)
   const setCurrentSegmentIndex = useAudioQueue((s) => s.setCurrentSegmentIndex)
+
+  const { showUpgradeHint, dismissUpgradeHint } = useScreenOffAudioGate({
+    plan,
+    isPlaying,
+    pause,
+  })
 
   useEffect(() => {
     try {
@@ -331,6 +342,26 @@ export function AudioPlayer() {
 
   return (
     <footer className="audio-player-bar glass-header fixed bottom-0 start-0 end-0 z-50 safe-area-bottom">
+      {showUpgradeHint ? (
+        <div className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 sm:px-4">
+          <div className="mx-auto flex max-w-7xl items-start gap-2">
+            <p className="min-w-0 flex-1 text-xs leading-relaxed text-[var(--muted-strong)]">
+              {t('screenOffAudioPremiumRequired')}{' '}
+              <Link href="/premium" className="font-semibold text-[var(--accent)] hover:underline">
+                {t('upgradeCta')}
+              </Link>
+            </p>
+            <button
+              type="button"
+              onClick={dismissUpgradeHint}
+              className="shrink-0 rounded p-1 text-[var(--muted)] hover:text-[var(--foreground)]"
+              aria-label={t('screenOffAudioDismiss')}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
       <audio ref={musicRef} preload="auto" aria-hidden className="hidden" />
       <audio
         ref={audioRef}

@@ -180,7 +180,7 @@ function eduFramework(label: string, focus: string, arc: string): AnalysisFramew
 }
 
 const EDUCATION_TOPIC_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramework>> = {
-  Mathematics: {
+  'Math & Patterns': {
     label: 'Mathematics explainer (Pattern Matrix)',
     briefingDirectives: [
       'Open with 2–3 concrete real-world applications of the math — engineering, nature, finance, cryptography, or daily life',
@@ -208,28 +208,28 @@ const EDUCATION_TOPIC_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramew
       'No filler reactions or hype — clarity over excitement',
     ],
   },
-  'Science & Discovery': eduFramework(
+  'Science & Evidence': eduFramework(
     'Science explainer',
     'a scientific concept or discovery',
     'Structure: (1) the phenomenon → (2) the mechanism → (3) the evidence/experiment → (4) why it matters → (5) recap'
   ),
-  'Space & Astronomy': eduFramework(
+  'Space & Cosmos': eduFramework(
     'Space & astronomy explainer',
     'an astronomical idea',
     'Structure: (1) the cosmic question → (2) what we observe → (3) the explanation → (4) open frontiers → (5) recap'
   ),
-  History: eduFramework(
+  'History & Context': eduFramework(
     'History explainer',
     'a historical event or era',
     'Structure: (1) the moment that matters → (2) the context that led to it → (3) what happened → (4) consequences and legacy → (5) recap'
   ),
-  'Medicine & Health': eduFramework(
-    'Medicine & health explainer',
+  'Health & the Body': eduFramework(
+    'Health & medicine explainer',
     'a medical or health topic',
     'Structure: (1) the condition/process → (2) how the body is involved → (3) what the evidence shows → (4) practical implications → (5) recap'
   ),
-  'Money & Economics': eduFramework(
-    'Money & economics explainer',
+  'Markets & Money': eduFramework(
+    'Markets & money explainer',
     'an economic concept',
     'Structure: (1) the everyday question → (2) the underlying mechanism → (3) a concrete example → (4) the bigger-picture effects → (5) recap'
   ),
@@ -238,18 +238,18 @@ const EDUCATION_TOPIC_FRAMEWORKS: Partial<Record<ContentCategory, AnalysisFramew
     'an artistic movement, work, or cultural idea',
     'Structure: (1) the hook → (2) context and influences → (3) what makes it distinctive → (4) lasting impact → (5) recap'
   ),
-  'Nature & Environment': eduFramework(
-    'Nature & environment explainer',
+  'Earth & Environment': eduFramework(
+    'Earth & environment explainer',
     'a natural-world or environmental topic',
     'Structure: (1) the system → (2) how it works → (3) what is changing → (4) why it matters → (5) recap'
   ),
-  'Technology & Coding': eduFramework(
-    'Technology & coding explainer',
-    'a technology or programming concept',
+  'Technology & Systems': eduFramework(
+    'Technology & systems explainer',
+    'a technology or systems concept',
     'Structure: (1) the problem it solves → (2) how it works under the hood → (3) a concrete example → (4) where it is used → (5) recap'
   ),
-  'Career & Job Market': {
-    label: 'Career & job-market guidance',
+  'Careers & Work': {
+    label: 'Careers & work guidance',
     briefingDirectives: [
       'Identify the concrete labor-market shift and the data behind it',
       'Explain the forces driving the change (technology, demographics, policy, economics)',

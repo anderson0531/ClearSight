@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { verifyWhopSignature, parseWhopEvent, WHOP_EVENTS } from '@/lib/whop'
 import { provisionSubscriptionCycle, addCoreTokens } from '@/lib/credits'
 import { toUnits } from '@/lib/credit-units'
-import { mapWhopPlanId, PLAN_MONTHLY_CREDITS } from '@/lib/plans'
+import { mapWhopPlanId } from '@/lib/plans'
 
 export async function POST(request: Request) {
   const rawBody = await request.text()
@@ -45,14 +45,12 @@ export async function POST(request: Request) {
       const mappedPlan = mapWhopPlanId(event.data.plan_id)
       if (mappedPlan) {
         await prisma.user.update({ where: { id: user.id }, data: { plan: mappedPlan } })
+        await provisionSubscriptionCycle(user.id, mappedPlan, { resetBalances: true })
       }
-      const grant = toUnits(mappedPlan ? PLAN_MONTHLY_CREDITS[mappedPlan] : 1)
-      await provisionSubscriptionCycle(user.id, grant)
       break
     }
 
     case WHOP_EVENTS.MEMBERSHIP_DEACTIVATED:
-      // Begin the 60-day delinquency retention window before purge.
       await prisma.user.update({
         where: { id: user.id },
         data: { subscriptionActive: false, delinquentSince: new Date() },

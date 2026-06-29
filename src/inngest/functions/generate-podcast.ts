@@ -10,13 +10,26 @@ import {
   compileBriefAndScript,
   ensureEpisodeThumbnail,
   generateAndStoreEpisodeThumbnail,
+  isSceneFlowLiteBrief,
   resynthesizeEpisodeAudioFromBrief,
   synthesizeAndFinalize,
   type CompiledBrief,
   type GenerateStoryInput,
 } from '@/lib/generate-story'
+import {
+  buildEpisodeFramePlan,
+  buildGroupImageCache,
+  finalizeEpisodeFramePipeline,
+  IMAGEN_FRAME_DELAY_MS,
+  mergeEpisodeFrameSegment,
+  processEpisodeFrame,
+  readEpisodeBodySegments,
+  resolveShowForBrief,
+  type EpisodeFramePlan,
+} from '@/lib/episode-frame-pipeline'
 import { sendPushToUser } from '@/lib/push'
 import { addCoreTokens } from '@/lib/credits'
+import { maxEpisodeRuntimeMinutes } from '@/lib/plans'
 import type { GenerationStage } from '@/lib/generation-progress'
 import { assertGenerationActive } from '@/lib/generation-cancel'
 
@@ -58,6 +71,7 @@ export const generatePodcast = inngest.createFunction(
     name: 'Generate on-demand podcast',
     retries: 2,
     concurrency: { limit: 3 },
+    priority: { run: 'event.data.priorityJit == true ? 600 : 0' },
     triggers: [{ event: PODCAST_GENERATION_REQUESTED }],
     onFailure: async ({ event }) => {
       const { generationId, userId } =
@@ -110,10 +124,13 @@ export const generatePodcast = inngest.createFunction(
 
     const job = await step.run('start', async () => {
       await assertGenerationActive(generationId)
-      const generation = await prisma.generation.findUnique({
-        where: { id: generationId },
-        select: { params: true, includeIllustrations: true, status: true, storyId: true },
-      })
+      const [generation, user] = await Promise.all([
+        prisma.generation.findUnique({
+          where: { id: generationId },
+          select: { params: true, includeIllustrations: true, status: true, storyId: true },
+        }),
+        prisma.user.findUnique({ where: { id: userId }, select: { plan: true } }),
+      ])
       if (!generation) {
         throw new NonRetriableError(`Generation ${generationId} not found`)
       }
@@ -125,6 +142,7 @@ export const generatePodcast = inngest.createFunction(
         params: generation.params as StoredParams,
         includeIllustrations: generation.includeIllustrations,
         storyId: generation.storyId,
+        maxRuntimeMinutes: maxEpisodeRuntimeMinutes(user?.plan ?? 'FREE'),
       }
     })
 
@@ -132,12 +150,14 @@ export const generatePodcast = inngest.createFunction(
       ...job.params,
       userId,
       generationId,
+      maxRuntimeMinutes: job.maxRuntimeMinutes,
     }
 
     const audioOnly = Boolean(job.params.audioOnly && job.storyId)
     let storyId = job.storyId ?? ''
     let finalizedAudioUrl: string | null = null
     let brief: CompiledBrief | null = null
+    let illustrationsPending = false
 
     if (audioOnly && job.storyId) {
       storyId = job.storyId
@@ -164,16 +184,23 @@ export const generatePodcast = inngest.createFunction(
         return compiled
       })) as unknown as CompiledBrief
 
-      const [finalized, thumbnailResult] = await Promise.all([
-        step.run('synthesize-audio', async () => {
+      if (isSceneFlowLiteBrief(brief)) {
+        console.info('[inngest] sceneFlowLite per-frame pipeline', {
+          generationId,
+          storyId: brief.storyId,
+          showId: brief.context.showMeta.showId,
+        })
+
+        const framePlan = (await step.run('prepare-frame-plan', async () => {
           await assertGenerationActive(generationId)
-          await markStage('audio')
-          const story = await synthesizeAndFinalize(brief!, async (progress) => {
-            await markStage(mapCompileStage(progress.stage))
-          })
-          return { storyId: story.id, audioUrl: story.audioUrl }
-        }),
-        step.run('generate-thumbnail', async () => {
+          const plan = buildEpisodeFramePlan(brief!)
+          if (!plan) {
+            throw new Error('Episode frame plan could not be built from the compiled script.')
+          }
+          return plan
+        })) as unknown as EpisodeFramePlan
+
+        const thumbnailStep = step.run('generate-thumbnail', async () => {
           await assertGenerationActive(generationId)
           await markStage('thumbnail')
           try {
@@ -183,17 +210,110 @@ export const generatePodcast = inngest.createFunction(
             console.error('[inngest] episode thumbnail generation failed', err)
             return { storyId: brief!.storyId, thumbnailUrl: null }
           }
-        }),
-      ])
+        })
 
-      await step.run('ensure-thumbnail', async () => {
-        await assertGenerationActive(generationId)
-        const url = await ensureEpisodeThumbnail(brief!.storyId)
-        return { thumbnailUrl: url }
-      })
+        await markStage('audio')
+        const show = resolveShowForBrief(brief)
 
-      storyId = finalized.storyId ?? brief!.storyId
-      finalizedAudioUrl = finalized.audioUrl
+        for (let frameIndex = 0; frameIndex < framePlan.lines.length; frameIndex++) {
+          await step.run(`frame-${frameIndex}`, async () => {
+            await assertGenerationActive(generationId)
+            if (frameIndex >= Math.floor(framePlan.lines.length / 2)) {
+              await markStage('illustrations')
+            }
+
+            const bodySegments = await readEpisodeBodySegments(framePlan.storyId)
+            const existing = bodySegments[frameIndex] ?? null
+            const groupImageCache = buildGroupImageCache(bodySegments)
+
+            const segment = await processEpisodeFrame(
+              framePlan,
+              frameIndex,
+              {
+                show,
+                groupImageCache,
+                subjectBible: brief!.context.visualSubjectBible?.subjects,
+              },
+              existing
+            )
+            if (!segment) {
+              console.error('[inngest] frame pipeline produced no segment', {
+                storyId: framePlan.storyId,
+                frameIndex,
+              })
+              return { frameIndex, ok: false }
+            }
+
+            await mergeEpisodeFrameSegment(
+              framePlan.storyId,
+              frameIndex,
+              segment,
+              framePlan.lines.length
+            )
+            return { frameIndex, ok: true, hasImage: Boolean(segment.imageUrl?.trim()) }
+          })
+
+          if (frameIndex < framePlan.lines.length - 1) {
+            await step.sleep(`frame-${frameIndex}-imagen-pace`, IMAGEN_FRAME_DELAY_MS)
+          }
+        }
+
+        await thumbnailStep
+
+        await step.run('ensure-thumbnail', async () => {
+          await assertGenerationActive(generationId)
+          const url = await ensureEpisodeThumbnail(brief!.storyId)
+          return { thumbnailUrl: url }
+        })
+
+        const finalized = await step.run('finalize-episode', async () => {
+          await assertGenerationActive(generationId)
+          await markStage('saving')
+          const bodySegments = await readEpisodeBodySegments(brief!.storyId)
+          const result = await finalizeEpisodeFramePipeline(brief!, bodySegments)
+          return {
+            storyId: brief!.storyId,
+            audioUrl: result.url,
+            framesIncomplete: result.framesIncomplete,
+          }
+        })
+
+        storyId = finalized.storyId ?? brief.storyId
+        finalizedAudioUrl = finalized.audioUrl
+        illustrationsPending = Boolean(finalized.framesIncomplete)
+      } else {
+        const [finalized, _thumbnailResult] = await Promise.all([
+          step.run('synthesize-audio', async () => {
+            await assertGenerationActive(generationId)
+            await markStage('audio')
+            const story = await synthesizeAndFinalize(brief!, async (progress) => {
+              await markStage(mapCompileStage(progress.stage))
+            })
+            return { storyId: story.id, audioUrl: story.audioUrl }
+          }),
+          step.run('generate-thumbnail', async () => {
+            await assertGenerationActive(generationId)
+            await markStage('thumbnail')
+            try {
+              const url = await generateAndStoreEpisodeThumbnail(brief!)
+              return { storyId: brief!.storyId, thumbnailUrl: url }
+            } catch (err) {
+              console.error('[inngest] episode thumbnail generation failed', err)
+              return { storyId: brief!.storyId, thumbnailUrl: null }
+            }
+          }),
+        ])
+
+        await step.run('ensure-thumbnail', async () => {
+          await assertGenerationActive(generationId)
+          const url = await ensureEpisodeThumbnail(brief!.storyId)
+          return { thumbnailUrl: url }
+        })
+
+        storyId = finalized.storyId ?? brief!.storyId
+        finalizedAudioUrl = finalized.audioUrl
+        illustrationsPending = job.includeIllustrations
+      }
     }
 
     const completed = Boolean(finalizedAudioUrl)
@@ -201,15 +321,16 @@ export const generatePodcast = inngest.createFunction(
     await step.run('complete', async () => {
       await assertGenerationActive(generationId)
       const now = new Date()
+      const illustrationsInProgress = completed && illustrationsPending
       return prisma.generation.update({
         where: { id: generationId },
         data: completed
           ? {
               status: 'COMPLETED',
-              stage: job.includeIllustrations ? 'illustrations' : 'complete',
+              stage: illustrationsInProgress ? 'illustrations' : 'complete',
               storyId,
               audioCompletedAt: now,
-              ...(job.includeIllustrations ? {} : { completedAt: now }),
+              ...(illustrationsInProgress ? {} : { completedAt: now }),
             }
           : {
               status: 'FAILED',
@@ -233,7 +354,7 @@ export const generatePodcast = inngest.createFunction(
         return { notified: true }
       })
 
-      if (job.includeIllustrations) {
+      if (illustrationsPending) {
         await step.run('enqueue-illustrations', async () => {
           await assertGenerationActive(generationId)
           await inngest.send({
@@ -241,6 +362,17 @@ export const generatePodcast = inngest.createFunction(
             data: { generationId, userId, storyId },
           })
           return { enqueued: true }
+        })
+      } else if (job.includeIllustrations) {
+        await step.run('notify-illustrations', async () => {
+          await assertGenerationActive(generationId)
+          await sendPushToUser(userId, {
+            title: 'Illustrations are ready',
+            body: input.title,
+            url: `/story/${storyId}`,
+            tag: `${generationId}-illustrations`,
+          })
+          return { notified: true }
         })
       }
     }

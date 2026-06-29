@@ -53,11 +53,21 @@ const BED_SPECS = [
 const PATTERN_MATRIX_INTRO_ROCK_BED_SPEC = {
   pathname: 'clearsight/music/bed-pattern-matrix-intro-rock.wav',
   prompt:
-    'Anthemic rock channel intro underscore, 30 seconds, electric guitar and drums, confident broadcast energy, driving rhythm, seamless loop-friendly, instrumental only, no vocals',
+    'Cinematic post-rock channel intro underscore, 30 seconds, atmospheric electric guitars, subtle drums, expansive reverb, emotional build, instrumental only, no vocals',
   negativePrompt: 'vocals, lyrics, speech, singing, narration, dissonant, chaotic',
   seed: 42104,
   targetSeconds: 30,
   fallbackDuration: 30,
+}
+
+const PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC = {
+  pathname: 'clearsight/music/bed-pattern-matrix-episode-postrock.wav',
+  prompt:
+    'Engaging cinematic post-rock instrumental underscore, 60 seconds, atmospheric guitars, subtle percussion, wide reverb, emotional documentary science feel, seamless loop-friendly, instrumental only, no vocals',
+  negativePrompt: 'vocals, lyrics, speech, singing, narration, metal, harsh, chaotic',
+  seed: 42106,
+  targetSeconds: 60,
+  fallbackDuration: 60,
 }
 
 const CLEARSIGHT_BRIEF_INTRO_ROCK_BED_SPEC = {
@@ -273,7 +283,20 @@ function readExistingClearsightBriefIntroRockBed() {
   return 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-content.wav'
 }
 
-function writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed) {
+function readExistingPatternMatrixEpisodeBed() {
+  const text = readFileSync(MUSIC_ASSETS_PATH, 'utf8')
+  const quoted = text.match(/export const PATTERN_MATRIX_EPISODE_BED = ("[^"]+")/)
+  if (quoted) return JSON.parse(quoted[1])
+  return readExistingPatternMatrixIntroRockBed()
+}
+
+function writeMusicAssetsFile(
+  assets,
+  backgroundMusic,
+  patternMatrixIntroRockBed,
+  clearsightBriefIntroRockBed,
+  patternMatrixEpisodeBed
+) {
   const content = `import type { AudioSegment, AudioSegmentRole, MusicMood } from '@/types/story'
 
 /**
@@ -333,8 +356,17 @@ export const MUSIC_MOODS: MusicMood[] = [
   'uplifting',
 ]
 
-/** Pattern Matrix underscore bed (alias until a dedicated track is generated). */
+/** Pattern Matrix underscore bed (legacy alias). */
 export const PATTERN_MATRIX_BED = BACKGROUND_MUSIC.content
+
+/** Cinematic post-rock bed for Pattern Matrix episodes (continuous underscore). Regenerate: npm run generate:music -- --pattern-matrix-episode-rock-only */
+export const PATTERN_MATRIX_EPISODE_BED = ${JSON.stringify(patternMatrixEpisodeBed)}
+
+/** Full-volume post-rock on the silent hosts opening clip (frame 0). */
+export const PATTERN_MATRIX_OPENING_MUSIC_VOLUME = 1
+
+/** Ducked post-rock under dialogue from frame 1 onward. */
+export const PATTERN_MATRIX_EPISODE_MUSIC_VOLUME = 0.2
 
 /** Rock-themed underscore for the Pattern Matrix channel intro manifesto. */
 export const PATTERN_MATRIX_INTRO_ROCK_BED = ${JSON.stringify(patternMatrixIntroRockBed)}
@@ -414,6 +446,7 @@ async function main() {
 
   const bedsOnly = process.argv.includes('--beds-only')
   const rockOnly = process.argv.includes('--pattern-matrix-rock-only')
+  const episodeRockOnly = process.argv.includes('--pattern-matrix-episode-rock-only')
   const briefRockOnly = process.argv.includes('--clearsight-brief-rock-only')
   const assets = {
     intro: { url: 'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/theme-intro.wav', durationSeconds: 5 },
@@ -428,7 +461,34 @@ async function main() {
   }
 
   let patternMatrixIntroRockBed = readExistingPatternMatrixIntroRockBed()
+  let patternMatrixEpisodeBed = readExistingPatternMatrixEpisodeBed()
   let clearsightBriefIntroRockBed = readExistingClearsightBriefIntroRockBed()
+
+  if (episodeRockOnly) {
+    console.log('[generate-music] Generating Pattern Matrix episode post-rock bed...')
+    const buffer = await generateMusic(PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC.prompt, {
+      negativePrompt: PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC.negativePrompt,
+      seed: PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC.seed,
+    })
+    const trimmed = trimWavSeconds(buffer, PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC.targetSeconds)
+    const blob = await put(PATTERN_MATRIX_EPISODE_POSTROCK_BED_SPEC.pathname, trimmed, {
+      access: 'public',
+      contentType: 'audio/wav',
+      addRandomSuffix: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    })
+    patternMatrixEpisodeBed = blob.url
+    console.log(`[generate-music] pattern-matrix-episode-postrock: ${blob.url}`)
+    writeMusicAssetsFile(
+      assets,
+      backgroundMusic,
+      patternMatrixIntroRockBed,
+      clearsightBriefIntroRockBed,
+      patternMatrixEpisodeBed
+    )
+    console.log('[generate-music] Done.')
+    return
+  }
 
   if (briefRockOnly) {
     console.log('[generate-music] Generating ClearSight Brief intro rock bed...')
@@ -445,7 +505,7 @@ async function main() {
     })
     clearsightBriefIntroRockBed = blob.url
     console.log(`[generate-music] clearsight-brief-intro-rock: ${blob.url}`)
-    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
+    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed, patternMatrixEpisodeBed)
     console.log('[generate-music] Done.')
     return
   }
@@ -465,7 +525,7 @@ async function main() {
     })
     patternMatrixIntroRockBed = blob.url
     console.log(`[generate-music] pattern-matrix-intro-rock: ${blob.url}`)
-    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
+    writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed, patternMatrixEpisodeBed)
     console.log('[generate-music] Done.')
     return
   }
@@ -545,7 +605,7 @@ async function main() {
     console.log(`[generate-music] clearsight-brief-intro-rock: ${blob.url}`)
   }
 
-  writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed)
+  writeMusicAssetsFile(assets, backgroundMusic, patternMatrixIntroRockBed, clearsightBriefIntroRockBed, patternMatrixEpisodeBed)
   console.log('[generate-music] Done.')
 }
 

@@ -42,18 +42,24 @@ describe('on-demand-channels', () => {
     assert.ok(newsEntries.every((entry) => entry.showId === 'clearsight-brief'))
   })
 
-  it('looks up Education Mathematics as ClearSight Pattern Matrix', () => {
-    const entry = getOnDemandChannel('Education', 'Mathematics')
+  it('looks up Education Math & Patterns as ClearSight Pattern Matrix', () => {
+    const entry = getOnDemandChannel('Education', 'Math & Patterns')
     assert.ok(entry)
     assert.equal(entry.showId, 'clearsight-math')
     assert.equal(entry.showName, 'ClearSight Pattern Matrix')
+  })
+
+  it('resolves legacy Mathematics category via canonical map', () => {
+    const entry = getOnDemandChannel('Education', 'Mathematics')
+    assert.ok(entry)
+    assert.equal(entry.showId, 'clearsight-math')
   })
 
   it('sanitizes suggested channels against the registry', () => {
     const sanitized = sanitizeSuggestedChannels([
       {
         contentType: 'Education',
-        category: 'Mathematics',
+        category: 'Math & Patterns',
         reason: 'This is a math explainer.',
       },
       {

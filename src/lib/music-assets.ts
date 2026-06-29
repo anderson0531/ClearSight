@@ -57,8 +57,18 @@ export const MUSIC_MOODS: MusicMood[] = [
   'uplifting',
 ]
 
-/** Pattern Matrix underscore bed (alias until a dedicated track is generated). */
+/** Pattern Matrix underscore bed (legacy alias). */
 export const PATTERN_MATRIX_BED = BACKGROUND_MUSIC.content
+
+/** Cinematic post-rock bed for Pattern Matrix episodes (continuous underscore). Regenerate: npm run generate:music -- --pattern-matrix-episode-rock-only */
+export const PATTERN_MATRIX_EPISODE_BED =
+  "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-pattern-matrix-intro-rock.wav"
+
+/** Full-volume post-rock on the silent hosts opening clip (frame 0). */
+export const PATTERN_MATRIX_OPENING_MUSIC_VOLUME = 1
+
+/** Ducked post-rock under dialogue from frame 1 onward. */
+export const PATTERN_MATRIX_EPISODE_MUSIC_VOLUME = 0.2
 
 /** Rock-themed underscore for the Pattern Matrix channel intro manifesto. */
 export const PATTERN_MATRIX_INTRO_ROCK_BED = "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-pattern-matrix-intro-rock.wav"

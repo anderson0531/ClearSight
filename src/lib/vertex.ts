@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { GoogleAuth, type JWTInput } from 'google-auth-library'
 import {
   fetchWithImagenRetry,
+  fetchWithVertexRetry,
 } from '@/lib/vertex-retry'
 
 const PROJECT =
@@ -28,6 +29,8 @@ export interface GroundedGenerationResult {
   text: string | null
   sources: GroundedSource[]
   finishReason?: string
+  /** Set when generateContent fails after retries (e.g. 429 quota). */
+  httpStatus?: number
 }
 
 let authClient: GoogleAuth | null = null
@@ -197,19 +200,23 @@ export async function vertexGenerateGrounded(
     body.tools = [{ googleSearch: {} }]
   }
 
+  const requestInit: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  }
+
   try {
-    const res = await fetch(vertexEndpoint(options?.model ?? TEXT_MODEL), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
+    const res = await fetchWithVertexRetry(fetch, vertexEndpoint(options?.model ?? TEXT_MODEL), requestInit, {
+      label: 'generateContent',
     })
 
     if (!res.ok) {
       console.error('[vertex] generateContent failed:', res.status, await res.text().catch(() => ''))
-      return { text: null, sources: [] }
+      return { text: null, sources: [], httpStatus: res.status }
     }
 
     const data = (await res.json()) as {

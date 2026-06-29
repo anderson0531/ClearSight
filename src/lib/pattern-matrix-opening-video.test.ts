@@ -5,7 +5,7 @@ import {
   PATTERN_MATRIX_OPENING_VIDEO_URL,
   patternMatrixOpeningVisuals,
 } from '@/lib/pattern-matrix-opening-video'
-import { PATTERN_MATRIX_SHOW_ID } from '@/lib/scene-flow-lite'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 
 describe('pattern-matrix-opening-video', () => {
   it('returns silent hosts video for hook and intro bookends', () => {

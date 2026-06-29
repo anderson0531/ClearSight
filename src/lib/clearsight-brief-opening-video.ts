@@ -1,11 +1,11 @@
-import { CLEARSIGHT_BRIEF_SHOW_ID } from '@/lib/channel-intro-constants'
+import { CLEARSIGHT_BRIEF_SHOW_ID, OPENING_HOSTS_VIDEO_PLAYBACK_RATE } from '@/lib/channel-intro-constants'
 import { SHOW_COVER_ART } from '@/lib/host-art'
 import type { AudioSegment, AudioSegmentRole, VisualMedium } from '@/types/story'
 
 /** Channel hero cover — first frame for the welcoming hosts opening clip. */
 export const CLEARSIGHT_BRIEF_OPENING_FRAME_URL =
   SHOW_COVER_ART[CLEARSIGHT_BRIEF_SHOW_ID] ??
-  'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/Gemini_Generated_Image_wdqh2gwdqh2gwdqh.png'
+  'https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/shows/clearsight-brief-cover-s5RMxcPoUhAPcPJZYnEwBslZjccXJs.png'
 
 /** Motion prompt for Veo image-to-video (silent hosts welcome). */
 export const CLEARSIGHT_BRIEF_OPENING_VIDEO_PROMPT =
@@ -55,5 +55,6 @@ export function buildClearsightBriefOpeningFrame(durationSeconds: number): Audio
     videoUrl: CLEARSIGHT_BRIEF_OPENING_VIDEO_URL,
     imageUrl: CLEARSIGHT_BRIEF_OPENING_FRAME_URL,
     videoPrompt: CLEARSIGHT_BRIEF_OPENING_VIDEO_PROMPT,
+    videoPlaybackRate: OPENING_HOSTS_VIDEO_PLAYBACK_RATE,
   }
 }

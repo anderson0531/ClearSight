@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Heart, Loader2, Maximize, Minimize, Pause, Play } from 'lucide-react'
+import { Heart, Loader2, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from 'lucide-react'
 import { useTranslations, useI18n } from '@/i18n/I18nProvider'
 import { useTranslatedTexts } from '@/lib/use-translated'
 import type { Show } from '@/lib/shows'
@@ -47,6 +47,8 @@ export function ChannelHeader({ show }: { show: Show }) {
 
   const introRef = useRef<HTMLAudioElement | null>(null)
   const [introPlaying, setIntroPlaying] = useState(false)
+  const [muted, setMuted] = useState(true)
+  const [volume, setVolume] = useState(1)
   const pendingPlayRef = useRef(false)
 
   const pauseGlobalAudio = useAudioQueue((s) => s.pause)
@@ -62,12 +64,21 @@ export function ChannelHeader({ show }: { show: Show }) {
     const el = introRef.current
     if (!el) return
     pauseGlobalAudio()
+    el.muted = muted
+    el.volume = volume
     setIntroPlaying(true)
     await ensureFramesReady()
     el.src = url
     el.load()
     void el.play().catch(() => setIntroPlaying(false))
   }
+
+  useEffect(() => {
+    const el = introRef.current
+    if (!el) return
+    el.muted = muted
+    el.volume = volume
+  }, [muted, volume, introUrl])
 
   useEffect(() => {
     if (introUrl && pendingPlayRef.current && state === 'ready') {
@@ -166,6 +177,40 @@ export function ChannelHeader({ show }: { show: Show }) {
                 {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
               </button>
             ) : null}
+            {canShowIntro ? (
+              <div className="channel-hero-audio-controls">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (muted) {
+                      setVolume((current) => (current > 0 ? current : 1))
+                      setMuted(false)
+                      return
+                    }
+                    setMuted(true)
+                  }}
+                  className="channel-hero-fullscreen-btn"
+                  aria-label={muted ? t('channelIntroUnmute') : t('channelIntroMute')}
+                  aria-pressed={!muted}
+                >
+                  {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={muted ? 0 : volume}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    setVolume(next)
+                    setMuted(next === 0)
+                  }}
+                  aria-label={t('animaticVolume')}
+                  className="channel-hero-volume"
+                />
+              </div>
+            ) : null}
           </div>
           {state === 'preparing' ? (
             <ChannelIntroProgressIndicator
@@ -187,6 +232,7 @@ export function ChannelHeader({ show }: { show: Show }) {
           ref={introRef}
           src={introUrl ?? undefined}
           preload="metadata"
+          muted={muted}
           onPlay={() => setIntroPlaying(true)}
           onPause={() => setIntroPlaying(false)}
           onEnded={() => {

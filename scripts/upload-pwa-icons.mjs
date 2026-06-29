@@ -9,7 +9,7 @@
  *
  * Requires BLOB_READ_WRITE_TOKEN and GOOGLE_APPLICATION_CREDENTIALS_JSON in .env.
  */
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, writeFileSync as write } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, writeFileSync as write, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
@@ -18,20 +18,26 @@ import { put } from '@vercel/blob'
 
 const ROOT = process.cwd()
 const BRAND_ASSETS_PATH = join(ROOT, 'src/lib/brand-assets.ts')
+const PUBLIC_BRAND_DIR = join(ROOT, 'public/brand')
+const PUBLIC_LOGO_PATH = join(PUBLIC_BRAND_DIR, 'clearsight-app-icon.png')
+const SW_PATH = join(ROOT, 'public/sw.js')
 
 const PROJECT = process.env.VERTEX_PROJECT_ID ?? process.env.GCP_PROJECT_ID ?? 'sceneflowai-2d3e6'
 const IMAGE_LOCATION = process.env.VERTEX_IMAGE_LOCATION ?? 'us-central1'
 const IMAGE_MODEL = process.env.VERTEX_IMAGE_MODEL ?? 'imagen-4.0-generate-001'
 
 const ICON_PROMPT =
-  'Square mobile app icon for ClearSight, a premium verified news and podcast app. ' +
-  'A stylized clear eye or vision lens symbol, deep slate and indigo palette (#0c0e14 background, accent #5b6abf), ' +
-  'minimal modern flat design, centered symbol fills about 70% of the frame, crisp edges, no text, no wordmark, no watermarks.'
+  'An app icon logo for a tech platform named ClearSight. A minimalist geometric emblem showing a stylized camera lens aperture morphing into a sharp, clean letter C. ' +
+  'The design features hyper-precise vector lines on a solid matte charcoal background (#1a1d24). ' +
+  'The left side of the icon has subtle, fragmented digital artifacts that smoothly resolve into a singular, glowing data-cyan and amber focal point on the right. ' +
+  'Flat vector design, elegant simplicity, premium mobile application icon style, centered symbol fills about 72% of the frame, 8k, isolated background, no text, no wordmark, no watermarks.'
 
 const MASKABLE_PROMPT =
-  'Square maskable mobile app icon for ClearSight news podcast app. ' +
-  'Stylized clear eye or vision lens symbol centered in the middle 55% safe zone with generous solid indigo-slate padding ' +
-  'on all sides for Android adaptive icons. Deep slate background #0c0e14, accent #5b6abf. No text, no wordmark, premium minimal.'
+  'Square maskable mobile app icon for ClearSight tech platform. ' +
+  'Minimalist geometric emblem: stylized camera lens aperture morphing into a sharp letter C, hyper-precise vector lines on solid matte charcoal (#1a1d24). ' +
+  'Left side has subtle fragmented digital artifacts resolving into a glowing data-cyan and amber focal point on the right. ' +
+  'Symbol centered in the middle 55% safe zone with generous solid charcoal padding on all sides for Android adaptive icons. ' +
+  'Flat vector, premium minimal, no text, no wordmark, no watermarks.'
 
 function loadDotEnv() {
   const envPath = join(ROOT, '.env')
@@ -160,9 +166,8 @@ function resizePng(buffer, width, height) {
 }
 
 function writeBrandAssets({ logoUrl, icon192, icon512, iconMaskable512 }) {
-  const content = `/** Official ClearSight logo (icon + wordmark) hosted on Vercel Blob. */
-export const CLEARSIGHT_LOGO_URL =
-  '${logoUrl}'
+  const content = `/** Official ClearSight app icon logo (square, no wordmark). */
+export const CLEARSIGHT_LOGO_URL = '${logoUrl}'
 
 /** Podcast studio image with hosts and ClearSight logo on the wall. */
 export const CLEARSIGHT_HOSTS_STUDIO_URL =
@@ -177,16 +182,36 @@ export const CLEARSIGHT_APP_ICON_MASKABLE_512_URL = '${iconMaskable512}'
   console.log(`[upload-pwa-icons] Wrote ${BRAND_ASSETS_PATH}`)
 }
 
+function writeServiceWorkerIconUrl(icon192) {
+  if (!existsSync(SW_PATH)) return
+  const sw = readFileSync(SW_PATH, 'utf8')
+  const updated = sw.replace(
+    /const ICON_URL =\s*\n?\s*'[^']+'/,
+    `const ICON_URL =\n    '${icon192}'`
+  )
+  if (updated !== sw) {
+    writeFileSync(SW_PATH, updated, 'utf8')
+    console.log(`[upload-pwa-icons] Updated ${SW_PATH}`)
+  }
+}
+
+function saveLocalLogo(buffer) {
+  mkdirSync(PUBLIC_BRAND_DIR, { recursive: true })
+  writeFileSync(PUBLIC_LOGO_PATH, buffer)
+  console.log(`[upload-pwa-icons] Saved ${PUBLIC_LOGO_PATH}`)
+}
+
 async function main() {
   loadDotEnv()
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error('BLOB_READ_WRITE_TOKEN is required in .env')
   }
 
-  const existingLogo = '/brand/clearsight-logo-transparent.png'
+  const existingLogo = '/brand/clearsight-app-icon.png'
 
   console.log('[upload-pwa-icons] Generating standard app icon (512)...')
   const icon512Buffer = await generateImage(ICON_PROMPT, '1:1')
+  saveLocalLogo(icon512Buffer)
   const icon512 = await uploadImage('clearsight/pwa/icon-512.png', icon512Buffer)
   console.log(`  -> ${icon512}`)
 
@@ -209,7 +234,9 @@ async function main() {
     iconMaskable512,
   })
 
-  console.log('[upload-pwa-icons] Done. Commit brand-assets.ts and redeploy for PWA icons to go live.')
+  writeServiceWorkerIconUrl(icon192)
+
+  console.log('[upload-pwa-icons] Done. Commit brand-assets.ts, public/brand/, and public/sw.js.')
 }
 
 main().catch((error) => {

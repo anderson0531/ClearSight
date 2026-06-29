@@ -1,6 +1,6 @@
 import { put } from '@vercel/blob'
 import { prisma } from '@/lib/db'
-import { buildTaxonomyKey, categoriesForContentType, CONTENT_CATEGORIES, GEO_SCOPES, isContentType, isTopCategory, normalizeGeoTags, typeForCategory, type ContentType, type GeoScope, type GeoTags } from '@/lib/taxonomy'
+import { buildTaxonomyKey, canonicalizeCategory, categoriesForContentType, CONTENT_CATEGORIES, GEO_SCOPES, isContentType, isTopCategory, normalizeGeoTags, typeForCategory, type ContentType, type GeoScope, type GeoTags } from '@/lib/taxonomy'
 import { normalizeTitle } from '@/lib/normalize-title'
 import { getLocaleByEnglishName } from '@/i18n/locales'
 import { resolveGeminiTtsLanguageCode } from '@/lib/gemini-tts-locale'
@@ -48,11 +48,17 @@ import {
   buildSeriesContinuityBlock,
   parseSceneFlowLitePayload,
   sceneFlowSourcesVerifiedExtras,
+  PATTERN_MATRIX_SHOW_ID,
   type SceneFlowSeriesMetadata,
 } from '@/lib/scene-flow-lite'
 import { findLatestSceneFlowEpisode } from '@/lib/scene-flow-lite-db'
 import { patternMatrixOpeningVisuals } from '@/lib/pattern-matrix-opening-video'
-import { clearsightBriefOpeningVisuals } from '@/lib/clearsight-brief-opening-video'
+import { finalizeEpisodeAnimaticBookends, showSupportsHostsVideoBookends } from '@/lib/episode-hosts-video-bookends'
+import {
+  buildPatternMatrixIllustrationScene,
+  buildPatternMatrixImagenPrompt,
+} from '@/lib/pattern-matrix-frame-prompt'
+import { buildEpisodeVisualSubjectBible } from '@/lib/episode-character-bible'
 import type { HostProfile } from '@/lib/hosts'
 import type {
   AudioSegment,
@@ -93,6 +99,8 @@ export interface GenerateStoryInput {
   description?: string
   /** Optional audience country lens for script narration (not research geo). */
   countryPerspective?: string | null
+  /** Plan runtime cap in minutes (10 default, 15 elite). */
+  maxRuntimeMinutes?: number
 }
 
 interface TruthLedgerResult {
@@ -199,7 +207,8 @@ interface EpisodeBookends {
   disclaimer: string
 }
 
-interface PreparedLine {
+/** Serializable per-line plan used by the sceneFlowLite frame pipeline. */
+export interface EpisodePreparedLine {
   speaker: string
   text: string
   role: AudioSegmentRole
@@ -220,6 +229,8 @@ interface PreparedLine {
   sfxCue?: string
   mathFoundation?: MathFoundationNode
 }
+
+type PreparedLine = EpisodePreparedLine
 
 /** Options for building per-line illustration prompts inline (News path). */
 interface PrepareLineOptions {
@@ -349,10 +360,13 @@ function applyFrameSceneValidation(
   return { ...script, turns }
 }
 
-function resolveSceneText(turn: PodcastTurn): string {
+function resolveSceneText(turn: PodcastTurn, show?: Show): string {
+  const dialogue = turn.text.replace(/\[[^\]]+\]/g, '').trim()
+  if (show?.id === PATTERN_MATRIX_SHOW_ID && dialogue) {
+    return buildPatternMatrixIllustrationScene(dialogue)
+  }
   const scene = turn.scene?.trim()
   if (scene) return scene
-  const dialogue = turn.text.replace(/\[[^\]]+\]/g, '').trim()
   const firstSentence = dialogue.match(/^[^.!?]+[.!?]?/)?.[0]?.trim() || dialogue.slice(0, 200)
   console.warn('[generate-story] frame missing scene — deriving fallback visual from dialogue')
   return `Editorial illustration depicting the moment when: ${firstSentence}`
@@ -457,6 +471,36 @@ function buildLineVisuals(
   }
 }
 
+export function buildEpisodePreparedLines(
+  script: PodcastScript,
+  resolvedInput: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
+  show: Show,
+  subjectBible?: VisualSubject[]
+): EpisodePreparedLine[] {
+  const localeContext = buildAudienceVisualContext({
+    language: resolvedInput.language,
+    countryPerspective: resolvedInput.countryPerspective,
+  })
+  const style = resolveFrameIllustrationStyle(show, resolvedInput.category)
+  return prepareLines(script.turns, show, resolvedInput.contentType ?? show.contentType, {
+    style,
+    localeContext,
+    title: resolvedInput.title,
+    subjectBible: subjectBible,
+  })
+}
+
+export function isSceneFlowLiteBrief(brief: CompiledBrief): boolean {
+  const showId = brief.context.showMeta.showId
+  const show =
+    (showId ? showById(showId) : null) ??
+    resolveShow({
+      contentType: brief.context.podcastType,
+      category: brief.context.resolvedInput.category,
+    })
+  return show.generationProfile === 'sceneFlowLite'
+}
+
 function prepareLines(
   turns: PodcastTurn[],
   show: Show,
@@ -466,6 +510,7 @@ function prepareLines(
   const lines: PreparedLine[] = []
   const isNews = contentType === 'News'
   const isSceneFlowLite = show.generationProfile === 'sceneFlowLite'
+  const isPatternMatrix = show.id === PATTERN_MATRIX_SHOW_ID
   const promptOptions: PrepareLineOptions = {
     style: options?.style,
     localeContext: options?.localeContext,
@@ -520,14 +565,16 @@ function prepareLines(
     const musicMood = isNews || isSceneFlowLite ? (turn.musicMood ?? null) : null
     const sceneText = isTitleSlide
       ? options?.title ?? turn.text
-      : resolveSceneText(turn)
+      : resolveSceneText(turn, show)
     const groupId = `t${turnIndex}`
     const mathFoundation =
       isSceneFlowLite && turn.mathFoundation ? turn.mathFoundation : undefined
 
     const pieces = splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES)
     const openingVisuals =
-      patternMatrixOpeningVisuals(show.id, role) ?? clearsightBriefOpeningVisuals(show.id, role)
+      isPatternMatrix
+        ? null
+        : patternMatrixOpeningVisuals(show.id, role) ?? clearsightBriefOpeningVisuals(show.id, role)
     pieces.forEach((piece, pieceIndex) => {
       const visuals = openingVisuals
         ? {
@@ -535,12 +582,18 @@ function prepareLines(
             visualMedium: openingVisuals.visualMedium,
             videoPrompt: openingVisuals.videoPrompt,
           }
-        : buildLineVisuals(turn, promptOptions, {
-            isTitleSlide,
-            sceneText,
-            title: options?.title,
-            spokenDialogue: piece.text,
-          })
+        : isPatternMatrix
+          ? {
+              imagePrompt: buildPatternMatrixImagenPrompt(sceneText),
+              visualMedium: 'image' as const,
+              videoPrompt: null,
+            }
+          : buildLineVisuals(turn, promptOptions, {
+              isTitleSlide,
+              sceneText,
+              title: options?.title,
+              spokenDialogue: piece.text,
+            })
       lines.push({
         speaker: piece.speaker,
         text: piece.text,
@@ -578,13 +631,17 @@ function uniqueDomains(sources: GroundedSource[]): number {
  * copies and counts toward the episode duration. Players cap playback of the
  * (longer) source bed at OUTRO_MUSIC_SECONDS.
  */
-function outroMusicSegment(show: Show): AudioSegment {
+export function buildEpisodeOutroSegment(show: Show): AudioSegment {
   return {
     url: OUTRO_MUSIC_URL,
     durationSeconds: OUTRO_MUSIC_SECONDS,
     role: 'music',
     imageUrl: show.studioImage,
   }
+}
+
+function outroMusicSegment(show: Show): AudioSegment {
+  return buildEpisodeOutroSegment(show)
 }
 
 function formatSourcesMarkdown(sources: GroundedSource[]): string {
@@ -734,6 +791,12 @@ async function compileTruthLedgerMarkdown(
       ? `\n### COMMON MISCONCEPTIONS\n(List 1-3 prevalent misconceptions, myths, or pieces of misinformation about this topic that the public commonly believes. For EACH: state the misconception plainly, then correct it with the sourced fact. Format each as a bold "Myth:" line followed by a "Reality:" line. If no notable misconception exists, write a single line saying so.)`
       : ''
 
+  const summaryLabelGuide = briefingType === 'News' ? 'The Objective Brief' : 'Summary'
+  const summaryLabelHint =
+    briefingType === 'News'
+      ? 'fact-dense summary of current reported state, key terms, and confidence level'
+      : 'fact-dense overview of the topic, key concepts, and what the listener will learn'
+
   const prompt = `Use current web search. Today is ${today}.
 
 Compile an unbiased Truth Ledger briefing for: "${input.title}".
@@ -765,7 +828,7 @@ Reliability Index rubric (assign honestly):
 
 Use EXACTLY this Markdown structure and shape, with no extra sections:
 ## [ SYSTEMIC TOPIC TITLE ]
-**The Objective Brief:** (fact-dense summary of current reported state, key terms, and confidence level)
+**${summaryLabelGuide}:** (${summaryLabelHint})
 ### THE TRUTH LEDGER
 **Sources Verified:**
 {{SOURCES}}
@@ -774,7 +837,7 @@ ${analysisBlock}${misconceptionsBlock}
 
 LANGUAGE & LOCALIZATION (critical):
 - Write the ENTIRE output in ${input.language}, INCLUDING every heading and bold label.
-- Translate the section labels into ${input.language} (the headings shown above in English — "The Objective Brief", "The Truth Ledger", "Sources Verified", "Reliability Index", "Analytical Insight" — are meaning guides; render them naturally in ${input.language}, NOT in English).
+- Translate the section labels into ${input.language} (the headings shown above in English — "${summaryLabelGuide}", "The Truth Ledger", "Sources Verified", "Reliability Index", "Analytical Insight" — are meaning guides; render them naturally in ${input.language}, NOT in English).
 - The ONLY text to keep verbatim is the token {{SOURCES}} on its own line under the Sources label — leave it exactly as-is; real source links are injected there afterwards.`
 
   let { text, sources } = await vertexGenerateGrounded(prompt, {
@@ -982,15 +1045,18 @@ function categoryListForInput(
 function normalizeCategoryForType(category: string, contentType: ContentType): string {
   const alias = NEWS_CATEGORY_ALIASES[category.toLowerCase()]
   if (contentType === 'News' && alias) return alias
+  const canonical = canonicalizeCategory(category)
   const allowed = categoriesForContentType(contentType)
-  const match = allowed.find((c) => c.toLowerCase() === category.toLowerCase())
-  return match ?? category
+  const match = allowed.find((c) => c.toLowerCase() === canonical.toLowerCase())
+  if (match) return match
+  const direct = allowed.find((c) => c.toLowerCase() === category.toLowerCase())
+  return direct ?? category
 }
 
 function defaultCategoryForType(contentType: ContentType): string {
   switch (contentType) {
     case 'Education':
-      return 'Science & Discovery'
+      return 'Science & Evidence'
     case 'Entertainment':
       return 'True Crime'
     case 'Lifestyle':
@@ -1251,6 +1317,14 @@ function buildConfidenceDirective(c: ScriptConfidence): string {
   }
 }
 
+function runtimeCapBlock(input: Pick<GenerateStoryInput, 'maxRuntimeMinutes'>, show: Show): string {
+  const minutes = input.maxRuntimeMinutes ?? 10
+  const maxWords = Math.round(minutes * 150)
+  const solo = show.format === 'solo'
+  const maxFrames = minutes >= 15 ? (solo ? 18 : 24) : solo ? 14 : 18
+  return `RUNTIME CAP: Target ~${minutes} minutes (~${maxWords} spoken words). Use at most ${maxFrames} frames/turns total.`
+}
+
 async function generatePodcastScript(
   input: Omit<GenerateStoryInput, 'userId' | 'generationId'>,
   markdown: string,
@@ -1332,6 +1406,8 @@ ${briefingExcerpt}
 
 ${analysisBlock}
 ${subjectRulesBlock}
+
+${runtimeCapBlock(input, show)}
 
 INTERPRETATION RULES:
 - Analytical reasoning and forecasts are encouraged when built on briefing facts
@@ -1572,14 +1648,13 @@ SCENEFLOW LITE JSON MODEL (critical — output ONLY valid JSON):
       "frame_id": 1,
       "speaker": "${co.name}",
       "dialogue": "...",
-      "visual_prompt": "ONE vivid static illustration sentence — NOT dialogue",
       "camera_rendering": {
         "engine": "Ken Burns",
         "movement_vector": "Slow diagonal pan accentuating detail"
       },
       "audio_mixing": {
-        "lyria_theme_cue": "Mathematical Ambient Pulse",
-        "lyria_dynamics": "Low metronomic texture ducked for vocals",
+        "lyria_theme_cue": "Cinematic Post-Rock Pulse",
+        "lyria_dynamics": "Atmospheric post-rock underscore ducked under dialogue",
         "veo_lite_sfx": "Optional subtle ambient sfx description"
       }
     }
@@ -1598,13 +1673,7 @@ Rules:
 - Section 3 (mathematical principles) frames MUST use speaker "${lead.name}" (${lead.name} delivers the formal math beat)
 - Map frames to the five-part arc: (1) practical applications first, (2) accessible explanation, (3) mathematical principles (include math_foundation_node during Malik's formal beat), (4) summary recap as the last 2–4 body frames
 - Do NOT include the Ask the Host Q&A CTA in timeline_frames — that is spoken in episode bookends after the body
-- Each visual_prompt must be a distinct photorealistic still suited to Ken Burns
-- VISUAL_PROMPT RULES (critical):
-  - At least 50 characters — one concrete physical scene (objects, environments, materials, lighting)
-  - NEVER depict ${co.name}, ${lead.name}, any hosts, presenters, human faces, podcast studio, or talking-head shots
-  - Photorealistic editorial photograph — NO cartoon, vector art, clip art, or flat infographic shapes
-  - GOOD: "Macro photograph of a Koch snowflake fractal etched in frost on dark slate, single directional light."
-  - BAD: "Abstract mathematical concept" or "Hosts in the studio explaining formulas"
+- Frame illustrations are derived server-side from dialogue — do NOT include visual_prompt fields
 - Put formal proofs in math_foundation_node, not in spoken dialogue
 - In math_foundation_node.latex, never put a bare & inside \\text{...} — use \\& or the word "and" (KaTeX treats & as a column separator)
 - Entire dialogue in ${input.language}
@@ -1619,7 +1688,7 @@ Rules:
   let text = raw.text
   if (raw.finishReason === 'MAX_TOKENS' && text) {
     const retry = await vertexGenerateGrounded(
-      `${prompt}\n\nIMPORTANT: If the response is too long, keep all five arc sections but shorten visual_prompt values slightly — do NOT drop the mathematical principles or summary beats.`,
+      `${prompt}\n\nIMPORTANT: If the response is too long, keep all five arc sections but shorten dialogue lines slightly — do NOT drop the mathematical principles or summary beats.`,
       { temperature: 0.55, maxOutputTokens: 16384, useSearchGrounding: false }
     )
     if (retry.text) text = retry.text
@@ -1664,7 +1733,7 @@ Rules:
     role: 'body',
     musicMood: turn.musicMood,
     illustrate: true,
-    scene: turn.scene,
+    scene: buildPatternMatrixIllustrationScene(turn.text),
     visualBeat: turn.visualBeat,
     animaticMovement: turn.animaticMovement,
     sfxCue: turn.sfxCue,
@@ -1844,14 +1913,8 @@ async function generateEpisodeBookends(
       ? `CTA: One warm bridge from the math recap into the interactive layer. Invite the listener to scroll down on this episode page and use Ask the Host to ask follow-up questions — clarifications, worked examples, notation help, or how this math applies to their specific situation. Keep "Ask the Host" in Latin script if used. Confident and inviting, not pushy.`
       : `CTA: Exactly one closing call to action that contrasts this "On-Demand Podcast" (the episode they just heard) with a "Custom Podcast" they can create themselves. Tell the listener they've been enjoying a ${BRAND_NAME} On-Demand Podcast, and invite them to open the ${BRAND_NAME} app to create their own Custom Podcast on any topic. Keep the terms "On-Demand Podcast" and "Custom Podcast" intact. Confident, not pushy.`
 
-  const disclaimerInstruction = isNews
-    ? ''
-    : `\nDISCLAIMER: A brief spoken liability disclaimer in the show's calm, plain voice, adapted naturally into ${input.language}. Convey ALL of these points: this episode of "${show.name}" was produced with AI and is for general information only; it may contain errors and is not professional, legal, financial, or medical advice; sources were summarized automatically, so listeners should verify independently before relying on any claim. Keep the brand/show names in Latin script. Neutral and non-alarming.`
-
-  const blockCount = isNews ? 'four' : 'five'
-  const labelList = isNews
-    ? 'HOOK:, INTRO:, SUMMARY:, CTA:'
-    : 'HOOK:, INTRO:, SUMMARY:, CTA:, DISCLAIMER:'
+  const blockCount = 'four'
+  const labelList = 'HOOK:, INTRO:, SUMMARY:, CTA:'
 
   const summaryInstruction = isSceneFlowLite
     ? 'SUMMARY: A rapid, objective 2-sentence recap of the core mathematical insight and what the listener should remember, in the show\'s tone.'
@@ -1873,12 +1936,12 @@ Produce exactly ${blockCount} labeled blocks, each 1-2 sentences, punchy and on-
 ${hookInstruction}
 ${introInstruction}
 ${summaryInstruction}
-${ctaInstruction}${disclaimerInstruction}
+${ctaInstruction}
 
 Rules:
 - Output ONLY the ${blockCount} lines, each beginning with its label (${labelList})
 - No markdown, no stage directions, no speaker names
-- Each block <= 320 characters${isNews ? '' : ' (the DISCLAIMER may use up to 360)'}`
+- Each block <= 320 characters`
 
   const raw = await vertexGenerateText(prompt, {
     temperature: 0.5,
@@ -1897,10 +1960,9 @@ Rules:
   const intro = pick('INTRO')
   const summary = pick('SUMMARY')
   const cta = pick('CTA')
-  const disclaimer = pick('DISCLAIMER')
 
-  if (!hook && !intro && !summary && !cta && !disclaimer) return null
-  return { hook, intro, summary, cta, disclaimer }
+  if (!hook && !intro && !summary && !cta) return null
+  return { hook, intro, summary, cta, disclaimer: '' }
 }
 
 /**
@@ -1920,6 +1982,7 @@ function assembleEpisode(
   const leadSpeaker = leadHost(show).name
   const isNews = (input.contentType ?? show.contentType) === 'News'
   const isSceneFlowLite = show.generationProfile === 'sceneFlowLite'
+  const skipWelcomeBookends = isSceneFlowLite && show.id === PATTERN_MATRIX_SHOW_ID
   // Bookends come from the model already written in the target language. The
   // canned fallbacks below are English, so they may ONLY be used for English
   // episodes — otherwise a failed bookends call would leak English narration
@@ -1937,30 +2000,21 @@ function assembleEpisode(
         ? `Still have questions? Scroll down on this episode and tap Ask the Host — ask Amara and Malik for clarifications, worked examples, or how this math applies to your situation.`
         : `You've been enjoying a ${BRAND_NAME} On-Demand Podcast. To create your own Custom Podcast on any topic, open the ${BRAND_NAME} app.`
     : ''
-  // Spoken liability disclaimer. English fallback only — a failed bookends call
-  // must never leak English into a non-English episode. News drops it entirely.
-  const fallbackDisclaimer = isNews
-    ? ''
-    : isEnglish
-      ? `This episode of ${show.name} was produced with AI and is for general information only. It may contain errors and isn't professional, legal, financial, or medical advice. Sources were summarized automatically — please verify independently before relying on any claim.`
-      : ''
 
   const hook = bookends?.hook?.trim()
   const intro = (bookends?.intro?.trim() || fallbackIntro).trim()
   const summary = bookends?.summary?.trim()
   const cta = (bookends?.cta?.trim() || fallbackCta).trim()
-  // News never carries a spoken disclaimer.
-  const disclaimer = isNews ? '' : (bookends?.disclaimer?.trim() || fallbackDisclaimer).trim()
 
   const turns: PodcastTurn[] = []
 
-  if (hook) {
+  if (!skipWelcomeBookends && hook) {
     turns.push(
       ...expandSpokenTurns(hookSpeaker, 'hook', hook, 'serious', isNews ? { musicMood: 'tension' } : {})
     )
   }
 
-  if (intro) {
+  if (!skipWelcomeBookends && intro) {
     turns.push(
       ...expandSpokenTurns(leadSpeaker, 'intro', intro, 'warm', {
         chapterBreak: true,
@@ -1998,10 +2052,6 @@ function assembleEpisode(
         ...(isNews ? { musicMood: 'hopeful' as MusicMood } : {}),
       })
     )
-  }
-
-  if (disclaimer) {
-    turns.push(...expandSpokenTurns(leadSpeaker, 'disclaimer', disclaimer, 'neutral'))
   }
 
   const wordCount = turns.reduce((sum, turn) => sum + turn.text.split(/\s+/).length, 0)
@@ -2242,13 +2292,42 @@ function splitTextIntoByteChunks(text: string, maxBytes: number): string[] {
   return splitTextIntoSentenceChunks(text, maxBytes)
 }
 
-async function uploadAudioSegment(
+/** Synthesize and upload one episode line (used by the per-frame pipeline). */
+export async function synthesizeEpisodeLineAudio(
+  directorNotes: string,
+  line: EpisodePreparedLine,
+  language: string,
+  show: Show,
+  title: string,
+  index: number,
+  fallbackDuration: number
+): Promise<AudioSegment | null> {
+  const token = await getVertexAccessToken()
+  if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
+
+  const locale = getVoiceForLanguage(language)
+  let buffer = await callGeminiTts(
+    token,
+    buildSingleSpeakerTtsBody(directorNotes, line, locale, show)
+  )
+  if (!buffer) {
+    buffer = await callGeminiTts(
+      token,
+      buildSingleSpeakerTtsBody(directorNotes, line, locale, show)
+    )
+  }
+  if (!buffer) return null
+
+  return uploadEpisodeAudioSegment(buffer, title, index, fallbackDuration, line)
+}
+
+export async function uploadEpisodeAudioSegment(
   buffer: Buffer,
   title: string,
   index: number,
   fallbackDuration: number,
   meta: Pick<
-    PreparedLine,
+    EpisodePreparedLine,
     | 'speaker'
     | 'role'
     | 'imageUrl'
@@ -2355,7 +2434,7 @@ async function synthesizePodcastAudio(
           })
           return null
         }
-        return uploadAudioSegment(buffer, title, index, fallbackPerLine, lines[index]!)
+        return uploadEpisodeAudioSegment(buffer, title, index, fallbackPerLine, lines[index]!)
       })
     )
     segments = uploads.filter((segment): segment is AudioSegment => segment !== null)
@@ -2367,7 +2446,7 @@ async function synthesizePodcastAudio(
 
     segments = await Promise.all(
       fallbackBuffers.map((buffer, index) =>
-        uploadAudioSegment(buffer, title, index, fallbackPerLine, {
+        uploadEpisodeAudioSegment(buffer, title, index, fallbackPerLine, {
           speaker: show.hosts[0]!.name,
           role: 'body',
           imageUrl: null,
@@ -2384,12 +2463,17 @@ async function synthesizePodcastAudio(
 
   if (segments.length === 0) return null
 
+  if (showSupportsHostsVideoBookends(show.id)) {
+    segments = finalizeEpisodeAnimaticBookends(segments, show.id)
+  }
+
   // Close the episode with a baked 30s music sign-off.
   segments.push(outroMusicSegment(show))
 
   const durationSeconds = segments.reduce((sum, segment) => sum + segment.durationSeconds, 0)
+  const primaryUrl = segments.find((segment) => segment.url.trim())?.url ?? segments[0]!.url
 
-  return { url: segments[0]!.url, durationSeconds, segments }
+  return { url: primaryUrl, durationSeconds, segments }
 }
 
 /** One already-localized segment to re-synthesize, carrying its reused frame. */
@@ -2487,7 +2571,7 @@ export async function resynthesizeLocalizedSegments(params: {
       const buffer = buffers[index]
       if (!buffer) return null
       const { line } = plan
-      return uploadAudioSegment(buffer, title, index, fallbackPerLine, {
+      return uploadEpisodeAudioSegment(buffer, title, index, fallbackPerLine, {
         speaker: line.speaker,
         role: line.role,
         imageUrl: line.imageUrl,
@@ -2725,16 +2809,19 @@ export async function compileBriefAndScript(
   const { markdown: markdownContent, sources, reliabilityIndex } = ledger
   const draftThumbnail = reusedThumbnail ?? getThumbnailForCategory(resolvedCategory)
 
-  const visualSubjectBible = await extractVisualSubjectBible(
-    {
-      title: input.title,
-      description: input.description,
-      category: resolvedCategory,
-      contentType: podcastType,
-      language: input.language,
-    },
-    markdownContent
-  )
+  const visualSubjectBible =
+    show.id === PATTERN_MATRIX_SHOW_ID
+      ? null
+      : await extractVisualSubjectBible(
+          {
+            title: input.title,
+            description: input.description,
+            category: resolvedCategory,
+            contentType: podcastType,
+            language: input.language,
+          },
+          markdownContent
+        )
 
   let accuracyScore: number | null = null
   let correctionContext: string | null = null
@@ -2884,6 +2971,18 @@ export async function compileBriefAndScript(
       )
     : null
 
+  let mergedVisualSubjectBible = visualSubjectBible
+  if (episodeScript && draftStoryId) {
+    mergedVisualSubjectBible = await buildEpisodeVisualSubjectBible({
+      storyId: draftStoryId,
+      title: resolvedInput.title,
+      turns: episodeScript.turns,
+      show,
+      briefingBible: visualSubjectBible,
+      mathFoundationNode: podcastScript?.mathFoundationNode,
+    })
+  }
+
   let episodeQuiz: EpisodeQuiz | null = null
   if (podcastType === 'Education' && episodeScript) {
     const scriptExcerpt = episodeScript.turns
@@ -2926,6 +3025,13 @@ export async function compileBriefAndScript(
           ...(existingMeta ?? {}),
           episodeScriptDraft: serializeEpisodeScriptDraft(episodeScript) as object,
           ...(episodeQuiz ? { episodeQuiz: JSON.parse(JSON.stringify(episodeQuiz)) as object } : {}),
+          ...(mergedVisualSubjectBible
+            ? {
+                visualSubjectBible: JSON.parse(
+                  JSON.stringify(mergedVisualSubjectBible)
+                ) as object,
+              }
+            : {}),
           ...sceneFlowExtras,
         },
       },
@@ -2954,7 +3060,7 @@ export async function compileBriefAndScript(
       resolvedInput,
       seedQuestions,
       episodeQuiz,
-      visualSubjectBible,
+      visualSubjectBible: mergedVisualSubjectBible,
     },
   }
 }

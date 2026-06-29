@@ -42,6 +42,9 @@ export interface IntroVideoClip {
   dialogueExcerpt?: string
 }
 
+/** Silent hosts motion bookend — opening welcome or closing recap before outro music. */
+export type HostsVideoBookend = 'opening' | 'closing'
+
 export interface AudioSegment {
   url: string
   durationSeconds: number
@@ -86,6 +89,8 @@ export interface AudioSegment {
   visualMedium?: VisualMedium
   /** Veo 3.1 Lite MP4 URL when visualMedium is video. */
   videoUrl?: string | null
+  /** HTMLMediaElement playback rate for video frames (1 = normal). */
+  videoPlaybackRate?: number
   /** Prompt used to generate the Veo reenactment clip. */
   videoPrompt?: string | null
   /** Multi-clip Veo sequence for long intro dialog frames. */
@@ -96,6 +101,12 @@ export interface AudioSegment {
   sfxCue?: string
   /** SceneFlow Lite: formal math proof rendered in the player dashboard. */
   mathFoundation?: MathFoundationNode
+  /** Client overlay bed URL — overrides role-based beds when set. */
+  musicBedUrl?: string | null
+  /** Client overlay volume relative to dialogue (1.0 = full user volume). */
+  musicVolumeRatio?: number | null
+  /** Silent opening-hosts video bookend (full-volume underscore). */
+  hostsVideoBookend?: HostsVideoBookend
 }
 
 export interface MathFoundationVariable {

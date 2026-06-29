@@ -1,9 +1,12 @@
 'use client'
 
 import { useEffect } from 'react'
+import { useUser } from '@/components/providers/UserProvider'
+import { canPlayScreenOffAudio } from '@/lib/plans'
 import { useAudioQueue } from '@/store/useAudioQueue'
 
 export function useMediaSession() {
+  const { plan } = useUser()
   const currentTrack = useAudioQueue((s) => s.currentTrack)
   const isPlaying = useAudioQueue((s) => s.isPlaying)
   const togglePlay = useAudioQueue((s) => s.togglePlay)
@@ -15,7 +18,12 @@ export function useMediaSession() {
 
     const ms = navigator.mediaSession
 
-    ms.setActionHandler('play', () => useAudioQueue.getState().resume())
+    ms.setActionHandler('play', () => {
+      if (!canPlayScreenOffAudio(plan) && document.visibilityState === 'hidden') {
+        return
+      }
+      useAudioQueue.getState().resume()
+    })
     ms.setActionHandler('pause', () => useAudioQueue.getState().pause())
     ms.setActionHandler('previoustrack', () => playPrevious())
     ms.setActionHandler('nexttrack', () => playNext())
@@ -26,7 +34,7 @@ export function useMediaSession() {
       ms.setActionHandler('previoustrack', null)
       ms.setActionHandler('nexttrack', null)
     }
-  }, [playNext, playPrevious])
+  }, [plan, playNext, playPrevious])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return

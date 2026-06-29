@@ -3,7 +3,7 @@ import {
   sanitizeSuggestedChannels,
   type SuggestedChannel,
 } from '@/lib/on-demand-channels'
-import { vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
+import { vertexGenerateGrounded, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'
 import { NEWS_CATEGORIES, type ContentType } from '@/lib/taxonomy'
 
 export type TopicReviewBlockReason = 'wrong_channel' | 'guidelines'
@@ -63,6 +63,8 @@ export interface TopicReviewResult {
    * instead of an editorial-block panel.
    */
   transient?: boolean
+  /** Machine-readable failure when transient is true. */
+  errorCode?: 'quota_exhausted'
   /** Why the review blocked, when verdict is 'block'. */
   blockReason?: TopicReviewBlockReason
   /** Alternate on-demand channels when the topic fits elsewhere. */
@@ -90,7 +92,11 @@ export function deriveTopicReviewFeedback(input: {
 }
 
 /** Conservative fallback used whenever the model output cannot be trusted. */
-function blockedFallback(issue: string, transient = false): TopicReviewResult {
+function blockedFallback(
+  issue: string,
+  transient = false,
+  errorCode?: TopicReviewResult['errorCode']
+): TopicReviewResult {
   return {
     verdict: 'block',
     fitsChannel: false,
@@ -101,6 +107,7 @@ function blockedFallback(issue: string, transient = false): TopicReviewResult {
     recommendedDescription: '',
     suggestedTitle: '',
     transient,
+    ...(errorCode ? { errorCode } : {}),
   }
 }
 
@@ -332,18 +339,23 @@ function asStringArray(value: unknown): string[] {
 }
 
 export async function reviewTopic(input: TopicReviewInput): Promise<TopicReviewResult> {
-  const raw = await vertexGenerateText(buildPrompt(input), {
+  const raw = await vertexGenerateGrounded(buildPrompt(input), {
     temperature: 0.3,
     maxOutputTokens: 1200,
     model: VERTEX_FAST_MODEL,
     useSearchGrounding: false,
   })
 
-  if (!raw) {
-    return blockedFallback('Could not review this description right now. Please try again.', true)
+  if (!raw.text) {
+    const errorCode = raw.httpStatus === 429 ? ('quota_exhausted' as const) : undefined
+    return blockedFallback(
+      'Could not review this description right now. Please try again.',
+      true,
+      errorCode
+    )
   }
 
-  const jsonText = extractJsonObject(raw)
+  const jsonText = extractJsonObject(raw.text)
   if (!jsonText) {
     return blockedFallback('Could not review this description right now. Please try again.', true)
   }

@@ -3,10 +3,10 @@ import { z } from 'zod'
 import { getSessionUserId } from '@/lib/auth'
 import { serializeUser } from '@/lib/account'
 import { autoConfirmSubscription, isPaymentBypassEnabled } from '@/lib/payments'
-import { WHOP_CHECKOUT_URLS } from '@/lib/plans'
+import { PLAN_VALUES, WHOP_CHECKOUT_URLS } from '@/lib/plans'
 
 const bodySchema = z.object({
-  plan: z.enum(['FREE', 'PREMIUM', 'CREATOR']),
+  plan: z.enum(PLAN_VALUES),
 })
 
 export async function POST(request: Request) {

@@ -6,6 +6,8 @@ export const PODCAST_GENERATION_REQUESTED = 'podcast/generation.requested' as co
 export interface PodcastGenerationRequested {
   generationId: string
   userId: string
+  /** When true, route to the priority JIT queue (Premium Plus+). */
+  priorityJit?: boolean
 }
 
 /** Background frame illustrations after episode audio is ready. */

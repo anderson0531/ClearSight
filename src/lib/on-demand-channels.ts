@@ -1,5 +1,6 @@
 import { resolveShow } from '@/lib/shows'
 import {
+  canonicalizeCategory,
   CONTENT_TYPES,
   categoriesForType,
   isContentType,
@@ -55,7 +56,7 @@ export function getOnDemandChannel(
   contentType: ContentType,
   category: string
 ): OnDemandChannelEntry | undefined {
-  return CHANNEL_BY_KEY.get(channelKey(contentType, category))
+  return CHANNEL_BY_KEY.get(channelKey(contentType, canonicalizeCategory(category)))
 }
 
 /** Compact table for the topic-review LLM prompt. */

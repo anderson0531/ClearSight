@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import {
+  buildPatternMatrixIllustrationScene,
+  PATTERN_MATRIX_ILLUSTRATION_PREFIX,
+} from '@/lib/pattern-matrix-frame-prompt'
 import { SHOW_MATH } from '@/lib/shows'
 import {
   enforceSpeakerWordCaps,
@@ -156,5 +160,54 @@ describe('scene-flow-lite', () => {
 
   it('builds stable series keys', () => {
     assert.equal(sceneFlowSeriesKey({ series_id: 'gc_01' }), 'GC_01')
+  })
+
+  it('derives illustration scenes from dialogue for Pattern Matrix (ignores model visual_prompt)', () => {
+    const raw = JSON.stringify({
+      series_metadata: {
+        series_title: 'Test Series',
+        series_id: 'GC_02',
+        total_episodes_in_series: 1,
+        current_episode_number: 1,
+        episode_title: 'Key Exchange',
+      },
+      timeline_frames: [
+        {
+          frame_id: 1,
+          speaker: 'Amara Vance',
+          dialogue:
+            'The evolution of Wi-Fi security, from WPA2 to WPA3 and the ongoing research into post-quantum cryptography.',
+          visual_prompt: 'Glowing abstract digital network over a world map.',
+        },
+        {
+          frame_id: 2,
+          speaker: 'Malik Al-Jamil',
+          dialogue:
+            'It seems impossible, Amara. How can two parties agree on a secret key without an eavesdropper intercepting it?',
+        },
+        {
+          frame_id: 3,
+          speaker: 'Amara Vance',
+          dialogue: 'That is why banks rely on this exchange every day.',
+        },
+        {
+          frame_id: 4,
+          speaker: 'Malik Al-Jamil',
+          dialogue: 'Formally, both parties arrive at the shared secret without transmitting private exponents.',
+        },
+      ],
+    })
+
+    const parsed = parseSceneFlowLitePayload(raw, SHOW_MATH)
+    assert.ok(parsed)
+    const scenes = parsed!.turns.map((turn) => buildPatternMatrixIllustrationScene(turn.text))
+    assert.match(
+      scenes[0]!,
+      /^Create an engaging and cinematic image that effectively illustrates: "The evolution of Wi-Fi security/i
+    )
+    assert.doesNotMatch(scenes[0]!, /Glowing abstract/)
+    assert.match(scenes[1]!, /It seems impossible, Amara/)
+    assert.match(scenes[1]!, /how can two parties agree on a secret key/i)
+    assert.doesNotMatch(scenes[1]!, /Amara Vance/)
   })
 })

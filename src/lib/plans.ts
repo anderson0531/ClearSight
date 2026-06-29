@@ -1,20 +1,25 @@
-export type Plan = 'FREE' | 'PREMIUM' | 'CREATOR'
+export type Plan = 'FREE' | 'PREMIUM' | 'PREMIUM_PLUS' | 'PREMIUM_ELITE'
 
-export const PLANS: Plan[] = ['FREE', 'PREMIUM', 'CREATOR']
+export const PLANS: Plan[] = ['FREE', 'PREMIUM', 'PREMIUM_PLUS', 'PREMIUM_ELITE']
 
-/** Credit packs available as add-on purchases. */
-export const CREDIT_PACKS = [5, 15, 50] as const
-export type CreditPack = (typeof CREDIT_PACKS)[number]
+/** Zod-compatible list for API validation */
+export const PLAN_VALUES = PLANS as [Plan, ...Plan[]]
 
-export function isCreditPack(value: unknown): value is CreditPack {
-  return typeof value === 'number' && (CREDIT_PACKS as readonly number[]).includes(value)
+export const CONSUMER_PLANS: Plan[] = ['FREE', 'PREMIUM', 'PREMIUM_PLUS', 'PREMIUM_ELITE']
+
+export const PAID_PLANS: Plan[] = PLANS.filter((p) => p !== 'FREE')
+
+/** Monthly on-demand credits granted each cycle (no carryover). */
+export const PLAN_ON_DEMAND_CREDITS: Record<Plan, number> = {
+  FREE: 0,
+  PREMIUM: 15,
+  PREMIUM_PLUS: 40,
+  PREMIUM_ELITE: 50,
 }
 
-/** Core generation credits granted on each subscription cycle, by plan. */
+/** @deprecated Use PLAN_ON_DEMAND_CREDITS */
 export const PLAN_MONTHLY_CREDITS: Record<Plan, number> = {
-  FREE: 0,
-  PREMIUM: 50,
-  CREATOR: 200,
+  ...PLAN_ON_DEMAND_CREDITS,
 }
 
 export interface PlanDetails {
@@ -23,20 +28,19 @@ export interface PlanDetails {
   priceLabel: string
   priceMonthly: number | null
   description: string
+  targetUser: string
   features: string[]
   creditAddOns: boolean
-  /** Hosted Whop product/checkout page. Whop handles registration, payment, and login. */
   checkoutUrl: string
 }
 
-/** Whop store (life-focus-llc) hosted product pages. */
 export const WHOP_CHECKOUT_URLS: Record<Plan, string> = {
   FREE: 'https://whop.com/life-focus-llc/clearsight-free',
   PREMIUM: 'https://whop.com/life-focus-llc/clearsight-premium',
-  CREATOR: 'https://whop.com/life-focus-llc/clearsight-creator',
+  PREMIUM_PLUS: 'https://whop.com/life-focus-llc/clearsight-premium-plus',
+  PREMIUM_ELITE: 'https://whop.com/life-focus-llc/clearsight-premium-elite',
 }
 
-/** Whop hosted sign-in for returning members. */
 export const WHOP_LOGIN_URL = 'https://whop.com/login'
 
 export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
@@ -45,12 +49,13 @@ export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
     name: 'Free',
     priceLabel: 'Free',
     priceMonthly: null,
-    description: 'Browse and listen to existing briefings with periodic upgrade prompts.',
+    description: 'Browse and listen to existing briefings.',
+    targetUser: 'Casual browsers',
     features: [
       'Browse all published briefings',
-      'Listen to audio briefings',
+      'Listen with screen on (pauses in background)',
       'View animatic with host portraits',
-      'No on-demand podcast generation',
+      'No on-demand generation',
     ],
     creditAddOns: false,
     checkoutUrl: WHOP_CHECKOUT_URLS.FREE,
@@ -58,58 +63,77 @@ export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
   PREMIUM: {
     id: 'PREMIUM',
     name: 'Premium',
-    priceLabel: '$9.95/mo',
-    priceMonthly: 9.95,
-    description: 'Create on-demand podcast briefings on any topic.',
+    priceLabel: '$4.95/mo',
+    priceMonthly: 4.95,
+    description: '15 on-demand credits per month for commuters and local news trackers.',
+    targetUser: 'Casual commuters and weekly hyper-local news trackers',
     features: [
-      'Everything in Free',
-      'On-demand podcast briefings',
-      'Purchase illustration add-on credits',
-      'Priority generation queue',
+      '15 on-demand credits / month',
+      'Screen-off & background listening',
+      '40-language audio toggle',
+      'Basic visual animatic layouts',
+      'Top-up credit bundles available',
     ],
     creditAddOns: true,
     checkoutUrl: WHOP_CHECKOUT_URLS.PREMIUM,
   },
-  CREATOR: {
-    id: 'CREATOR',
-    name: 'Creator',
-    priceLabel: '$29.95/mo',
-    priceMonthly: 29.95,
-    description: 'Full premium access plus Creator Studio for podcast channels.',
+  PREMIUM_PLUS: {
+    id: 'PREMIUM_PLUS',
+    name: 'Premium Plus',
+    priceLabel: '$9.95/mo',
+    priceMonthly: 9.95,
+    description: '40 on-demand credits with priority rendering and discovery early access.',
+    targetUser: 'Daily multi-category listeners, students, and global trend trackers',
     features: [
+      '40 on-demand credits / month',
       'Everything in Premium',
-      'Creator Studio — build podcast channels',
-      'Publish and manage your content',
-      'All premium credits included',
+      'Early access trending regional discovery',
+      'Priority fast-track JIT audio rendering',
     ],
     creditAddOns: true,
-    checkoutUrl: WHOP_CHECKOUT_URLS.CREATOR,
+    checkoutUrl: WHOP_CHECKOUT_URLS.PREMIUM_PLUS,
+  },
+  PREMIUM_ELITE: {
+    id: 'PREMIUM_ELITE',
+    name: 'Premium Elite',
+    priceLabel: '$19.95/mo',
+    priceMonthly: 19.95,
+    description: '50 on-demand credits with accountability ledger and deep-dive runtime.',
+    targetUser: 'Power users, researchers, and heavy series consumers',
+    features: [
+      '50 on-demand credits / month',
+      'Everything in Premium Plus',
+      'Unlimited Accountability Ledger scores',
+      'Topical polling graphs',
+      '15-minute deep-dive runtime cap',
+    ],
+    creditAddOns: true,
+    checkoutUrl: WHOP_CHECKOUT_URLS.PREMIUM_ELITE,
   },
 }
 
 export function isPlan(value: string | null | undefined): value is Plan {
-  return value === 'FREE' || value === 'PREMIUM' || value === 'CREATOR'
+  return typeof value === 'string' && (PLANS as readonly string[]).includes(value)
 }
 
-/** Map a Whop product/plan id to a ClearSight plan tier via env configuration. */
+/** Map legacy or Whop product ids to ClearSight plan tiers. */
 export function mapWhopPlanId(planId: string | null | undefined): Plan | null {
   if (!planId) return null
-  if (planId === process.env.WHOP_PLAN_CREATOR) return 'CREATOR'
-  if (planId === process.env.WHOP_PLAN_PREMIUM) return 'PREMIUM'
-  if (planId === process.env.WHOP_PLAN_FREE) return 'FREE'
-  return null
-}
-
-export function canGenerateOnDemand(plan: Plan): boolean {
-  return plan === 'PREMIUM' || plan === 'CREATOR'
-}
-
-export function canPurchaseCredits(plan: Plan): boolean {
-  return plan === 'PREMIUM' || plan === 'CREATOR'
-}
-
-export function canAccessCreatorStudio(plan: Plan): boolean {
-  return plan === 'CREATOR'
+  const map: Record<string, Plan | undefined> = {
+    [process.env.WHOP_PLAN_FREE ?? '']: 'FREE',
+    [process.env.WHOP_PLAN_PREMIUM ?? '']: 'PREMIUM',
+    [process.env.WHOP_PLAN_PREMIUM_PLUS ?? '']: 'PREMIUM_PLUS',
+    [process.env.WHOP_PLAN_PREMIUM_ELITE ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_CREATOR_PREMIUM ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_CREATOR_PLUS ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_CREATOR_ELITE ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_CREATOR ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_EXPLORER ?? '']: 'PREMIUM',
+    [process.env.WHOP_PLAN_STARTER ?? '']: 'PREMIUM_PLUS',
+    [process.env.WHOP_PLAN_PRO ?? '']: 'PREMIUM_ELITE',
+    [process.env.WHOP_PLAN_STUDIO ?? '']: 'PREMIUM_ELITE',
+  }
+  return map[planId] ?? null
 }
 
 export function planRank(plan: Plan): number {
@@ -118,7 +142,30 @@ export function planRank(plan: Plan): number {
       return 0
     case 'PREMIUM':
       return 1
-    case 'CREATOR':
+    case 'PREMIUM_PLUS':
       return 2
+    case 'PREMIUM_ELITE':
+      return 3
   }
 }
+
+export function upgradeCreditDelta(previous: Plan, next: Plan): number {
+  return Math.max(0, PLAN_ON_DEMAND_CREDITS[next] - PLAN_ON_DEMAND_CREDITS[previous])
+}
+
+export {
+  canGenerateOnDemand,
+  canPlayScreenOffAudio,
+  canPurchaseCredits,
+  canPurchaseOnDemandCredits,
+  isConsumerPlan,
+  hasPriorityJitAudio,
+  hasDiscoveryEarlyAccess,
+  hasAccountabilityLedgerUnlimited,
+  hasTopicalPollingGraphs,
+  maxEpisodeRuntimeMinutes,
+  getPlanEntitlements,
+} from '@/lib/plan-entitlements'
+
+export { ON_DEMAND_CREDIT_PACKS, CREDIT_PACKS } from '@/lib/credit-packs'
+export type { CreditPack as LegacyCreditPack } from '@/lib/credit-packs'

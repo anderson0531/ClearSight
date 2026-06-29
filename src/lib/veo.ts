@@ -1,5 +1,6 @@
 import { put } from '@vercel/blob'
 import { getVertexAccessToken } from '@/lib/vertex'
+import { assertSafetyPass, probeContentSafety } from '@/lib/content-safety-router'
 
 const PROJECT =
   process.env.VERTEX_PROJECT_ID ?? process.env.GCP_PROJECT_ID ?? 'sceneflowai-2d3e6'
@@ -219,11 +220,20 @@ export async function vertexGenerateVideo(
   index: number,
   options: VertexGenerateVideoOptions = {}
 ): Promise<string | null> {
+  const safety = await probeContentSafety({ text: prompt, context: 'video' })
+  try {
+    assertSafetyPass(safety)
+  } catch (err) {
+    console.error('[veo] safety block:', err instanceof Error ? err.message : err)
+    return null
+  }
+  const safePrompt = safety.sanitizedPrompt ?? prompt
+
   const token = await getVertexAccessToken()
   if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
 
   const body = {
-    instances: [{ prompt }],
+    instances: [{ prompt: safePrompt }],
     parameters: {
       aspectRatio: options.aspectRatio ?? '16:9',
       durationSeconds: options.durationSeconds ?? VEO_DURATION_SECONDS,
@@ -262,13 +272,22 @@ export async function vertexGenerateVideoFromImage(
   blobPath: string,
   options: VertexGenerateVideoFromImageOptions = {}
 ): Promise<string | null> {
+  const safety = await probeContentSafety({ text: prompt, context: 'video' })
+  try {
+    assertSafetyPass(safety)
+  } catch (err) {
+    console.error('[veo] safety block (i2v):', err instanceof Error ? err.message : err)
+    return null
+  }
+  const safePrompt = safety.sanitizedPrompt ?? prompt
+
   const token = await getVertexAccessToken()
   if (!token || !process.env.BLOB_READ_WRITE_TOKEN) return null
 
   const body = {
     instances: [
       {
-        prompt,
+        prompt: safePrompt,
         image: {
           bytesBase64Encoded: imageBytes.toString('base64'),
           mimeType,

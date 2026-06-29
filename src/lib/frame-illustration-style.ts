@@ -1,4 +1,5 @@
 import { categoryVisualStyle, type Show } from '@/lib/shows'
+import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 
 /** Minimum scene sentence length before Imagen generation is allowed. */
 export const MIN_IMAGEN_SCENE_CORE_CHARS = 40
@@ -6,6 +7,10 @@ export const MIN_IMAGEN_SCENE_CORE_CHARS = 40
 /** Base photorealistic look for all generated episode frame illustrations. */
 export const PHOTOREALISTIC_ILLUSTRATION_STYLE =
   'Style: photorealistic editorial photograph — documentary quality, natural lighting, sharp detail, professional composition. No cartoon, no flat vector art, no clip art, no infographic shapes.'
+
+/** Pattern Matrix episode frames — cinematic, dialogue-derived illustrations. */
+export const PATTERN_MATRIX_CINEMATIC_STYLE =
+  'Style: engaging cinematic illustration — atmospheric lighting, rich composition, documentary science aesthetic. No podcast hosts or presenters.'
 
 export const NO_HOST_FRAME_GUARDRAIL =
   'No podcast hosts, co-hosts, presenters, studio desks, talking-head shots, or human faces unless a named story subject from the subject bible is explicitly required.'
@@ -25,12 +30,16 @@ export function frameIllustrationStyle(): string {
   return `${PHOTOREALISTIC_ILLUSTRATION_STYLE} ${NO_HOST_FRAME_GUARDRAIL}`
 }
 
-/** Compose base photorealistic style with per-show and per-category overlays. */
+/** Compose illustration style for a show and category. */
 export function resolveFrameIllustrationStyle(
   show: Show,
   category?: string,
   options?: { includeHosts?: boolean }
 ): string {
+  if (show.id === PATTERN_MATRIX_SHOW_ID && !options?.includeHosts) {
+    return PATTERN_MATRIX_CINEMATIC_STYLE
+  }
+
   const parts = [
     PHOTOREALISTIC_ILLUSTRATION_STYLE,
     ...(options?.includeHosts ? [] : [NO_HOST_FRAME_GUARDRAIL]),

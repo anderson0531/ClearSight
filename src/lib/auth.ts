@@ -6,7 +6,7 @@ import { withDbRetry } from '@/lib/database-url'
 
 const scrypt = promisify(scryptCb)
 
-export const SESSION_COOKIE = 'cs-session'
+import { SESSION_COOKIE } from '@/lib/auth-constants'
 /** Session lifetime: 30 days. */
 export const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 /** Password reset token lifetime: 1 hour. */

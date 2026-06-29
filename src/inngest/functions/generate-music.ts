@@ -18,6 +18,7 @@ import { addCoreTokens } from '@/lib/credits'
 import type { GenerationStage } from '@/lib/generation-progress'
 import { assertGenerationActive } from '@/lib/generation-cancel'
 import { reviewTopic } from '@/lib/topic-review'
+import { probeContentSafety, assertSafetyPass } from '@/lib/content-safety-router'
 import { resolveShow } from '@/lib/shows'
 
 type StoredParams = Omit<GenerateMusicInput, 'userId' | 'generationId'>
@@ -113,6 +114,14 @@ export const generateMusic = inngest.createFunction(
     await step.run('moderate', async () => {
       await assertGenerationActive(generationId)
       await markStage('moderation')
+
+      const safety = await probeContentSafety({
+        text: input.description,
+        context: 'music',
+        language: input.language,
+      })
+      assertSafetyPass(safety)
+
       const result = await reviewTopic({
         description: input.description,
         language: input.language,

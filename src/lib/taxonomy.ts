@@ -85,27 +85,36 @@ export const NEWS_CATEGORIES = [
   'Crime',
 ] as const
 
-// Education topics. Each topic carries its own analytical framework and
-// illustration style. "Career & Job Market" routes to the dedicated solo show
+// Knowledge & Career topics. Each topic carries its own analytical framework and
+// illustration style. "Careers & Work" routes to the dedicated solo show
 // ("The Pivot") rather than the Academy pair.
 export const EDUCATION_CATEGORIES = [
-  'Mathematics',
-  'Science & Discovery',
-  'Space & Astronomy',
-  'History',
-  'Medicine & Health',
-  'Technology & Coding',
-  'Money & Economics',
-  'Career & Job Market',
+  'Math & Patterns',
+  'Science & Evidence',
+  'Space & Cosmos',
+  'History & Context',
+  'Health & the Body',
+  'Technology & Systems',
+  'Markets & Money',
+  'Careers & Work',
   'Arts & Culture',
-  'Nature & Environment',
+  'Earth & Environment',
 ] as const
 
-// Legacy Education sub-categories → new topics, so stories generated before the
-// taxonomy change still resolve to a type, framework, and show.
+// Legacy Knowledge & Career sub-categories → current topics, so stories generated
+// before taxonomy changes still resolve to a type, framework, and show.
 export const LEGACY_EDUCATION_CATEGORY_MAP: Record<string, string> = {
-  'Science & Nature': 'Science & Discovery',
-  'Health & Wellbeing': 'Medicine & Health',
+  Mathematics: 'Math & Patterns',
+  'Science & Discovery': 'Science & Evidence',
+  'Space & Astronomy': 'Space & Cosmos',
+  History: 'History & Context',
+  'Medicine & Health': 'Health & the Body',
+  'Technology & Coding': 'Technology & Systems',
+  'Money & Economics': 'Markets & Money',
+  'Career & Job Market': 'Careers & Work',
+  'Nature & Environment': 'Earth & Environment',
+  'Science & Nature': 'Science & Evidence',
+  'Health & Wellbeing': 'Health & the Body',
 }
 
 // Entertainment formats (creator-style channels: True Crime, the "Why Files?"
@@ -205,17 +214,17 @@ export const CATEGORY_SUBTOPICS: Record<string, string[]> = {
   'Health & Medicine': ['Public Health', 'Mental Health', 'Nutrition', 'Drug Approvals', 'Pandemics'],
   Sports: ['Football', 'Basketball', 'Soccer', 'Transfers', 'Playoffs'],
   Crime: ['Investigations', 'Courts', 'Cybercrime', 'Policy', 'Cold Cases'],
-  // Education
-  Mathematics: ['Algebra', 'Geometry', 'Calculus', 'Statistics', 'Number Theory'],
-  'Science & Discovery': ['Physics', 'Chemistry', 'Biology', 'Earth Science', 'Genetics'],
-  'Space & Astronomy': ['Black Holes', 'Exoplanets', 'The Solar System', 'Cosmology', 'Space Missions'],
-  History: ['Ancient World', 'Medieval', 'Modern Era', 'World Wars', 'Revolutions'],
-  'Medicine & Health': ['Anatomy', 'Immunology', 'Nutrition', 'Mental Health', 'Genetics'],
-  'Technology & Coding': ['Programming', 'AI & ML', 'Web Development', 'Databases', 'Cybersecurity'],
-  'Money & Economics': ['Investing', 'Microeconomics', 'Macroeconomics', 'Personal Finance', 'Markets'],
-  'Career & Job Market': ['Resume & Interview', 'Remote Work', 'Salary Negotiation', 'Reskilling', 'Job Search'],
+  // Knowledge & Career
+  'Math & Patterns': ['Algebra', 'Geometry', 'Calculus', 'Statistics', 'Number Theory'],
+  'Science & Evidence': ['Physics', 'Chemistry', 'Biology', 'Earth Science', 'Genetics'],
+  'Space & Cosmos': ['Black Holes', 'Exoplanets', 'The Solar System', 'Cosmology', 'Space Missions'],
+  'History & Context': ['Ancient World', 'Medieval', 'Modern Era', 'World Wars', 'Revolutions'],
+  'Health & the Body': ['Anatomy', 'Immunology', 'Nutrition', 'Mental Health', 'Genetics'],
+  'Technology & Systems': ['Programming', 'AI & ML', 'Web Development', 'Databases', 'Cybersecurity'],
+  'Markets & Money': ['Investing', 'Microeconomics', 'Macroeconomics', 'Personal Finance', 'Markets'],
+  'Careers & Work': ['Resume & Interview', 'Remote Work', 'Salary Negotiation', 'Reskilling', 'Job Search'],
   'Arts & Culture': ['Painting', 'Literature', 'Architecture', 'Photography', 'Design'],
-  'Nature & Environment': ['Ecosystems', 'Wildlife', 'Conservation', 'Oceans', 'Climate'],
+  'Earth & Environment': ['Ecosystems', 'Wildlife', 'Conservation', 'Oceans', 'Climate'],
   // Entertainment
   'True Crime': ['Cold Cases', 'Serial Cases', 'Heists', 'Forensics', 'Wrongful Convictions'],
   'Unexplained & Mystery': ['UFOs', 'Cryptids', 'Hauntings', 'Ancient Mysteries', 'Conspiracies'],
