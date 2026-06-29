@@ -4,8 +4,8 @@
 UPDATE "User"
 SET
   plan = 'PREMIUM_ELITE',
-  "coreTokens" = "coreTokens" + "lessonTokens"
-WHERE plan IN ('CREATOR_PREMIUM', 'CREATOR_PLUS', 'CREATOR_ELITE');
+  "coreTokens" = "coreTokens" + COALESCE("lessonTokens", 0)
+WHERE plan::text IN ('CREATOR', 'CREATOR_PREMIUM', 'CREATOR_PLUS', 'CREATOR_ELITE');
 
 DROP TABLE IF EXISTS "AdUnlock";
 DROP TABLE IF EXISTS "EmbedPortalSession";

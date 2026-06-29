@@ -9,50 +9,96 @@ import {
   resolveAndApplyDatabaseEnv,
 } from './database-url.mjs'
 
-async function sessionTableExists(url) {
+/** Migrations that may be marked failed when their objects already exist. */
+const MIGRATION_OBJECT_CHECKS = {
+  '20250619160000_story_questions': {
+    table: 'StoryQuestion',
+    resolveAppliedIfExists: true,
+  },
+}
+
+async function withClient(url, fn) {
   const client = new Client({
     connectionString: url,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 15000,
     ssl: { rejectUnauthorized: false },
   })
+  await client.connect()
   try {
-    await client.connect()
-    const result = await client.query(
-      "SELECT to_regclass('public.\"Session\"') IS NOT NULL AS exists"
-    )
-    return result.rows[0]?.exists === true
-  } catch {
-    return false
+    return await fn(client)
   } finally {
     await client.end().catch(() => undefined)
   }
+}
+
+async function tableExists(client, tableName) {
+  const result = await client.query(
+    'SELECT to_regclass($1) IS NOT NULL AS exists',
+    [`public."${tableName}"`]
+  )
+  return result.rows[0]?.exists === true
+}
+
+async function sessionTableExists(url) {
+  return withClient(url, (client) => tableExists(client, 'Session'))
 }
 
 function runPrisma(command) {
   execSync(command, { stdio: 'inherit', env: process.env })
 }
 
+async function repairFailedMigrations(url) {
+  return withClient(url, async (client) => {
+    const migrationsTable = await tableExists(client, '_prisma_migrations')
+    if (!migrationsTable) return 0
+
+    const failed = await client.query(`
+      SELECT migration_name
+      FROM "_prisma_migrations"
+      WHERE finished_at IS NULL
+        AND rolled_back_at IS NULL
+        AND started_at IS NOT NULL
+    `)
+
+    if (failed.rows.length === 0) return 0
+
+    let repaired = 0
+    for (const row of failed.rows) {
+      const name = row.migration_name
+      const check = MIGRATION_OBJECT_CHECKS[name]
+      let action = 'rolled-back'
+
+      if (check?.resolveAppliedIfExists && check.table) {
+        const exists = await tableExists(client, check.table)
+        if (exists) action = 'applied'
+      }
+
+      console.warn(`[migrate] resolving failed migration ${name} as ${action}`)
+      runPrisma(`npx prisma migrate resolve --${action} "${name}"`)
+      repaired++
+    }
+
+    return repaired
+  })
+}
+
 async function syncSchema() {
-  try {
-    runPrisma('npx prisma migrate deploy')
-    console.log('[migrate] migrate deploy succeeded')
-  } catch (deployErr) {
-    console.warn(
-      '[migrate] migrate deploy failed — falling back to db push:',
-      deployErr instanceof Error ? deployErr.message : deployErr
-    )
-    runPrisma('npx prisma db push --skip-generate --accept-data-loss')
-    console.log('[migrate] db push succeeded')
-    return
+  const url = process.env.DATABASE_URL
+  if (!url) throw new Error('DATABASE_URL is not set')
+
+  const repaired = await repairFailedMigrations(url)
+  if (repaired > 0) {
+    console.log(`[migrate] repaired ${repaired} failed migration record(s)`)
   }
 
-  const hasSession = await sessionTableExists(process.env.DATABASE_URL)
+  runPrisma('npx prisma migrate deploy')
+  console.log('[migrate] migrate deploy succeeded')
+
+  const hasSession = await sessionTableExists(url)
   if (!hasSession) {
-    console.warn(
-      '[migrate] migrations marked applied but Session table missing — running db push'
+    throw new Error(
+      '[migrate] migrations applied but Session table missing — manual schema repair required'
     )
-    runPrisma('npx prisma db push --skip-generate --accept-data-loss')
-    console.log('[migrate] schema repair via db push succeeded')
   }
 }
 
