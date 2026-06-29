@@ -4,11 +4,12 @@ import { isPublicApi, isPublicPage } from '@/lib/public-routes'
 
 describe('public-routes', () => {
   it('allows welcome and auth pages without session', () => {
+    assert.equal(isPublicPage('/'), true)
     assert.equal(isPublicPage('/welcome'), true)
     assert.equal(isPublicPage('/login'), true)
     assert.equal(isPublicPage('/signup'), true)
     assert.equal(isPublicPage('/forgot-password'), true)
-    assert.equal(isPublicPage('/'), false)
+    assert.equal(isPublicPage('/home'), false)
     assert.equal(isPublicPage('/discover'), false)
     assert.equal(isPublicPage('/embed/abc'), false)
   })

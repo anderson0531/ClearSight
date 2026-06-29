@@ -18,7 +18,7 @@ export function LandingHeader() {
   return (
     <header className="landing-header sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(12,14,20,0.88)] backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-        <Link href="/welcome#top" className="flex shrink-0 items-center">
+        <Link href="/#top" className="flex shrink-0 items-center">
           <ClearSightLogo className="!h-11 !w-11 sm:!h-12 sm:!w-12" wordmarkClassName="text-lg sm:text-xl" />
         </Link>
 
@@ -39,7 +39,7 @@ export function LandingHeader() {
           <Link href="/login" className="btn-ghost hidden text-xs sm:inline-flex sm:text-sm">
             {t('landingNavSignIn')}
           </Link>
-            <Link href="/signup?plan=FREE&next=/" className="btn-accent text-xs sm:text-sm">
+            <Link href="/signup?plan=FREE&next=/home" className="btn-accent text-xs sm:text-sm">
               {t('landingNavGetStarted')}
             </Link>
         </div>

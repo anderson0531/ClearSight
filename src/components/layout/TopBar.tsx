@@ -51,7 +51,7 @@ export function TopBar() {
 
   return (
     <header className="top-bar">
-      <Link href="/" className="top-bar-logo group" aria-label="ClearSight home">
+      <Link href="/home" className="top-bar-logo group" aria-label="ClearSight home">
         <ClearSightLogo brandClassName="clearsight-brand--header" className="transition-transform duration-300 group-hover:scale-[1.02]" />
       </Link>
 

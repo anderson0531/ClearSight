@@ -14,7 +14,7 @@ function SignupForm() {
   const params = useSearchParams()
   const { refresh } = useUser()
   const planParam = params.get('plan')
-  const nextUrl = params.get('next') || (planParam && planParam !== 'FREE' ? '/premium' : '/')
+  const nextUrl = params.get('next') || (planParam && planParam !== 'FREE' ? '/premium' : '/home')
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')

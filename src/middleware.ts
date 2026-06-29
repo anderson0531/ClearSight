@@ -58,7 +58,14 @@ export function middleware(request: NextRequest) {
   if (authed && (pathname === '/login' || pathname === '/signup')) {
     const next = request.nextUrl.searchParams.get('next')
     const dest = request.nextUrl.clone()
-    dest.pathname = next && next.startsWith('/') ? next : '/'
+    dest.pathname = next && next.startsWith('/') ? next : '/home'
+    dest.search = ''
+    return NextResponse.redirect(dest)
+  }
+
+  if (authed && (pathname === '/' || pathname === '/welcome')) {
+    const dest = request.nextUrl.clone()
+    dest.pathname = '/home'
     dest.search = ''
     return NextResponse.redirect(dest)
   }

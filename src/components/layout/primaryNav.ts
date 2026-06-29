@@ -13,7 +13,7 @@ export interface PrimaryNavItem {
  */
 export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
   const items: PrimaryNavItem[] = [
-    { href: '/', key: 'navHome', icon: Home },
+    { href: '/home', key: 'navHome', icon: Home },
     { href: '/discover', key: 'navSearch', icon: Search },
     { href: '/library', key: 'navLibrary', icon: ScanEye },
   ]

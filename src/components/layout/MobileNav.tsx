@@ -14,7 +14,7 @@ export function MobileNav() {
   const tabs = buildPrimaryNav(plan)
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/'
+    if (href === '/home') return pathname === '/home'
     return pathname.startsWith(href)
   }
 

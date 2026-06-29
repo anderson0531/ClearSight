@@ -1,95 +1,38 @@
-'use client'
+import type { Metadata } from 'next'
+import { LandingHeader } from '@/components/landing/LandingHeader'
+import { LandingChannelShowcase } from '@/components/landing/LandingChannelShowcase'
+import { LandingDiscoverGlobally } from '@/components/landing/LandingDiscoverGlobally'
+import { LandingHeroSection } from '@/components/landing/LandingHeroSection'
+import { LandingLanguages } from '@/components/landing/LandingLanguages'
+import { LandingPricing } from '@/components/landing/LandingPricing'
+import { LandingFooter } from '@/components/landing/LandingFooter'
+import { CLEARSIGHT_BRIEF_OPENING_FRAME_URL } from '@/lib/clearsight-brief-opening-video'
 
-import Link from 'next/link'
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Search } from 'lucide-react'
-import { HomeContinueListeningRow } from '@/components/discovery/HomeContinueListeningRow'
-import { HomeDiscoveryFeed } from '@/components/discovery/HomeDiscoveryFeed'
-import { UpgradeCTA } from '@/components/premium/UpgradeCTA'
-import { useUser } from '@/components/providers/UserProvider'
-import {
-  SAVED_SEARCHES_EVENT,
-  loadSavedSearches,
-  type SavedSearch,
-} from '@/lib/saved-searches'
-import { useI18n } from '@/i18n/I18nProvider'
-import type { TaxonomyFilter } from '@/lib/taxonomy'
-import { persistTaxonomyFilter } from '@/lib/taxonomy-persistence'
-
-function greetingKey(): 'homeGreetingMorning' | 'homeGreetingAfternoon' | 'homeGreetingEvening' {
-  const hour = new Date().getHours()
-  if (hour < 12) return 'homeGreetingMorning'
-  if (hour < 17) return 'homeGreetingAfternoon'
-  return 'homeGreetingEvening'
+export const metadata: Metadata = {
+  title: 'ClearSight — Verified briefings & on-demand podcasts',
+  description:
+    'Source-verified news briefings and on-demand channels in 40+ languages. Cinematic intro animatics and flexible plans.',
+  openGraph: {
+    title: 'ClearSight — Verified briefings & on-demand podcasts',
+    description:
+      'Turn any topic into a source-verified briefing with host-voice audio and cinematic intro animatics.',
+    images: [{ url: CLEARSIGHT_BRIEF_OPENING_FRAME_URL, width: 1536, height: 864, alt: 'ClearSight hosts' }],
+  },
 }
 
-export default function HomePage() {
-  const { t, locale } = useI18n()
-  const { plan } = useUser()
-  const router = useRouter()
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([])
-
-  useEffect(() => {
-    const sync = () => setSavedSearches(loadSavedSearches())
-    sync()
-    window.addEventListener(SAVED_SEARCHES_EVENT, sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(SAVED_SEARCHES_EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [])
-
-  const openSavedSearch = (search: SavedSearch) => {
-    const restored: TaxonomyFilter = {
-      ...search.filter,
-      languages: [locale.englishName as TaxonomyFilter['languages'][number]],
-    }
-    persistTaxonomyFilter(restored)
-    router.push('/discover')
-  }
-
+export default function LandingPage() {
   return (
-    <main className="fade-in mx-auto max-w-7xl px-3 py-5 sm:px-4 sm:py-6">
-      <section className="home-hero home-hero-compact">
-        <p className="home-greeting">{t(greetingKey())}</p>
-        <h1 className="home-hero-title">{t('homeStartBrowsing')}</h1>
-        <Link href="/discover" className="home-search-entry">
-          <Search className="h-5 w-5 text-[var(--muted)]" />
-          <span>{t('homeSearchPrompt')}</span>
-        </Link>
-      </section>
-
-      {savedSearches.length > 0 ? (
-        <section className="home-quick-picks">
-          <div className="flex flex-wrap gap-2">
-            {savedSearches.map((search) => (
-              <button
-                key={search.id}
-                type="button"
-                onClick={() => openSavedSearch(search)}
-                className="filter-pill px-4 py-1.5 font-semibold"
-              >
-                {search.label}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <div className="home-feed space-y-8">
-        <HomeContinueListeningRow />
-        <HomeDiscoveryFeed />
-      </div>
-
-      {plan === 'FREE' ? (
-        <UpgradeCTA
-          title={t('homeUpsellTitle')}
-          body={t('homeUpsellBody')}
-          className="mt-8"
-        />
-      ) : null}
-    </main>
+    <div className="landing-page min-h-screen bg-[var(--background)]">
+      <LandingHeader />
+      <main className="fade-in mx-auto max-w-6xl px-4 pb-20">
+        <LandingHeroSection>
+          <LandingChannelShowcase />
+        </LandingHeroSection>
+        <LandingDiscoverGlobally />
+        <LandingLanguages />
+        <LandingPricing />
+        <LandingFooter />
+      </main>
+    </div>
   )
 }
