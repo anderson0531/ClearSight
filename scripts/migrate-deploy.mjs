@@ -9,12 +9,17 @@ import {
   resolveAndApplyDatabaseEnv,
 } from './database-url.mjs'
 
-/** Migrations that may be marked failed when their objects already exist. */
+/**
+ * When a migration failed mid-apply, mark it applied if its schema objects
+ * already exist so migrate deploy can continue.
+ */
 const MIGRATION_OBJECT_CHECKS = {
-  '20250619160000_story_questions': {
-    table: 'StoryQuestion',
-    resolveAppliedIfExists: true,
+  '20250619160000_story_questions': { table: 'StoryQuestion' },
+  '20250619170000_story_question_audio_status': {
+    column: { table: 'StoryQuestion', name: 'audioStatus' },
   },
+  '20250623140000_story_quiz_progress': { table: 'StoryQuizProgress' },
+  '20250622120000_channel_intro_audio': { table: 'ChannelIntroAudio' },
 }
 
 async function withClient(url, fn) {
@@ -39,12 +44,63 @@ async function tableExists(client, tableName) {
   return result.rows[0]?.exists === true
 }
 
+async function columnExists(client, tableName, columnName) {
+  const result = await client.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1
+         AND column_name = $2
+     ) AS exists`,
+    [tableName, columnName]
+  )
+  return result.rows[0]?.exists === true
+}
+
+async function migrationObjectsExist(client, check) {
+  if (check.table) {
+    return tableExists(client, check.table)
+  }
+  if (check.column) {
+    return columnExists(client, check.column.table, check.column.name)
+  }
+  return false
+}
+
 async function sessionTableExists(url) {
   return withClient(url, (client) => tableExists(client, 'Session'))
 }
 
 function runPrisma(command) {
   execSync(command, { stdio: 'inherit', env: process.env })
+}
+
+function runPrismaCapture(command) {
+  try {
+    const stdout = execSync(command, {
+      stdio: ['inherit', 'pipe', 'pipe'],
+      env: process.env,
+      encoding: 'utf8',
+    })
+    return { ok: true, output: stdout }
+  } catch (err) {
+    const output = `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`
+    return { ok: false, output }
+  }
+}
+
+function extractFailedMigrationName(output) {
+  const match = output.match(/Migration name: ([^\s\n]+)/)
+  return match?.[1] ?? null
+}
+
+function shouldResolveAsApplied(output) {
+  return (
+    /already exists/i.test(output) ||
+    /duplicate column/i.test(output) ||
+    /duplicate key value/i.test(output)
+  )
 }
 
 async function repairFailedMigrations(url) {
@@ -68,9 +124,8 @@ async function repairFailedMigrations(url) {
       const check = MIGRATION_OBJECT_CHECKS[name]
       let action = 'rolled-back'
 
-      if (check?.resolveAppliedIfExists && check.table) {
-        const exists = await tableExists(client, check.table)
-        if (exists) action = 'applied'
+      if (check && (await migrationObjectsExist(client, check))) {
+        action = 'applied'
       }
 
       console.warn(`[migrate] resolving failed migration ${name} as ${action}`)
@@ -91,8 +146,26 @@ async function syncSchema() {
     console.log(`[migrate] repaired ${repaired} failed migration record(s)`)
   }
 
-  runPrisma('npx prisma migrate deploy')
-  console.log('[migrate] migrate deploy succeeded')
+  const maxAttempts = 8
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = runPrismaCapture('npx prisma migrate deploy')
+    if (result.ok) {
+      console.log('[migrate] migrate deploy succeeded')
+      break
+    }
+
+    const migrationName = extractFailedMigrationName(result.output)
+    if (migrationName && shouldResolveAsApplied(result.output)) {
+      console.warn(
+        `[migrate] ${migrationName} objects already exist — marking applied (attempt ${attempt}/${maxAttempts})`
+      )
+      runPrisma(`npx prisma migrate resolve --applied "${migrationName}"`)
+      continue
+    }
+
+    console.error(result.output)
+    throw new Error('npx prisma migrate deploy failed')
+  }
 
   const hasSession = await sessionTableExists(url)
   if (!hasSession) {
