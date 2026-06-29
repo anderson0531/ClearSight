@@ -113,6 +113,7 @@ export async function provisionSubscriptionCycle(
     const updated = await tx.user.update({
       where: { id: userId },
       data: {
+        plan,
         subscriptionActive: plan !== 'FREE',
         subscriptionCycleStart: new Date(),
         delinquentSince: null,

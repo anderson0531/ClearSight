@@ -50,6 +50,7 @@ export default function AccountPage() {
     paymentBypass,
     loading,
     refresh,
+    applyUser,
   } = useUser()
 
   const [profileName, setProfileName] = useState('')
@@ -166,13 +167,13 @@ export default function AccountPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: targetPlan }),
       })
-      const data = await res.json().catch(() => null)
-      if (data?.bypass === false && data?.checkoutUrl) {
-        window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer')
-      } else {
-        await refresh()
-        await loadHistory()
-      }
+      const data = (await res.json().catch(() => null)) as {
+        user?: Parameters<typeof applyUser>[0]
+        error?: string
+      } | null
+      if (!res.ok || !data?.user) return
+      applyUser(data.user)
+      await loadHistory()
     } finally {
       setBusy(null)
     }

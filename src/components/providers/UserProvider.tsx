@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { Plan } from '@/lib/plans'
 import { fetchWithTimeout } from '@/lib/client-fetch'
 
+import type { PublicUser } from '@/lib/account'
+
 export interface UserContextValue {
   id: string | null
   plan: Plan
@@ -16,12 +18,13 @@ export interface UserContextValue {
   paymentBypass: boolean
   loading: boolean
   refresh: () => Promise<void>
+  applyUser: (user: PublicUser) => void
 }
 
 const UserContext = createContext<UserContextValue | null>(null)
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<Omit<UserContextValue, 'refresh'>>({
+  const [state, setState] = useState<Omit<UserContextValue, 'refresh' | 'applyUser'>>({
     id: null,
     plan: 'FREE',
     coreTokens: null,
@@ -33,6 +36,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     paymentBypass: false,
     loading: true,
   })
+
+  const applyUser = useCallback((user: PublicUser) => {
+    setState({
+      id: user.id,
+      plan: user.plan,
+      coreTokens: user.coreTokens,
+      subscriptionActive: user.subscriptionActive,
+      email: user.email,
+      name: user.name,
+      authenticated: user.authenticated,
+      demoMode: user.demoMode,
+      paymentBypass: user.paymentBypass,
+      loading: false,
+    })
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -75,7 +93,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     void refresh()
   }, [refresh])
 
-  const value = useMemo(() => ({ ...state, refresh }), [state, refresh])
+  const value = useMemo(() => ({ ...state, refresh, applyUser }), [state, refresh, applyUser])
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>
 }

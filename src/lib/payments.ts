@@ -23,21 +23,21 @@ export async function autoConfirmSubscription(userId: string, plan: Plan) {
     where: { id: userId },
     select: { plan: true },
   })
-  const previousPlan = existing?.plan ?? 'FREE'
-  const isUpgrade = planRank(previousPlan) < planRank(plan) && previousPlan !== 'FREE'
-
-  if (isUpgrade) {
-    await provisionSubscriptionCycle(userId, plan, {
-      resetBalances: false,
-      previousPlan,
-    })
-  } else {
-    await provisionSubscriptionCycle(userId, plan, { resetBalances: true })
+  if (!existing) {
+    throw new Error(`User not found: ${userId}`)
   }
 
-  return prisma.user.update({
+  const previousPlan = existing.plan ?? 'FREE'
+  const isMidTierUpgrade =
+    planRank(previousPlan) < planRank(plan) && previousPlan !== 'FREE'
+
+  await provisionSubscriptionCycle(userId, plan, {
+    resetBalances: !isMidTierUpgrade,
+    previousPlan: isMidTierUpgrade ? previousPlan : undefined,
+  })
+
+  return prisma.user.findUniqueOrThrow({
     where: { id: userId },
-    data: { plan },
     select: {
       id: true,
       plan: true,

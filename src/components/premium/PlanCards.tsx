@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { Check, ExternalLink } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
 import {
@@ -31,7 +31,6 @@ function PlanTrack({
   featuredId,
   currentPlan,
   busy,
-  paymentBypass,
   onSubscribe,
 }: {
   title: string
@@ -40,7 +39,6 @@ function PlanTrack({
   featuredId?: Plan
   currentPlan: Plan
   busy: string | null
-  paymentBypass: boolean
   onSubscribe: (plan: Plan) => void
 }) {
   const t = useTranslations()
@@ -81,7 +79,7 @@ function PlanTrack({
                 <button type="button" disabled className="btn-ghost mt-6 w-full opacity-60">
                   {t('premiumCurrentPlan')}
                 </button>
-              ) : paymentBypass ? (
+              ) : (
                 <button
                   type="button"
                   disabled={busy !== null}
@@ -90,16 +88,6 @@ function PlanTrack({
                 >
                   {busy === `plan:${planId}` ? t('accountProcessing') : t(planCtaKey(planId) as never)}
                 </button>
-              ) : (
-                <a
-                  href={details.checkoutUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-accent mt-6 w-full"
-                >
-                  {t(planCtaKey(planId) as never)}
-                  <ExternalLink className="h-4 w-4" />
-                </a>
               )}
             </div>
           )
@@ -115,14 +103,16 @@ export function PlanCards({
 }: PlanCardsProps) {
   const t = useTranslations()
   const router = useRouter()
-  const { plan, authenticated, paymentBypass, refresh } = useUser()
+  const { plan, authenticated, paymentBypass, refresh, applyUser } = useUser()
   const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleSubscribe = async (targetPlan: Plan) => {
     if (!authenticated) {
-      router.push(`/signup?plan=${targetPlan}&next=${encodeURIComponent('/')}`)
+      router.push(`/signup?plan=${targetPlan}&next=${encodeURIComponent('/premium')}`)
       return
     }
+    setError(null)
     setBusy(`plan:${targetPlan}`)
     try {
       const res = await fetch('/api/billing/subscribe', {
@@ -130,12 +120,15 @@ export function PlanCards({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: targetPlan }),
       })
-      const data = await res.json().catch(() => null)
-      if (data?.bypass === false && data?.checkoutUrl) {
-        window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer')
-      } else {
-        await refresh()
+      const data = (await res.json().catch(() => null)) as {
+        user?: Parameters<typeof applyUser>[0]
+        error?: string
+      } | null
+      if (!res.ok || !data?.user) {
+        setError(data?.error ?? t('authGenericError'))
+        return
       }
+      applyUser(data.user)
     } finally {
       setBusy(null)
     }
@@ -161,6 +154,11 @@ export function PlanCards({
 
   return (
     <div className="space-y-10">
+      {error ? (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+          {error}
+        </p>
+      ) : null}
       <PlanTrack
         title={t('pricingConsumerTitle')}
         subtitle={consumerSubtitle ?? t('pricingConsumerSubtitle')}
@@ -168,7 +166,6 @@ export function PlanCards({
         featuredId="PREMIUM_PLUS"
         currentPlan={plan}
         busy={busy}
-        paymentBypass={paymentBypass}
         onSubscribe={(p) => void handleSubscribe(p)}
       />
 

@@ -12,7 +12,7 @@ function SignupForm() {
   const t = useTranslations()
   const router = useRouter()
   const params = useSearchParams()
-  const { refresh } = useUser()
+  const { refresh, applyUser } = useUser()
   const planParam = params.get('plan')
   const nextUrl = params.get('next') || (planParam && planParam !== 'FREE' ? '/premium' : '/home')
 
@@ -57,12 +57,15 @@ function SignupForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: planToActivate }),
       })
-      const subData = await sub.json().catch(() => null)
-      if (subData?.bypass === false && subData?.checkoutUrl && planToActivate !== 'FREE') {
-        window.open(subData.checkoutUrl, '_blank', 'noopener,noreferrer')
+      const subData = (await sub.json().catch(() => null)) as {
+        user?: Parameters<typeof applyUser>[0]
+        error?: string
+      } | null
+      if (!sub.ok || !subData?.user) {
+        setError(subData?.error ?? t('authGenericError'))
+        return
       }
-
-      await refresh()
+      applyUser(subData.user)
       router.push(nextUrl)
       router.refresh()
     } catch {
