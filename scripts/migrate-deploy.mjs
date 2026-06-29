@@ -146,10 +146,12 @@ async function syncSchema() {
     console.log(`[migrate] repaired ${repaired} failed migration record(s)`)
   }
 
-  const maxAttempts = 8
+  const maxAttempts = 24
+  let deploySucceeded = false
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const result = runPrismaCapture('npx prisma migrate deploy')
     if (result.ok) {
+      deploySucceeded = true
       console.log('[migrate] migrate deploy succeeded')
       break
     }
@@ -165,6 +167,12 @@ async function syncSchema() {
 
     console.error(result.output)
     throw new Error('npx prisma migrate deploy failed')
+  }
+
+  if (!deploySucceeded) {
+    throw new Error(
+      `[migrate] migrate deploy did not succeed after ${maxAttempts} partial-migration repairs`
+    )
   }
 
   const hasSession = await sessionTableExists(url)

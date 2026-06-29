@@ -53,6 +53,7 @@ import {
 } from '@/lib/scene-flow-lite'
 import { findLatestSceneFlowEpisode } from '@/lib/scene-flow-lite-db'
 import { patternMatrixOpeningVisuals } from '@/lib/pattern-matrix-opening-video'
+import { clearsightBriefOpeningVisuals } from '@/lib/clearsight-brief-opening-video'
 import { finalizeEpisodeAnimaticBookends, showSupportsHostsVideoBookends } from '@/lib/episode-hosts-video-bookends'
 import {
   buildPatternMatrixIllustrationScene,

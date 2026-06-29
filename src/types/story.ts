@@ -154,6 +154,9 @@ export interface AudioTrack {
   thumbnailUrl?: string | null
   durationSeconds?: number | null
   storyId: string
+  /** Channel that produced the episode. */
+  showId?: string
+  contentType?: ContentType
   /** When true, the global player skips ducked background underscore beds. */
   disableBackgroundMusic?: boolean
 }

@@ -102,7 +102,10 @@ When withinGuidelines=true and not hypersensitive, sanitizedPrompt may lightly r
   const started = Date.now()
   try {
     const raw = await vertexGenerateText(prompt, { model: VERTEX_FAST_MODEL })
-    const result = parseProbeResponse(raw.text)
+    if (!raw) {
+      return { verdict: 'escalate', reason: 'Safety probe returned no text — blocking expensive downstream call' }
+    }
+    const result = parseProbeResponse(raw)
     console.info(
       `[content-safety] ${input.context} verdict=${result.verdict} ms=${Date.now() - started}`
     )

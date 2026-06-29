@@ -1,5 +1,6 @@
 import { HOST_ART, HOST_CHARACTER_REF } from '@/lib/host-art'
-import type { HostProfile, Show } from '@/lib/shows'
+import type { Show } from '@/lib/shows'
+import type { HostProfile } from '@/lib/hosts'
 import { fetchReferenceImageBytes, type ResolvedSubjectReference } from '@/lib/visual-subjects'
 
 const GENERIC_HOST_STUDIO =

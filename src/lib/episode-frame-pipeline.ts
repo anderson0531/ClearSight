@@ -83,7 +83,7 @@ export function frameLineNeedsIllustration(line: EpisodeFramePlanLine): boolean 
     durationSeconds: 0,
     text: line.text,
     role: line.role,
-    frameKind: line.frameKind,
+    frameKind: line.frameKind ?? undefined,
     imageUrl: line.imageUrl,
     visualMedium: line.visualMedium,
     videoUrl: line.videoUrl,

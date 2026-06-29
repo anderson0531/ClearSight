@@ -1,5 +1,5 @@
 import { put } from '@vercel/blob'
-import type { PodcastTurn } from '@/lib/generate-story'
+import type { PodcastTurn } from '@/lib/editorial-review'
 import type { MathFoundationNode } from '@/types/story'
 import type { Show } from '@/lib/shows'
 import { vertexGenerateImage, vertexGenerateText, VERTEX_FAST_MODEL } from '@/lib/vertex'

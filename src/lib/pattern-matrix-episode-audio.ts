@@ -61,8 +61,8 @@ export function resolveEpisodeMusicBed(
 
 export function resolveEpisodeMusicVolumeRatio(
   segment: AudioSegment | undefined,
+  defaultRatio: number,
   showId?: string | null,
-  defaultRatio: number
 ): number {
   if (typeof segment?.musicVolumeRatio === 'number') {
     return segment.musicVolumeRatio

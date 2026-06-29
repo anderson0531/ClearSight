@@ -5,7 +5,8 @@ import {
 } from '@/lib/gemini-tts-dialogue'
 import { estimateSpeechDurationSeconds } from '@/lib/channel-intro-timeline'
 import { buildIntroTtsPrompt } from '@/lib/intro-tts'
-import { HOST_AMARA, HOST_MALIK, type HostProfile } from '@/lib/shows'
+import { HOST_AMARA, HOST_MALIK } from '@/lib/shows'
+import type { HostProfile } from '@/lib/hosts'
 import {
   PATTERN_MATRIX_DIALOGUE_SCENE_PROMPT,
   PATTERN_MATRIX_HOST_VOICES,

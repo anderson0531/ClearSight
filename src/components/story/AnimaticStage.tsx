@@ -351,8 +351,8 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     () =>
       resolveEpisodeMusicVolumeRatio(
         segments?.[segmentIndex],
+        BACKGROUND_MUSIC_VOLUME_RATIO,
         showId,
-        BACKGROUND_MUSIC_VOLUME_RATIO
       ),
     [segments, segmentIndex, showId]
   )
@@ -400,7 +400,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         music.loop = bed.loop
         music.load()
       }
-      const ratio = resolveEpisodeMusicVolumeRatio(segment, showId, BACKGROUND_MUSIC_VOLUME_RATIO)
+      const ratio = resolveEpisodeMusicVolumeRatio(segment, BACKGROUND_MUSIC_VOLUME_RATIO, showId)
       music.volume = (muted ? 0 : volume) * ratio
       if (playing) void music.play().catch(() => {})
       else music.pause()
@@ -599,7 +599,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     const segment = segments?.[segmentIndex]
     const src = segmentDisplayVideo(segment, useIllustrations)
 
-    if (!src) {
+    if (!segment || !src) {
       video.pause()
       video.removeAttribute('src')
       return
@@ -627,7 +627,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     const music = musicRef.current
     if (music) {
       const segment = segments?.[segmentIndex]
-      const ratio = resolveEpisodeMusicVolumeRatio(segment, showId, BACKGROUND_MUSIC_VOLUME_RATIO)
+      const ratio = resolveEpisodeMusicVolumeRatio(segment, BACKGROUND_MUSIC_VOLUME_RATIO, showId)
       music.volume = (muted ? 0 : volume) * ratio
     }
     const video = videoRef.current

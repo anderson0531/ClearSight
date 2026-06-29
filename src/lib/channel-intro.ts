@@ -428,16 +428,22 @@ export async function resolveChannelIntro(
         error: 'Intro generation timed out. Try again.',
       }
     }
-    const progressStage = 'progressStage' in row ? row.progressStage : null
+    const progressStage =
+      'progressStage' in row && typeof row.progressStage === 'string'
+        ? row.progressStage
+        : null
     if (row.status === 'QUEUED' && isStuckIntroGeneration(row.updatedAt) && !progressStage) {
       return { status: 'missing' }
     }
     return {
       status: 'generating',
       progressStage: progressStage ?? 'queued',
-      progressStep: 'progressStep' in row ? row.progressStep : null,
+      progressStep:
+        'progressStep' in row && typeof row.progressStep === 'number'
+          ? row.progressStep
+          : null,
       progressTotal:
-        'progressTotal' in row && row.progressTotal
+        'progressTotal' in row && typeof row.progressTotal === 'number' && row.progressTotal
           ? row.progressTotal
           : introProgressTotalSteps(showId),
       progressUpdatedAt: row.updatedAt.toISOString(),

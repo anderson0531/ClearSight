@@ -15,6 +15,15 @@ import { assertIllustrationsActive } from '@/lib/generation-cancel'
 const ILLUSTRATION_ERROR_MESSAGE =
   'Illustrations incomplete — open the story and tap Complete frames to retry.'
 
+type IllustrationRenderResult = Awaited<ReturnType<typeof renderStoryAnimatic>> & {
+  incomplete?: boolean
+}
+
+/** Inngest step.run JSON-serializes return values; cast back to the render shape. */
+function asIllustrationRenderResult(value: unknown): IllustrationRenderResult {
+  return value as IllustrationRenderResult
+}
+
 /** Stay under the Inngest route maxDuration (300s) with sequential Imagen + backoff. */
 const FRAMES_PER_INNGEST_PASS = 4
 const MAX_ILLUSTRATION_PASSES = 40
@@ -79,7 +88,7 @@ export const renderPodcastIllustrations = inngest.createFunction(
       return { storyId, notified: false, skipped: true }
     }
 
-    let renderResult: Awaited<ReturnType<typeof renderStoryAnimatic>> | null = null
+    let renderResult: IllustrationRenderResult | null = null
     let skipped = false
 
     for (let pass = 0; pass < MAX_ILLUSTRATION_PASSES; pass++) {
@@ -138,10 +147,16 @@ export const renderPodcastIllustrations = inngest.createFunction(
         break
       }
 
-      renderResult = batch
+      renderResult = asIllustrationRenderResult(batch)
 
       if (!batch.framesIncomplete) break
-      if (batch.newlyRenderedImages === 0 && batch.failed > 0) break
+      if (
+        batch.newlyRenderedImages === 0 &&
+        typeof batch.failed === 'number' &&
+        batch.failed > 0
+      ) {
+        break
+      }
     }
 
     if (skipped || !renderResult) {
@@ -154,7 +169,8 @@ export const renderPodcastIllustrations = inngest.createFunction(
       typeof renderResult.failed === 'number' &&
       renderResult.failed > 0
     ) {
-      renderResult = await step.run('retry-failed-frames', async () => {
+      renderResult = asIllustrationRenderResult(
+        await step.run('retry-failed-frames', async () => {
         await assertIllustrationsActive(generationId)
         try {
           const result = await renderStoryAnimatic(storyId, {
@@ -171,6 +187,7 @@ export const renderPodcastIllustrations = inngest.createFunction(
           return { skipped: false as const, incomplete: true, failed: true, newlyRenderedImages: 0 }
         }
       })
+      )
     }
 
     await step.run('finalize-illustrations', async () => {

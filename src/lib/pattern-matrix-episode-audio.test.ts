@@ -58,9 +58,9 @@ test('resolveEpisodeMusicBed prefers segment metadata for Pattern Matrix', () =>
 
 test('resolveEpisodeMusicVolumeRatio honors per-segment ratio', () => {
   const tagged = { ...dialogueSegment, musicVolumeRatio: 0.35 }
-  assert.equal(resolveEpisodeMusicVolumeRatio(tagged, 'clearsight-math', 0.15), 0.35)
+  assert.equal(resolveEpisodeMusicVolumeRatio(tagged, 0.15, 'clearsight-math'), 0.35)
   assert.equal(
-    resolveEpisodeMusicVolumeRatio(dialogueSegment, 'clearsight-math', 0.15),
+    resolveEpisodeMusicVolumeRatio(dialogueSegment, 0.15, 'clearsight-math'),
     PATTERN_MATRIX_EPISODE_MUSIC_VOLUME
   )
 })
