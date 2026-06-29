@@ -11,8 +11,10 @@ import {
   type QuizChoiceId,
 } from '@/lib/episode-quiz'
 
+const quizChoiceSchema = z.enum(['a', 'b', 'c', 'd'])
+
 const bodySchema = z.object({
-  answers: z.record(z.enum(['a', 'b', 'c', 'd'])),
+  answers: z.record(z.string(), quizChoiceSchema),
 })
 
 export async function POST(
