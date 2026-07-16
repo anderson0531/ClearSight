@@ -12,9 +12,15 @@ export interface ParsedEpisodeScript {
     text: string
     chapterBreak?: boolean
     role?: string
+    segmentKind?: 'dialogue' | 'music'
     musicMood?: string
+    musicCue?: string
+    musicDurationSeconds?: number
+    sceneId?: string
+    characterIds?: string[]
     illustrate?: boolean
     scene?: string
+    visualPrompt?: string
     visualBeat?: number
     spanGroup?: string
     visualMedium?: string
@@ -37,9 +43,11 @@ export function deserializeEpisodeScriptDraft(raw: unknown): ParsedEpisodeScript
   if (!raw || typeof raw !== 'object') return null
   const draft = raw as EpisodeScriptDraft
   if (!Array.isArray(draft.turns) || draft.turns.length === 0) return null
-  const turns = draft.turns.filter(
-    (turn) => turn && typeof turn === 'object' && typeof turn.text === 'string' && turn.text.trim()
-  ) as ParsedEpisodeScript['turns']
+  const turns = draft.turns.filter((turn) => {
+    if (!turn || typeof turn !== 'object') return false
+    if (turn.segmentKind === 'music') return true
+    return typeof turn.text === 'string' && turn.text.trim().length > 0
+  }) as ParsedEpisodeScript['turns']
   if (turns.length === 0) return null
   return {
     directorNotes: typeof draft.directorNotes === 'string' ? draft.directorNotes : '',

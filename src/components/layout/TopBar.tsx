@@ -11,6 +11,7 @@ import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
 import type { Plan } from '@/lib/plans'
 import { planRank } from '@/lib/plans'
+import { GeneratingIndicator } from '@/components/layout/GeneratingIndicator'
 import { formatCreditsDisplay } from '@/lib/credit-units'
 
 function showUpgradeButton(plan: Plan): boolean {
@@ -51,9 +52,11 @@ export function TopBar() {
 
   return (
     <header className="top-bar">
-      <Link href="/home" className="top-bar-logo group" aria-label="ClearSight home">
+      <Link href="/discover" className="top-bar-logo group" aria-label="ClearSight home">
         <ClearSightLogo brandClassName="clearsight-brand--header" className="transition-transform duration-300 group-hover:scale-[1.02]" />
       </Link>
+
+      <GeneratingIndicator />
 
       <div className="top-bar-menu" ref={menuRef}>
         <button

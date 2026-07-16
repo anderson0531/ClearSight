@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import type { Plan } from '@/lib/plans'
+import { normalizePlan, type Plan } from '@/lib/plans'
 import { fetchWithTimeout } from '@/lib/client-fetch'
 
 import type { PublicUser } from '@/lib/account'
@@ -40,7 +40,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const applyUser = useCallback((user: PublicUser) => {
     setState({
       id: user.id,
-      plan: user.plan,
+      plan: normalizePlan(user.plan),
       coreTokens: user.coreTokens,
       subscriptionActive: user.subscriptionActive,
       email: user.email,
@@ -74,7 +74,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       }
       setState({
         id: data.id ?? null,
-        plan: data.plan ?? 'FREE',
+        plan: normalizePlan(data.plan),
         coreTokens: data.coreTokens ?? null,
         subscriptionActive: Boolean(data.subscriptionActive),
         email: data.email ?? null,

@@ -11,6 +11,7 @@ import {
   generationDurationLabel,
   isGenerationInProgress,
 } from '@/lib/generation-ui'
+import { ProgressBar } from '@/components/ui/ProgressBar'
 import {
   generationProgressPercent,
   generationStageLabelKey,
@@ -226,30 +227,12 @@ function EpisodeProgress({ ctx, durationLabel }: EpisodeProgressProps) {
 
   return (
     <>
-      <p className="mt-2 text-xs font-semibold text-[var(--accent)]">{ctx.activityLabel}</p>
       {ctx.illustrationsPending && durationLabel ? (
         <p className="mt-1 text-xs text-[var(--muted-strong)]">
           {t(durationLabel.key, durationLabel.params)}
         </p>
       ) : null}
-      <div className="mt-1.5 flex items-center gap-2">
-        <div
-          className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10"
-          role="progressbar"
-          aria-valuenow={ctx.percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={ctx.activityLabel}
-        >
-          <div
-            className="h-full rounded-full bg-[var(--accent)] transition-all duration-700 ease-out"
-            style={{ width: `${ctx.percent}%` }}
-          />
-        </div>
-        <span className="shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-strong)]">
-          {ctx.percent}%
-        </span>
-      </div>
+      <ProgressBar className="mt-2" label={ctx.activityLabel} percent={ctx.percent} />
     </>
   )
 }

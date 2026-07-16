@@ -1,6 +1,8 @@
 import type { Plan } from '@/lib/plans'
 
 export interface PlanEntitlements {
+  /** Pre-roll audio + display ads during playback. */
+  showsAds: boolean
   onDemandGeneration: boolean
   screenOffAudio: boolean
   creditTopUps: boolean
@@ -14,6 +16,7 @@ export interface PlanEntitlements {
 }
 
 const FREE_ENTITLEMENTS: PlanEntitlements = {
+  showsAds: true,
   onDemandGeneration: false,
   screenOffAudio: false,
   creditTopUps: false,
@@ -28,6 +31,7 @@ const FREE_ENTITLEMENTS: PlanEntitlements = {
 
 const PREMIUM_BASE: PlanEntitlements = {
   ...FREE_ENTITLEMENTS,
+  showsAds: false,
   onDemandGeneration: true,
   screenOffAudio: true,
   creditTopUps: true,
@@ -58,6 +62,10 @@ export const PLAN_ENTITLEMENTS: Record<Plan, PlanEntitlements> = {
 
 export function getPlanEntitlements(plan: Plan): PlanEntitlements {
   return PLAN_ENTITLEMENTS[plan] ?? FREE_ENTITLEMENTS
+}
+
+export function shouldShowAds(plan: Plan): boolean {
+  return getPlanEntitlements(plan).showsAds
 }
 
 export function canGenerateOnDemand(plan: Plan): boolean {

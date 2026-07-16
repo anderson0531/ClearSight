@@ -5,6 +5,7 @@ import {
   characterReferenceUrlForHost,
   hostsReferencedInFrame,
   mergeSubjectReferences,
+  resolveFrameReferenceBundle,
 } from '@/lib/host-character-ref'
 import { HOST_AMARA, HOST_LENA, HOST_MALIK, SHOW_MATH } from '@/lib/shows'
 import type { ResolvedSubjectReference } from '@/lib/visual-subjects'
@@ -56,4 +57,32 @@ test('mergeSubjectReferences renumbers Imagen reference ids', () => {
   assert.equal(merged.length, 2)
   assert.equal(merged[0]?.referenceId, 1)
   assert.equal(merged[1]?.referenceId, 2)
+})
+
+test('resolveFrameReferenceBundle attaches scene ref when sceneId is set', async () => {
+  const prev = process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION
+  process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION = '0'
+  try {
+    const bundle = await resolveFrameReferenceBundle({
+      show: SHOW_MATH,
+      prompt: 'Alice at the cryptography lab bench.',
+      sceneBible: {
+        extractedAt: '2026-01-01T00:00:00.000Z',
+        scenes: [
+          {
+            id: 'lab-bench',
+            label: 'Cryptography lab bench',
+            descriptors: ['monitors'],
+            referenceImageUrl: 'https://example.com/lab.png',
+          },
+        ],
+      },
+      sceneId: 'lab-bench',
+      bibleRefs: [],
+    })
+    assert.equal(bundle.refs.length, 0)
+  } finally {
+    if (prev === undefined) delete process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION
+    else process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION = prev
+  }
 })

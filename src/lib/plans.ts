@@ -54,6 +54,7 @@ export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
     features: [
       'Browse all published briefings',
       'Listen with screen on (pauses in background)',
+      'Includes ads during playback',
       'View animatic with host portraits',
       'No on-demand generation',
     ],
@@ -69,6 +70,7 @@ export const PLAN_DETAILS: Record<Plan, PlanDetails> = {
     targetUser: 'Casual commuters and weekly hyper-local news trackers',
     features: [
       '15 on-demand credits / month',
+      'Ad-free listening',
       'Screen-off & background listening',
       '40-language audio toggle',
       'Basic visual animatic layouts',
@@ -116,6 +118,32 @@ export function isPlan(value: string | null | undefined): value is Plan {
   return typeof value === 'string' && (PLANS as readonly string[]).includes(value)
 }
 
+/** Legacy enum values and Whop aliases → current consumer tiers. */
+const LEGACY_PLAN_ALIASES: Record<string, Plan> = {
+  CREATOR: 'PREMIUM_ELITE',
+  CREATOR_PREMIUM: 'PREMIUM_ELITE',
+  CREATOR_PLUS: 'PREMIUM_ELITE',
+  CREATOR_ELITE: 'PREMIUM_ELITE',
+  EXPLORER: 'PREMIUM',
+  STARTER: 'PREMIUM_PLUS',
+  PRO: 'PREMIUM_ELITE',
+  STUDIO: 'PREMIUM_ELITE',
+}
+
+export function normalizePlan(value: string | null | undefined): Plan {
+  if (isPlan(value)) return value
+  if (value && LEGACY_PLAN_ALIASES[value]) return LEGACY_PLAN_ALIASES[value]!
+  return 'FREE'
+}
+
+export function isFreePlan(plan: Plan): boolean {
+  return plan === 'FREE'
+}
+
+export function isPaidPlan(plan: Plan): boolean {
+  return plan !== 'FREE'
+}
+
 /** Map legacy or Whop product ids to ClearSight plan tiers. */
 export function mapWhopPlanId(planId: string | null | undefined): Plan | null {
   if (!planId) return null
@@ -155,6 +183,7 @@ export function upgradeCreditDelta(previous: Plan, next: Plan): number {
 
 export {
   canGenerateOnDemand,
+  shouldShowAds,
   canPlayScreenOffAudio,
   canPurchaseCredits,
   canPurchaseOnDemandCredits,

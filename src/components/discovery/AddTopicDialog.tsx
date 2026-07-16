@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { Mic, X, Sparkles, AlertTriangle, HelpCircle, CheckCircle2, ImageIcon, Music2 } from 'lucide-react'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
+import { buildOptimisticJob, emitGenerationQueued } from '@/lib/generation-events'
 import { ensurePushSubscription } from '@/lib/push-client'
 import { getAllCountries } from '@/lib/geo-catalog'
 import { GeoSelect } from '@/components/layout/GeoSelect'
@@ -430,6 +431,20 @@ export function AddTopicDialog({
           setError(t('onDemandEnqueueError'))
         }
         return
+      }
+
+      const queuedPayload = (await res.json().catch(() => null)) as { generationId?: string } | null
+      if (queuedPayload?.generationId) {
+        emitGenerationQueued(
+          buildOptimisticJob({
+            id: queuedPayload.generationId,
+            title,
+            description: approved,
+            contentType: effectiveContentType,
+            category,
+            includeIllustrations: isSceneFlowLite || includeIllustrations,
+          })
+        )
       }
 
       setQueued(true)

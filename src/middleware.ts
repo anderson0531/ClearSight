@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { SESSION_COOKIE } from '@/lib/auth-constants'
+import { isLegacyDiscoverQuery, legacyDiscoverSearchTarget } from '@/lib/discover-redirect'
 import { AFFILIATE_COOKIE, GEO_COOKIE, parseGeoFromHeaders } from '@/lib/geo'
 import { isPublicApi, isPublicPage, isStaticAsset } from '@/lib/public-routes'
 
@@ -13,6 +14,18 @@ export function middleware(request: NextRequest) {
 
   if (isStaticAsset(pathname)) {
     return NextResponse.next()
+  }
+
+  if (pathname === '/home') {
+    const dest = request.nextUrl.clone()
+    dest.pathname = '/discover'
+    return NextResponse.redirect(dest)
+  }
+
+  if (pathname === '/discover' && isLegacyDiscoverQuery(request.nextUrl.searchParams)) {
+    const dest = request.nextUrl.clone()
+    dest.pathname = legacyDiscoverSearchTarget(request.nextUrl.searchParams)
+    return NextResponse.redirect(dest)
   }
 
   const response = NextResponse.next()
@@ -58,14 +71,14 @@ export function middleware(request: NextRequest) {
   if (authed && (pathname === '/login' || pathname === '/signup')) {
     const next = request.nextUrl.searchParams.get('next')
     const dest = request.nextUrl.clone()
-    dest.pathname = next && next.startsWith('/') ? next : '/home'
+    dest.pathname = next && next.startsWith('/') ? next : '/discover'
     dest.search = ''
     return NextResponse.redirect(dest)
   }
 
   if (authed && (pathname === '/' || pathname === '/welcome')) {
     const dest = request.nextUrl.clone()
-    dest.pathname = '/home'
+    dest.pathname = '/discover'
     dest.search = ''
     return NextResponse.redirect(dest)
   }

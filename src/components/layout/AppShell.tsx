@@ -1,6 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
+import { AdPageBanner } from '@/components/ads/AdPageBanner'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { MobileNav } from '@/components/layout/MobileNav'
 import { TopBar } from '@/components/layout/TopBar'
@@ -19,7 +20,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <AppSidebar />
       <div className="app-main">
         <TopBar />
-        <div className="app-content">{children}</div>
+        <div className="app-content">
+          <AdPageBanner />
+          {children}
+        </div>
       </div>
       <MobileNav />
     </div>

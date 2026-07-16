@@ -223,7 +223,7 @@ export function StoryPageHeader({
     <header className="border-b border-[var(--border)] bg-[var(--surface)]">
       <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
         <Link
-          href="/home"
+          href="/discover"
           className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--foreground)]"
         >
           ← {t('backToHome')}

@@ -39,7 +39,7 @@ export function LandingHeader() {
           <Link href="/login" className="btn-ghost hidden text-xs sm:inline-flex sm:text-sm">
             {t('landingNavSignIn')}
           </Link>
-            <Link href="/signup?plan=FREE&next=/home" className="btn-accent text-xs sm:text-sm">
+            <Link href="/signup?plan=FREE&next=/discover" className="btn-accent text-xs sm:text-sm">
               {t('landingNavGetStarted')}
             </Link>
         </div>

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { legacyDiscoverSearchTarget } from '@/lib/discover-redirect'
 
 export default async function SearchPageRedirect({
   searchParams,
@@ -17,6 +18,5 @@ export default async function SearchPageRedirect({
     }
   }
 
-  const qs = query.toString()
-  redirect(qs ? `/discover?${qs}` : '/discover')
+  redirect(legacyDiscoverSearchTarget(query))
 }

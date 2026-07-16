@@ -43,6 +43,7 @@ function persist(list: SavedSearch[]): void {
 /** A stable signature so the same criteria is not saved twice. */
 function signature(filter: TaxonomyFilter): string {
   return [
+    filter.contentType,
     filter.languages[0] ?? '',
     filter.categories[0] ?? '',
     filter.geoScope,
@@ -81,4 +82,19 @@ export function removeSavedSearch(id: string): SavedSearch[] {
   const next = loadSavedSearches().filter((entry) => entry.id !== id)
   persist(next)
   return next
+}
+
+export function updateSavedSearchLabel(id: string, label: string): SavedSearch[] {
+  const trimmed = label.trim()
+  if (!trimmed) return loadSavedSearches()
+  const next = loadSavedSearches().map((entry) =>
+    entry.id === id ? { ...entry, label: trimmed } : entry
+  )
+  persist(next)
+  return next
+}
+
+/** Exported for tests — stable criteria signature. */
+export function savedSearchSignature(filter: TaxonomyFilter): string {
+  return signature(filter)
 }

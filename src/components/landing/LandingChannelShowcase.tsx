@@ -9,13 +9,14 @@ import { CATEGORY_MESSAGE_KEYS, type MessageKey } from '@/i18n/messages/en'
 import { newsShow, resolveShow } from '@/lib/shows'
 import { categoriesForType, type ContentType } from '@/lib/taxonomy'
 
-const SHOWCASE_TYPES = ['News', 'Entertainment', 'Education', 'Lifestyle', 'Music'] as const satisfies readonly ContentType[]
+const SHOWCASE_TYPES = ['News', 'Entertainment', 'Books', 'Education', 'Lifestyle', 'Music'] as const satisfies readonly ContentType[]
 
 type ShowcaseType = (typeof SHOWCASE_TYPES)[number]
 
 const SHOWCASE_TYPE_LABEL_KEYS: Record<ShowcaseType, MessageKey> = {
   News: 'landingShowcaseTypeGlobalNews',
   Entertainment: 'contentTypeEntertainment',
+  Books: 'contentTypeBooks',
   Education: 'landingShowcaseTypeKnowledge',
   Lifestyle: 'landingShowcaseTypeLifestyle',
   Music: 'contentTypeMusic',

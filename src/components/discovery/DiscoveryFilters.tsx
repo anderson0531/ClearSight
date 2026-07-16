@@ -19,6 +19,8 @@ import { GeoFocusSelectors } from '@/components/layout/GeoFocusSelectors'
 interface DiscoveryFiltersProps {
   value: TaxonomyFilter
   onChange: (next: TaxonomyFilter) => void
+  /** When true, hides content-type tabs (News-only search screen). */
+  newsOnly?: boolean
   detectedLocation?: string | null
   onApplyDetected?: () => void
   errorMessage?: string | null
@@ -36,6 +38,7 @@ function activeLocationLabel(value: TaxonomyFilter): string | null {
 export function DiscoveryFilters({
   value,
   onChange,
+  newsOnly = false,
   detectedLocation,
   onApplyDetected,
   errorMessage,
@@ -127,20 +130,22 @@ export function DiscoveryFilters({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1.5" role="group" aria-label={t('contentTypeLabel')}>
-        {CONTENT_TYPES.map((type) => (
-          <button
-            key={type}
-            type="button"
-            onClick={() => selectType(type)}
-            className={`filter-pill flex-1 justify-center px-4 py-2 font-semibold ${
-              value.contentType === type ? 'filter-pill-active' : ''
-            }`}
-          >
-            {t(CONTENT_TYPE_MESSAGE_KEYS[type])}
-          </button>
-        ))}
-      </div>
+      {!newsOnly ? (
+        <div className="flex gap-1.5" role="group" aria-label={t('contentTypeLabel')}>
+          {CONTENT_TYPES.map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => selectType(type)}
+              className={`filter-pill flex-1 justify-center px-4 py-2 font-semibold ${
+                value.contentType === type ? 'filter-pill-active' : ''
+              }`}
+            >
+              {t(CONTENT_TYPE_MESSAGE_KEYS[type])}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {errorMessage ? (
         <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
@@ -225,7 +230,7 @@ export function DiscoveryFilters({
       <div className="flex flex-col gap-1.5">
         <span className="filter-label">{t('filterCategory')}</span>
         <div className="flex gap-1 overflow-x-auto pb-1">
-          {categoriesForType(value.contentType).map((cat) => (
+          {categoriesForType(newsOnly ? 'News' : value.contentType).map((cat) => (
             <button
               key={cat}
               type="button"

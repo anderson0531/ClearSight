@@ -2,14 +2,22 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { AdPhase } from '@/lib/ads/types'
 import type { AudioTrack, PlaylistContext } from '@/types/story'
 import { isQaAudioTrack } from '@/lib/audio-tracks'
+
+export interface PendingPlay {
+  track: AudioTrack
+  queue: AudioTrack[]
+}
 
 interface AudioQueueState {
   currentTrack: AudioTrack | null
   queue: AudioTrack[]
   recentTracks: AudioTrack[]
   isPlaying: boolean
+  pendingPlay: PendingPlay | null
+  adPhase: AdPhase
   playlistContext: PlaylistContext | null
   shuffle: boolean
   loop: boolean
@@ -18,6 +26,10 @@ interface AudioQueueState {
   sleepTimerMinutes: number
   currentSegmentIndex: number
 
+  requestPlay: (track: AudioTrack, queue?: AudioTrack[]) => void
+  confirmPlay: () => void
+  setAdPhase: (phase: AdPhase) => void
+  clearPendingPlay: () => void
   playTrack: (track: AudioTrack, queue?: AudioTrack[]) => void
   togglePlay: () => void
   pause: () => void
@@ -45,6 +57,11 @@ function shuffleArray<T>(items: T[]): T[] {
   return copy
 }
 
+function buildRecentTracks(state: AudioQueueState, track: AudioTrack): AudioTrack[] {
+  if (isQaAudioTrack(track)) return state.recentTracks
+  return [track, ...state.recentTracks.filter((t) => t.id !== track.id)].slice(0, 20)
+}
+
 export const useAudioQueue = create<AudioQueueState>()(
   persist(
     (set, get) => ({
@@ -52,6 +69,8 @@ export const useAudioQueue = create<AudioQueueState>()(
       queue: [],
       recentTracks: [],
       isPlaying: false,
+      pendingPlay: null,
+      adPhase: 'idle',
       playlistContext: null,
       shuffle: false,
       loop: false,
@@ -60,22 +79,36 @@ export const useAudioQueue = create<AudioQueueState>()(
       sleepTimerMinutes: 0,
       currentSegmentIndex: 0,
 
-      playTrack: (track, queue) => {
+      requestPlay: (track, queue) => {
+        set({
+          pendingPlay: { track, queue: queue ?? [track] },
+          adPhase: 'idle',
+          isPlaying: false,
+        })
+      },
+
+      confirmPlay: () => {
         set((state) => {
-          const recent = isQaAudioTrack(track)
-            ? state.recentTracks
-            : [
-                track,
-                ...state.recentTracks.filter((t) => t.id !== track.id),
-              ].slice(0, 20)
+          const pending = state.pendingPlay
+          if (!pending) return state
           return {
-            currentTrack: track,
-            queue: queue ?? [track],
-            recentTracks: recent,
+            currentTrack: pending.track,
+            queue: pending.queue,
+            recentTracks: buildRecentTracks(state, pending.track),
+            pendingPlay: null,
+            adPhase: 'idle',
             isPlaying: true,
             currentSegmentIndex: 0,
           }
         })
+      },
+
+      setAdPhase: (adPhase) => set({ adPhase }),
+
+      clearPendingPlay: () => set({ pendingPlay: null, adPhase: 'idle' }),
+
+      playTrack: (track, queue) => {
+        get().requestPlay(track, queue)
       },
 
       togglePlay: () => {
@@ -96,14 +129,14 @@ export const useAudioQueue = create<AudioQueueState>()(
 
         if (nextIndex >= ordered.length) {
           if (loop) {
-            set({ currentTrack: ordered[0], isPlaying: true })
+            get().requestPlay(ordered[0], queue)
           } else {
             set({ isPlaying: false })
           }
           return
         }
 
-        set({ currentTrack: ordered[nextIndex], isPlaying: true })
+        get().requestPlay(ordered[nextIndex], queue)
       },
 
       playPrevious: () => {
@@ -112,7 +145,7 @@ export const useAudioQueue = create<AudioQueueState>()(
 
         const currentIndex = queue.findIndex((t) => t.id === currentTrack.id)
         const prevIndex = currentIndex <= 0 ? queue.length - 1 : currentIndex - 1
-        set({ currentTrack: queue[prevIndex], isPlaying: true })
+        get().requestPlay(queue[prevIndex], queue)
       },
 
       addToQueue: (track) => {
@@ -129,7 +162,15 @@ export const useAudioQueue = create<AudioQueueState>()(
         }))
       },
 
-      clearQueue: () => set({ queue: [], currentTrack: null, isPlaying: false, playlistContext: null }),
+      clearQueue: () =>
+        set({
+          queue: [],
+          currentTrack: null,
+          pendingPlay: null,
+          isPlaying: false,
+          adPhase: 'idle',
+          playlistContext: null,
+        }),
 
       setShuffle: (shuffle) => set({ shuffle }),
 

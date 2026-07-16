@@ -18,7 +18,7 @@ export function AppSidebar() {
   const navItems = buildPrimaryNav(plan)
 
   const isActive = (href: string) => {
-    if (href === '/home') return pathname === '/home'
+    if (href === '/discover') return pathname === '/discover'
     return pathname.startsWith(href)
   }
 

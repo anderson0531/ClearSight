@@ -233,6 +233,7 @@ export const generatePodcast = inngest.createFunction(
                 show,
                 groupImageCache,
                 subjectBible: brief!.context.visualSubjectBible?.subjects,
+                visualSceneBible: brief!.context.visualSceneBible,
               },
               existing
             )

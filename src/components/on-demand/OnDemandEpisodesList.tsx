@@ -5,21 +5,37 @@ import { Search } from 'lucide-react'
 import type { GenerationJob } from '@/components/library/types'
 import { OnDemandEpisodeItem, jobToTrack } from '@/components/on-demand/OnDemandEpisodeItem'
 import { ViewModeToggle } from '@/components/ui/ViewModeToggle'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Chip } from '@/components/ui/Chip'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { CATEGORY_MESSAGE_KEYS, CONTENT_TYPE_MESSAGE_KEYS } from '@/i18n/messages/en'
 import { isGenerationInProgress } from '@/lib/generation-ui'
 import { fetchWithTimeout } from '@/lib/client-fetch'
 import { categoriesForType, CONTENT_TYPES, type ContentType } from '@/lib/taxonomy'
 import { useEpisodesViewMode } from '@/hooks/useEpisodesViewMode'
+import { usePollingData } from '@/hooks/usePollingData'
+import { GENERATION_QUEUED_EVENT, type GenerationQueuedDetail } from '@/lib/generation-events'
 import { useAudioQueue } from '@/store/useAudioQueue'
 import type { AudioTrack } from '@/types/story'
 
 type TypeFilter = 'all' | ContentType
 type CategoryFilter = 'all' | string
+type StatusFilter = 'all' | 'in_progress' | 'ready' | 'failed'
 type SortKey = 'created' | 'views' | 'title'
 
-function isInProgress(job: GenerationJob): boolean {
-  return isGenerationInProgress(job)
+function isReady(job: GenerationJob): boolean {
+  return job.status === 'COMPLETED' && Boolean(job.audioUrl)
+}
+
+function isFailed(job: GenerationJob): boolean {
+  return job.status === 'FAILED' || job.status === 'CANCELLED'
+}
+
+function matchesStatus(job: GenerationJob, status: StatusFilter): boolean {
+  if (status === 'all') return true
+  if (status === 'in_progress') return isGenerationInProgress(job)
+  if (status === 'ready') return isReady(job)
+  return isFailed(job)
 }
 
 function matchesType(job: GenerationJob, type: TypeFilter): boolean {
@@ -56,6 +72,19 @@ function sortJobs(jobs: GenerationJob[], sortBy: SortKey): GenerationJob[] {
   }
 }
 
+function ListSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className="home-episode-card animate-pulse">
+          <div className="story-row-media aspect-square bg-white/8" />
+          <div className="mt-2 h-3 w-full rounded bg-white/8" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function OnDemandEpisodesList() {
   const t = useTranslations()
   const playTrack = useAudioQueue((s) => s.playTrack)
@@ -63,10 +92,41 @@ export function OnDemandEpisodesList() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortBy, setSortBy] = useState<SortKey>('created')
   const [retryingId, setRetryingId] = useState<string | null>(null)
   const [cancelingId, setCancelingId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useEpisodesViewMode('grid')
+
+  const { data, loading, error } = usePollingData<GenerationJob[]>({
+    fetcher: async () => {
+      const res = await fetchWithTimeout('/api/generations', {}, 15_000)
+      if (!res.ok) throw new Error('Failed to load generations')
+      const payload = (await res.json()) as { generations?: GenerationJob[] }
+      return payload.generations ?? []
+    },
+    isActive: (jobs) => jobs.some(isGenerationInProgress),
+    intervalMs: 20_000,
+    activeIntervalMs: 5_000,
+  })
+
+  useEffect(() => {
+    if (data) setGenerations(data)
+  }, [data])
+
+  useEffect(() => {
+    const onQueued = (event: Event) => {
+      const detail = (event as CustomEvent<GenerationQueuedDetail>).detail
+      if (!detail?.job) return
+      setGenerations((jobs) => {
+        if (jobs.some((job) => job.id === detail.job.id)) return jobs
+        return [detail.job, ...jobs]
+      })
+    }
+
+    window.addEventListener(GENERATION_QUEUED_EVENT, onQueued)
+    return () => window.removeEventListener(GENERATION_QUEUED_EVENT, onQueued)
+  }, [])
 
   const categoryOptions = useMemo(() => {
     if (typeFilter === 'all') return []
@@ -77,43 +137,17 @@ export function OnDemandEpisodesList() {
     setCategoryFilter('all')
   }, [typeFilter])
 
-  useEffect(() => {
-    let active = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const poll = async () => {
-      let nextDelay = 20000
-      try {
-        const res = await fetchWithTimeout('/api/generations', {}, 15_000)
-        if (res.ok && active) {
-          const data = (await res.json()) as { generations?: GenerationJob[] }
-          const jobs = data.generations ?? []
-          setGenerations(jobs)
-          if (jobs.some(isInProgress)) nextDelay = 5000
-        }
-      } catch {
-        /* transient */
-      }
-      if (active) timer = setTimeout(poll, nextDelay)
-    }
-
-    void poll()
-    return () => {
-      active = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [])
-
   const query = search.trim().toLowerCase()
   const filtered = useMemo(() => {
     const matches = generations.filter(
       (job) =>
+        matchesStatus(job, statusFilter) &&
         matchesType(job, typeFilter) &&
         matchesCategory(job, categoryFilter) &&
         matchesSearch(job, query)
     )
     return sortJobs(matches, sortBy)
-  }, [generations, typeFilter, categoryFilter, query, sortBy])
+  }, [generations, statusFilter, typeFilter, categoryFilter, query, sortBy])
 
   const playableTracks = useMemo(
     () => filtered.map(jobToTrack).filter((track): track is AudioTrack => track !== null),
@@ -192,6 +226,16 @@ export function OnDemandEpisodesList() {
     onDelete: (id: string) => void handleDelete(id),
   }
 
+  const statusOptions: {
+    id: StatusFilter
+    labelKey: 'onDemandFilterAll' | 'onDemandFilterInProgress' | 'onDemandFilterReady' | 'onDemandFilterFailed'
+  }[] = [
+    { id: 'all', labelKey: 'onDemandFilterAll' },
+    { id: 'in_progress', labelKey: 'onDemandFilterInProgress' },
+    { id: 'ready', labelKey: 'onDemandFilterReady' },
+    { id: 'failed', labelKey: 'onDemandFilterFailed' },
+  ]
+
   return (
     <section className="mt-8">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
@@ -244,29 +288,43 @@ export function OnDemandEpisodesList() {
 
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
+            {t('onDemandFilterStatus')}
+          </p>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('onDemandFilterStatus')}>
+            {statusOptions.map((option) => (
+              <Chip
+                key={option.id}
+                variant={statusFilter === option.id ? 'active' : 'default'}
+                className="px-3 py-1.5 text-sm font-semibold"
+                onClick={() => setStatusFilter(option.id)}
+              >
+                {t(option.labelKey)}
+              </Chip>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-strong)]">
             {t('onDemandFilterType')}
           </p>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('onDemandFilterType')}>
-            <button
-              type="button"
+            <Chip
+              variant={typeFilter === 'all' ? 'active' : 'default'}
+              className="px-3 py-1.5 text-sm font-semibold"
               onClick={() => setTypeFilter('all')}
-              className={`filter-pill px-3 py-1.5 text-sm font-semibold ${
-                typeFilter === 'all' ? 'filter-pill-active' : ''
-              }`}
             >
               {t('onDemandFilterAll')}
-            </button>
+            </Chip>
             {CONTENT_TYPES.map((type) => (
-              <button
+              <Chip
                 key={type}
-                type="button"
+                variant={typeFilter === type ? 'active' : 'default'}
+                className="px-3 py-1.5 text-sm font-semibold"
                 onClick={() => setTypeFilter(type)}
-                className={`filter-pill px-3 py-1.5 text-sm font-semibold ${
-                  typeFilter === type ? 'filter-pill-active' : ''
-                }`}
               >
                 {t(CONTENT_TYPE_MESSAGE_KEYS[type])}
-              </button>
+              </Chip>
             ))}
           </div>
         </div>
@@ -277,32 +335,32 @@ export function OnDemandEpisodesList() {
               {t('onDemandFilterCategory')}
             </p>
             <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('onDemandFilterCategory')}>
-              <button
-                type="button"
+              <Chip
+                variant={categoryFilter === 'all' ? 'active' : 'default'}
+                className="px-3 py-1.5 text-sm font-semibold"
                 onClick={() => setCategoryFilter('all')}
-                className={`filter-pill px-3 py-1.5 text-sm font-semibold ${
-                  categoryFilter === 'all' ? 'filter-pill-active' : ''
-                }`}
               >
                 {t('onDemandFilterAll')}
-              </button>
+              </Chip>
               {categoryOptions.map((category) => (
-                <button
+                <Chip
                   key={category}
-                  type="button"
+                  variant={categoryFilter === category ? 'active' : 'default'}
+                  className="px-3 py-1.5 text-sm font-semibold"
                   onClick={() => setCategoryFilter(category)}
-                  className={`filter-pill px-3 py-1.5 text-sm font-semibold ${
-                    categoryFilter === category ? 'filter-pill-active' : ''
-                  }`}
                 >
                   {t(CATEGORY_MESSAGE_KEYS[category] ?? 'categoryTop')}
-                </button>
+                </Chip>
               ))}
             </div>
           </div>
         ) : null}
 
-        {generations.length === 0 ? (
+        {error ? (
+          <EmptyState compact title={t('onDemandEpisodesLoadError')} body={t('errorNetwork')} />
+        ) : loading && generations.length === 0 ? (
+          <ListSkeleton />
+        ) : generations.length === 0 ? (
           <p className="py-6 text-center text-sm text-[var(--muted-strong)]">{t('onDemandEpisodesEmpty')}</p>
         ) : filtered.length === 0 ? (
           <p className="py-6 text-center text-sm text-[var(--muted-strong)]">{t('onDemandEpisodesNoMatches')}</p>

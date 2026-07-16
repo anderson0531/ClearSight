@@ -37,6 +37,7 @@ import {
   type ResolvedSubjectReference,
   type VisualSubject,
 } from '@/lib/visual-subjects'
+import { formatSceneBibleForPrompt, parseVisualSceneBible, readVisualSceneBible, type VisualSceneBible } from '@/lib/visual-scenes'
 import { getVertexAccessToken, isImagenQuotaError, type ImagenGenerateResult, type ImagenSubjectReference } from '@/lib/vertex'
 import type { AnimaticLastRender } from '@/lib/animatic-utils'
 import { deserializeEpisodeScriptDraft } from '@/lib/episode-script-draft'
@@ -121,6 +122,10 @@ export interface AnimaticPromptOptions {
   visualBeat?: number
   /** Primary people/places for this episode — anchors Imagen prompts. */
   subjectBible?: VisualSubject[]
+  /** Recurring location anchors for cross-frame consistency. */
+  visualSceneBible?: VisualSceneBible | null
+  /** Scene bible entry id for this frame. */
+  sceneId?: string | null
   /** Episode title — used to resolve protagonist for subject anchoring. */
   episodeTitle?: string
 }
@@ -149,6 +154,9 @@ export function buildImagenScenePrompt(scene: string, options?: AnimaticPromptOp
   )
   const bibleBlock = formatSubjectBibleForPrompt(frameSubjects)
   if (bibleBlock) parts.push(bibleBlock)
+
+  const sceneBlock = formatSceneBibleForPrompt(options?.visualSceneBible, options?.sceneId)
+  if (sceneBlock) parts.push(sceneBlock)
 
   parts.push('Photorealistic editorial still photograph for a podcast frame.')
   parts.push(NO_TEXT_SPELLING_GUARDRAILS)
@@ -269,6 +277,7 @@ function buildFrameImagenPrompts(params: {
   sceneText: string
   segment: AudioSegment
   subjectBible: VisualSubject[]
+  visualSceneBible?: VisualSceneBible | null
   episodeTitle: string
   style?: string
   localeContext?: string
@@ -297,6 +306,8 @@ function buildFrameImagenPrompts(params: {
       ? buildDialogueIllustrationImagenPrompt(sceneText)
       : buildImagenScenePrompt(sceneText, {
         subjectBible: frameSubjects,
+        visualSceneBible: params.visualSceneBible,
+        sceneId: params.segment.sceneId,
         spokenDialogue: params.segment.text,
         style: params.style,
         localeContext: params.localeContext,
@@ -318,6 +329,7 @@ function buildFrameImagenPrompts(params: {
 function resolveFrameImagenPrompts(params: {
   segment: AudioSegment
   subjectBible: VisualSubject[]
+  visualSceneBible?: VisualSceneBible | null
   episodeTitle: string
   style?: string
   localeContext?: string
@@ -329,6 +341,7 @@ function resolveFrameImagenPrompts(params: {
     sceneText,
     segment: params.segment,
     subjectBible: params.subjectBible,
+    visualSceneBible: params.visualSceneBible,
     episodeTitle: params.episodeTitle,
     style: params.style,
     localeContext: params.localeContext,
@@ -403,6 +416,7 @@ async function renderSegmentImage(
     'skipSubjectRefs' | 'onImagenAttempt' | 'style' | 'localeContext' | 'frameSubjects' | 'personGeneration'
   > & {
     subjectBible?: VisualSubject[]
+    visualSceneBible?: VisualSceneBible | null
     sourcesVerified?: unknown
     omitDialogueContext?: boolean
     showName?: string
@@ -463,6 +477,7 @@ async function renderSegmentImage(
   const built = resolveFrameImagenPrompts({
     segment: segmentForPrompt,
     subjectBible,
+    visualSceneBible: renderImageOptions?.visualSceneBible,
     episodeTitle: title,
     style: renderImageOptions?.style,
     localeContext: renderImageOptions?.localeContext,
@@ -482,6 +497,8 @@ async function renderSegmentImage(
     prompt: promptForRefs,
     speaker: segment.speaker,
     bibleRefs: subjectRefs ?? [],
+    sceneBible: renderImageOptions?.visualSceneBible,
+    sceneId: segment.sceneId,
     skipSubjectRefs: renderImageOptions?.skipSubjectRefs,
   })
 
@@ -532,6 +549,7 @@ export async function renderEpisodeFrameImage(
   category?: string,
   options?: {
     subjectBible?: VisualSubject[]
+    visualSceneBible?: VisualSceneBible | null
     sourcesVerified?: unknown
   }
 ): Promise<string | null> {
@@ -549,6 +567,7 @@ export async function renderEpisodeFrameImage(
       category,
       omitDialogueContext: show.generationProfile === 'sceneFlowLite',
       subjectBible,
+      visualSceneBible: options?.visualSceneBible,
       sourcesVerified: options?.sourcesVerified,
     }
   )
@@ -924,6 +943,7 @@ async function renderNewsAnimatic(
   const phases = resolveRenderPhases(true, options)
   const runImages = phases.has('images')
   const subjectBible = readVisualSubjectBible(story.sourcesVerified)
+  const visualSceneBible = readVisualSceneBible(story.sourcesVerified)
 
   const groupKeyFor = (segment: AudioSegment, index: number): string =>
     segment.illustrationGroupId || `__seg-${index}`
@@ -954,6 +974,7 @@ async function renderNewsAnimatic(
       const resolved = resolveFrameImagenPrompts({
         segment,
         subjectBible,
+        visualSceneBible,
         episodeTitle: story.title,
         style: renderStyle,
         localeContext,
@@ -1070,6 +1091,8 @@ async function renderNewsAnimatic(
               prompt: promptForRefs,
               speaker: leadSegment?.speaker,
               bibleRefs: subjectRefs,
+              sceneBible: visualSceneBible,
+              sceneId: leadSegment?.sceneId,
               skipSubjectRefs: imageRenderOpts.skipSubjectRefs,
             })
           : {

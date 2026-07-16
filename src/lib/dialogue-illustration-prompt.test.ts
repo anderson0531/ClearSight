@@ -6,6 +6,7 @@ import {
   cleanDialogueForIllustration,
   DIALOGUE_ILLUSTRATION_PREFIX,
 } from '@/lib/dialogue-illustration-prompt'
+import { buildImagenScenePrompt } from '@/lib/animatic'
 
 describe('dialogue-illustration-prompt', () => {
   it('strips stage-direction tags', () => {
@@ -30,5 +31,24 @@ describe('dialogue-illustration-prompt', () => {
     assert.match(prompt, /ABSOLUTELY NO text/i)
     assert.doesNotMatch(prompt, /human faces/i)
     assert.doesNotMatch(prompt, /SUBJECT BIBLE/i)
+  })
+
+  it('buildImagenScenePrompt includes visual scene bible block when sceneId is set', () => {
+    const prompt = buildImagenScenePrompt('Alice mixes paint at a lab bench.', {
+      visualSceneBible: {
+        extractedAt: '2026-01-01T00:00:00.000Z',
+        scenes: [
+          {
+            id: 'lab-bench',
+            label: 'Cryptography lab bench',
+            descriptors: ['dim monitors', 'color swatches'],
+            settingType: 'interior',
+          },
+        ],
+      },
+      sceneId: 'lab-bench',
+    })
+    assert.match(prompt, /Location: Cryptography lab bench/)
+    assert.match(prompt, /dim monitors/)
   })
 })

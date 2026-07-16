@@ -7,7 +7,7 @@ import { reviewTopic } from '@/lib/topic-review'
 const bodySchema = z.object({
   description: z.string().min(10).max(1000),
   language: z.string().min(1),
-  contentType: z.enum(['News', 'Education', 'Entertainment', 'Lifestyle', 'Music']).optional(),
+  contentType: z.enum(['News', 'Education', 'Entertainment', 'Books', 'Lifestyle', 'Music']).optional(),
   category: z.string().min(1),
   showName: z.string().max(120).optional(),
   showDescription: z.string().max(600).optional(),

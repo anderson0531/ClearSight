@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChannelHeader } from '@/components/channel/ChannelHeader'
 import { AddTopicDialog } from '@/components/discovery/AddTopicDialog'
-import { HomeEpisodeRow } from '@/components/discovery/HomeEpisodeRow'
+import { ContentRow } from '@/components/ui/ContentRow'
 import { TopStoriesSearch } from '@/components/discovery/TopStoriesSearch'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
@@ -46,7 +46,10 @@ export function CategoryLanding({ contentType, category }: CategoryLandingProps)
     }
   }, [contentType, category, locale.englishName])
 
-  const discoverHref = `/discover?contentType=${encodeURIComponent(contentType)}&category=${encodeURIComponent(category)}`
+  const browseHref =
+    contentType === 'News'
+      ? `/news?category=${encodeURIComponent(category)}`
+      : `/channels?contentType=${encodeURIComponent(contentType)}&category=${encodeURIComponent(category)}`
 
   const typeKey = CONTENT_TYPE_MESSAGE_KEYS[contentType]
   const typeLabel = typeKey ? t(typeKey) : contentType
@@ -135,19 +138,19 @@ export function CategoryLanding({ contentType, category }: CategoryLandingProps)
       <ChannelHeader show={show} />
 
       <div className="mt-8 space-y-2">
-        <HomeEpisodeRow
+        <ContentRow
           title={t('categoryFeaturedTitle')}
           stories={featured}
           loading={loadingFeatured}
-          seeAllHref={discoverHref}
+          seeAllHref={browseHref}
           maxItems={EPISODE_LIMIT}
         />
 
-        <HomeEpisodeRow
+        <ContentRow
           title={t('categoryLatestTitle')}
           stories={latest}
           loading={loadingLatest}
-          seeAllHref={discoverHref}
+          seeAllHref={browseHref}
           maxItems={EPISODE_LIMIT}
         />
       </div>

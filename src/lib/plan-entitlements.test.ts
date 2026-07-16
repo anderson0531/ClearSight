@@ -9,14 +9,23 @@ import {
   hasDiscoveryEarlyAccess,
   hasPriorityJitAudio,
   maxEpisodeRuntimeMinutes,
+  shouldShowAds,
 } from '@/lib/plan-entitlements'
 
 describe('plan entitlements matrix', () => {
-  it('FREE has no generation or screen-off audio', () => {
+  it('FREE has no generation or screen-off audio but shows ads', () => {
     const e = getPlanEntitlements('FREE')
+    assert.equal(e.showsAds, true)
+    assert.equal(shouldShowAds('FREE'), true)
     assert.equal(e.onDemandGeneration, false)
     assert.equal(canPlayScreenOffAudio('FREE'), false)
     assert.equal(canGenerateOnDemand('FREE'), false)
+  })
+
+  it('paid tiers are ad-free', () => {
+    assert.equal(shouldShowAds('PREMIUM'), false)
+    assert.equal(shouldShowAds('PREMIUM_PLUS'), false)
+    assert.equal(shouldShowAds('PREMIUM_ELITE'), false)
   })
 
   it('PREMIUM has on-demand gen and top-ups but not priority queue', () => {

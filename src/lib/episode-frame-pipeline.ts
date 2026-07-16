@@ -9,10 +9,12 @@ import { PATTERN_MATRIX_SHOW_ID } from '@/lib/channel-intro-constants'
 import {
   buildEpisodeOutroSegment,
   buildEpisodePreparedLines,
+  buildMusicSegmentFromPreparedLine,
   synthesizeEpisodeLineAudio,
   type CompiledBrief,
   type EpisodePreparedLine,
 } from '@/lib/generate-story'
+import type { VisualSceneBible } from '@/lib/visual-scenes'
 import { serializeEpisodeScriptDraft } from '@/lib/episode-script-draft'
 import { resolveShow, showById, type Show } from '@/lib/shows'
 import type { VisualSubject } from '@/lib/visual-subjects'
@@ -122,6 +124,7 @@ function lineToPartialSegment(line: EpisodeFramePlanLine): AudioSegment {
     ...(line.scene?.trim() ? { scene: line.scene.trim() } : {}),
     ...(line.frameKind ? { frameKind: line.frameKind } : {}),
     ...(line.musicMood ? { musicMood: line.musicMood } : {}),
+    ...(line.sceneId ? { sceneId: line.sceneId } : {}),
     ...(line.illustrationGroupId ? { illustrationGroupId: line.illustrationGroupId } : {}),
     ...(line.titleSlide ? { titleSlide: true } : {}),
     ...(line.visualMedium ? { visualMedium: line.visualMedium } : {}),
@@ -134,6 +137,7 @@ function lineToPartialSegment(line: EpisodeFramePlanLine): AudioSegment {
 }
 
 function applyPmPrompts(segment: AudioSegment): AudioSegment {
+  if (segment.scene?.trim()) return segment
   const pmPrompts = patternMatrixPromptsFromDialogue(segment.text)
   if (!pmPrompts) return segment
   return { ...segment, scene: pmPrompts.scene, imagePrompt: pmPrompts.imagePrompt }
@@ -143,6 +147,7 @@ export interface ProcessEpisodeFrameContext {
   show: Show
   groupImageCache: Map<string, string>
   subjectBible?: VisualSubject[]
+  visualSceneBible?: VisualSceneBible | null
 }
 
 /**
@@ -157,6 +162,10 @@ export async function processEpisodeFrame(
 ): Promise<AudioSegment | null> {
   const line = plan.lines[index]
   if (!line) return null
+
+  if (line.role === 'music') {
+    return buildMusicSegmentFromPreparedLine(line, ctx.show)
+  }
 
   if (isFrameSegmentComplete(line, existing)) {
     return existing ?? null
@@ -197,7 +206,7 @@ export async function processEpisodeFrame(
         index,
         ctx.show,
         plan.category,
-        { subjectBible: ctx.subjectBible }
+        { subjectBible: ctx.subjectBible, visualSceneBible: ctx.visualSceneBible }
       )
       if (!resolvedImage) {
         console.warn('[episode-frame-pipeline] Imagen returned no image', {

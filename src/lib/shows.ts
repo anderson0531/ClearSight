@@ -388,6 +388,37 @@ export const HOST_CALEB = host({
 })
 
 // ---------------------------------------------------------------------------
+// Books — "The Reading Room" (duo, literary discussion and book-club energy)
+// ---------------------------------------------------------------------------
+export const HOST_CLAIRE = host({
+  name: 'Claire Whitfield',
+  role: 'Literary critic',
+  voiceId: 'Kore',
+  ttsStylePrompt:
+    'Thoughtful literary critic. Measured, insightful, and precise, with an unhurried love of language and structure.',
+  speakingRate: 1.0,
+  bio: 'A sharp reader who traces themes, craft, and context without losing the joy of the story.',
+  persona:
+    'Literary critic who reads closely, names what works on the page, and connects books to the ideas they carry.',
+  aliases: ['claire', 'whitfield'],
+  speakingImages: [],
+})
+
+export const HOST_MARCUS = host({
+  name: 'Marcus Ellison',
+  role: 'Book club host',
+  voiceId: 'Charon',
+  ttsStylePrompt:
+    'Engaging book club host. Curious, warm, and conversational, inviting listeners into the discussion.',
+  speakingRate: 1.0,
+  bio: 'The reader who asks the question everyone is thinking and keeps the conversation moving.',
+  persona:
+    'Book club host who surfaces the hook, voices reader reactions, and keeps discussion grounded and welcoming.',
+  aliases: ['marcus', 'ellison'],
+  speakingImages: [],
+})
+
+// ---------------------------------------------------------------------------
 // Show registry
 // ---------------------------------------------------------------------------
 
@@ -657,6 +688,151 @@ export const SHOW_PLAYERTWO = makeShow({
   sceneDirectorNotes:
     'Scene: high-energy gaming studio. Tone: energetic, insider, witty. Pace: fast.',
   studioImage: PLACEHOLDER_STUDIO,
+})
+
+// ---------------------------------------------------------------------------
+// Books — literary discussion channels (reuse The Reading Room cast)
+// ---------------------------------------------------------------------------
+const BOOKS_SCRIPT_STRUCTURE = [
+  'Hook: why this book or topic is worth your time',
+  'The work: premise, author, and what kind of reader it is for',
+  'What stands out: themes, craft, characters, or argument',
+  'The conversation: where readers agree, disagree, or debate',
+  'Takeaway: who should read it and what to notice',
+]
+
+const BOOKS_SCENE_NOTES =
+  'Scene: cozy reading-room studio with shelves and warm light. Tone: thoughtful, inviting, book-club energy. Pace: conversational.'
+
+const BOOKS_VISUAL =
+  'Style: warm, literary editorial illustration — bookshelves, reading light, rich texture, inviting and intellectual.'
+
+export const SHOW_READING_ROOM = makeShow({
+  id: 'the-reading-room',
+  name: 'The Reading Room',
+  description:
+    'Book conversations that go deeper than a blurb. Claire Whitfield and Marcus Ellison unpack fiction, nonfiction, and genre reads — themes, craft, and the ideas that stick — so you know what to pick up next.',
+  focus:
+    'Books and reading across fiction, nonfiction, genre, biography, history, self-help, and business — thoughtful discussion of real published works, authors, and literary themes.',
+  introTagline:
+    'Welcome to The Reading Room, where we go beyond the blurb and into the books worth your time.',
+  contentType: 'Books',
+  categories: [],
+  hosts: [HOST_CLAIRE, HOST_MARCUS],
+  visualStyle: BOOKS_VISUAL,
+  scriptStructure: BOOKS_SCRIPT_STRUCTURE,
+  sceneDirectorNotes: BOOKS_SCENE_NOTES,
+  studioImage: PLACEHOLDER_STUDIO,
+})
+
+function makeBookCategoryShow(
+  config: Pick<Show, 'id' | 'name' | 'description' | 'focus' | 'introTagline' | 'categories'>
+): Show {
+  return makeShow({
+    ...config,
+    contentType: 'Books',
+    hosts: [HOST_CLAIRE, HOST_MARCUS],
+    visualStyle: BOOKS_VISUAL,
+    scriptStructure: BOOKS_SCRIPT_STRUCTURE,
+    sceneDirectorNotes: BOOKS_SCENE_NOTES,
+    studioImage: PLACEHOLDER_STUDIO,
+  })
+}
+
+export const SHOW_SHELF_LIFE = makeBookCategoryShow({
+  id: 'shelf-life',
+  name: 'Shelf Life',
+  description:
+    'Literary fiction and contemporary novels, read like a book club that actually finishes the book. Claire and Marcus trace character, voice, and theme — and whether the hype holds up.',
+  focus:
+    'Fiction and literature — literary and contemporary novels, classics, debuts, and book-club picks, discussed with close reading and honest verdicts.',
+  introTagline:
+    'Welcome to Shelf Life, where literary fiction gets the close read it deserves.',
+  categories: ['Fiction & Literature'],
+})
+
+export const SHOW_PAGE_TURNER = makeBookCategoryShow({
+  id: 'page-turner',
+  name: 'Page Turner',
+  description:
+    'Mystery, suspense, and thriller reads — plotted, paced, and picked apart. Claire and Marcus follow the clues, the red herrings, and the endings that land (or don’t).',
+  focus:
+    'Mystery and thriller fiction — detective stories, suspense, psychological thrillers, and crime fiction, with spoiler-aware discussion of plot craft.',
+  introTagline:
+    'Welcome to Page Turner, where every clue, twist, and final reveal gets a closer look.',
+  categories: ['Mystery & Thriller'],
+})
+
+export const SHOW_OTHER_WORLDS = makeBookCategoryShow({
+  id: 'other-worlds',
+  name: 'Other Worlds',
+  description:
+    'Science fiction and fantasy, from hard sci-fi to epic fantasy. Claire and Marcus dig into worldbuilding, speculation, and the ideas that make imaginary worlds feel real.',
+  focus:
+    'Science fiction and fantasy books — space opera, hard sci-fi, epic and urban fantasy, and speculative worldbuilding in published fiction.',
+  introTagline:
+    'Welcome to Other Worlds, where we map the best sci-fi and fantasy on the shelf.',
+  categories: ['Sci-Fi & Fantasy'],
+})
+
+export const SHOW_TRUE_PAGES = makeBookCategoryShow({
+  id: 'true-pages',
+  name: 'True Pages',
+  description:
+    'Nonfiction that reads like a story — essays, investigations, science writing, and argument-driven books. Claire and Marcus weigh evidence, structure, and what stays with you.',
+  focus:
+    'Nonfiction books — essays, investigative works, science writing, current-affairs books, and narrative nonfiction, grounded in real published works.',
+  introTagline:
+    'Welcome to True Pages, where nonfiction gets the thoughtful read it earns.',
+  categories: ['Nonfiction'],
+})
+
+export const SHOW_LIFE_IN_PRINT = makeBookCategoryShow({
+  id: 'life-in-print',
+  name: 'Life in Print',
+  description:
+    'Biographies and memoirs — the lives behind the pages. Claire and Marcus explore voice, truth, and what a life story reveals about its moment.',
+  focus:
+    'Biography and memoir — political figures, artists, athletes, founders, and ordinary lives told in published autobiographical works.',
+  introTagline:
+    'Welcome to Life in Print, where every biography becomes a conversation about a life.',
+  categories: ['Biography & Memoir'],
+})
+
+export const SHOW_ARCHIVE_ECHO = makeBookCategoryShow({
+  id: 'archive-echo',
+  name: 'Archive & Echo',
+  description:
+    'History and society on the page — wars, revolutions, social movements, and the books that explain how we got here. Claire and Marcus connect narrative history to the present.',
+  focus:
+    'History and society books — political history, social movements, narrative history, and books that explain eras and institutions.',
+  introTagline:
+    'Welcome to Archive & Echo, where history books echo into the present.',
+  categories: ['History & Society'],
+})
+
+export const SHOW_NEXT_CHAPTER = makeBookCategoryShow({
+  id: 'next-chapter',
+  name: 'Next Chapter',
+  description:
+    'Self-help and personal growth reads — habits, mindset, productivity, and relationships — judged by what is useful, what is hype, and what actually sticks.',
+  focus:
+    'Self-help and personal growth books — habits, mindset, productivity, relationships, and wellness reads, evaluated for practical value and evidence.',
+  introTagline:
+    'Welcome to Next Chapter, where self-help books earn their place on your shelf.',
+  categories: ['Self-Help & Growth'],
+})
+
+export const SHOW_CORNER_OFFICE = makeBookCategoryShow({
+  id: 'corner-office-reads',
+  name: 'Corner Office Reads',
+  description:
+    'Business and leadership books — strategy, management, startups, and work culture — distilled into the ideas worth applying and the fads worth skipping.',
+  focus:
+    'Business and leadership books — management, startups, investing, strategy, and workplace culture, tied to real published titles and frameworks.',
+  introTagline:
+    'Welcome to Corner Office Reads, where business books meet the real world.',
+  categories: ['Business & Leadership'],
 })
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1547,15 @@ export const SHOWS: Show[] = [
   SHOW_FRAMEBYFRAME,
   SHOW_LINERNOTES,
   SHOW_PLAYERTWO,
+  SHOW_READING_ROOM,
+  SHOW_SHELF_LIFE,
+  SHOW_PAGE_TURNER,
+  SHOW_OTHER_WORLDS,
+  SHOW_TRUE_PAGES,
+  SHOW_LIFE_IN_PRINT,
+  SHOW_ARCHIVE_ECHO,
+  SHOW_NEXT_CHAPTER,
+  SHOW_CORNER_OFFICE,
   SHOW_HIPHOP,
   SHOW_ELECTRONIC,
   SHOW_JAZZ,
@@ -1505,6 +1690,7 @@ const DEFAULT_SHOW_BY_TYPE: Record<ContentType, Show> = {
   News: SHOW_NEWS,
   Education: SHOW_ACADEMY,
   Entertainment: SHOW_CASEFILE,
+  Books: SHOW_READING_ROOM,
   Lifestyle: SHOW_GOODLIFE,
   Music: SHOW_HIPHOP,
 }

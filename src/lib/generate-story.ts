@@ -42,7 +42,7 @@ import {
 import { EPISODE_THUMBNAIL_PATH, isStorySpecificThumbnail, needsEpisodeThumbnail } from '@/lib/episode-thumbnail'
 import { serializeAudioSegments } from '@/lib/audio-segments'
 import { audioDurationSeconds } from '@/lib/audio-duration'
-import { MUSIC_MOODS, normalizeMusicMood, OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
+import { MUSIC_MOODS, MUSIC_ASSETS, musicBedForCue, musicBedForMood, normalizeMusicMood, OUTRO_MUSIC_SECONDS, OUTRO_MUSIC_URL } from '@/lib/music-assets'
 import { resolveShow, showById, type Show } from '@/lib/shows'
 import {
   buildSeriesContinuityBlock,
@@ -59,7 +59,8 @@ import {
   buildPatternMatrixIllustrationScene,
   buildPatternMatrixImagenPrompt,
 } from '@/lib/pattern-matrix-frame-prompt'
-import { buildEpisodeVisualSubjectBible } from '@/lib/episode-character-bible'
+import { buildEpisodeVisualBible, parseVisualSceneBible } from '@/lib/episode-visual-bible'
+import type { VisualSceneBible } from '@/lib/visual-scenes'
 import type { HostProfile } from '@/lib/hosts'
 import type {
   AudioSegment,
@@ -163,8 +164,18 @@ interface PodcastTurn {
   /** When true, forces a fresh audio segment boundary (chapter "reset" moment). */
   chapterBreak?: boolean
   role?: AudioSegmentRole
-  /** Underscore mood for this frame (News structured script). */
+  /** Spoken dialogue vs music-only timeline entry. */
+  segmentKind?: 'dialogue' | 'music'
+  /** Underscore mood for this frame (all structured profiles). */
   musicMood?: MusicMood
+  /** Named sting/transition cue. */
+  musicCue?: string
+  /** Target length for explicit music-only segments. */
+  musicDurationSeconds?: number
+  /** Link to visual scene bible entry. */
+  sceneId?: string
+  /** Optional explicit cast for the frame. */
+  characterIds?: string[]
   /** Whether this turn renders a custom illustration (News). Defaults true. */
   illustrate?: boolean
   /** Imagen scene prompt authored by the structured script (News). */
@@ -219,6 +230,9 @@ export interface EpisodePreparedLine {
   scene?: string | null
   frameKind: FrameKind | null
   musicMood: MusicMood | null
+  musicBedUrl?: string | null
+  musicDurationSeconds?: number | null
+  sceneId?: string | null
   illustrationGroupId: string | null
   titleSlide: boolean
   /** True when this line continues a prior TTS chunk of the same spoken turn. */
@@ -352,25 +366,62 @@ function applyFrameSceneValidation(
   script: PodcastScript,
   subjectBible: VisualSubject[] | undefined,
   title: string,
-  show?: Show
+  _show?: Show
 ): PodcastScript {
   if (!subjectBible?.length) return script
-  if (show?.generationProfile === 'sceneFlowLite') return script
   const turns = script.turns.map((turn) => ({ ...turn }))
   validateAndRepairFrameScenes(turns, subjectBible, title)
   return { ...script, turns }
 }
 
 function resolveSceneText(turn: PodcastTurn, show?: Show): string {
+  const scene = turn.scene?.trim()
+  if (scene) return scene
   const dialogue = turn.text.replace(/\[[^\]]+\]/g, '').trim()
   if (show?.id === PATTERN_MATRIX_SHOW_ID && dialogue) {
     return buildPatternMatrixIllustrationScene(dialogue)
   }
-  const scene = turn.scene?.trim()
-  if (scene) return scene
   const firstSentence = dialogue.match(/^[^.!?]+[.!?]?/)?.[0]?.trim() || dialogue.slice(0, 200)
   console.warn('[generate-story] frame missing scene — deriving fallback visual from dialogue')
   return `Editorial illustration depicting the moment when: ${firstSentence}`
+}
+
+function buildMusicStingTurn(mood: MusicMood = 'neutral'): PodcastTurn {
+  const sting = MUSIC_ASSETS.sting
+  return {
+    speaker: '',
+    text: '',
+    segmentKind: 'music',
+    role: 'music',
+    musicMood: mood,
+    musicCue: 'chapter-sting',
+    musicDurationSeconds: sting?.durationSeconds ?? 3,
+  }
+}
+
+export function buildMusicSegmentFromPreparedLine(
+  line: PreparedLine,
+  show: Show
+): AudioSegment {
+  const bedUrl =
+    line.musicBedUrl?.trim() ||
+    musicBedForMood(line.musicMood)?.url ||
+    MUSIC_ASSETS.sting?.url ||
+    OUTRO_MUSIC_URL
+  const durationSeconds = line.musicDurationSeconds ?? MUSIC_ASSETS.sting?.durationSeconds ?? 3
+  return {
+    url: bedUrl,
+    durationSeconds,
+    role: 'music',
+    segmentKind: 'music',
+    speaker: line.speaker || show.hosts[0]?.name,
+    imageUrl: show.studioImage,
+    musicMood: line.musicMood ?? undefined,
+    musicBedUrl: bedUrl,
+    musicVolumeRatio: 1,
+    ...(line.sceneId ? { sceneId: line.sceneId } : {}),
+    ...(line.illustrationGroupId ? { illustrationGroupId: line.illustrationGroupId } : {}),
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -523,6 +574,26 @@ function prepareLines(
   turns.forEach((turn, turnIndex) => {
     const role = turn.role ?? 'body'
 
+    if (turn.segmentKind === 'music' || role === 'music') {
+      const cueBed = musicBedForCue(turn.musicCue)
+      lines.push({
+        speaker: turn.speaker || show.hosts[0]!.name,
+        text: '',
+        role: 'music',
+        imageUrl: show.studioImage,
+        imagePrompt: null,
+        frameKind: null,
+        musicMood: turn.musicMood ?? null,
+        musicBedUrl: cueBed?.url ?? musicBedForMood(turn.musicMood)?.url ?? MUSIC_ASSETS.sting?.url ?? null,
+        musicDurationSeconds:
+          turn.musicDurationSeconds ?? cueBed?.durationSeconds ?? MUSIC_ASSETS.sting?.durationSeconds ?? 3,
+        illustrationGroupId: turn.sceneId ? `scene:${turn.sceneId}` : `t${turnIndex}`,
+        titleSlide: false,
+        ...(turn.sceneId ? { sceneId: turn.sceneId } : {}),
+      })
+      return
+    }
+
     // Non-News bookends use the channel studio frame — no custom illustration.
     if (!isNews && !isSceneFlowLite && roleUsesStudioImage(role)) {
       for (const [pieceIndex, piece] of splitTurnIntoPieces(turn, TTS_MAX_TURN_BYTES).entries()) {
@@ -563,11 +634,13 @@ function prepareLines(
 
     // Illustrated frames: scene prompts authored at script generation time.
     const isTitleSlide = isNews && role === 'intro'
-    const musicMood = isNews || isSceneFlowLite ? (turn.musicMood ?? null) : null
+    const musicMood = turn.musicMood ?? null
     const sceneText = isTitleSlide
       ? options?.title ?? turn.text
       : resolveSceneText(turn, show)
-    const groupId = `t${turnIndex}`
+    const groupId = turn.sceneId
+      ? `scene:${turn.sceneId}`
+      : `t${turnIndex}`
     const mathFoundation =
       isSceneFlowLite && turn.mathFoundation ? turn.mathFoundation : undefined
 
@@ -607,6 +680,7 @@ function prepareLines(
         illustrationGroupId: groupId,
         titleSlide: isTitleSlide,
         ttsContinuation: pieceIndex > 0,
+        ...(turn.sceneId ? { sceneId: turn.sceneId } : {}),
         visualMedium: visuals.visualMedium ?? 'image',
         videoUrl: openingVisuals?.videoUrl ?? null,
         videoPrompt: visuals.videoPrompt ?? null,
@@ -1359,6 +1433,10 @@ async function generatePodcastScript(
 - Each item is one spoken line by ${lead.name}.
 - "text": ONLY speakable dialogue (+ optional bracket emotion tags like [curious]). NEVER put scene descriptions, host role notes, or stage directions in "text".
 - "scene": REQUIRED when illustrate is true. ONE vivid sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue, NOT prompt instructions, and NOT quoted speech. Each illustrated frame gets its OWN distinct scene.
+- "musicMood": pick the best underscore mood from: ${MUSIC_MOODS_INLINE} (optional on dialogue frames).
+- "segmentKind": "dialogue" (default) or "music" for music-only transition stings with empty text.
+- "musicCue": optional named sting (e.g. "chapter-sting") when segmentKind is "music".
+- "musicDurationSeconds": target length in seconds for music-only frames (default 3).
 - "illustrate": optional boolean; false for purely conversational/transitional lines (host frame), true (default) when a custom scene adds value.
 - VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread. No disconnected stock shots.
 - Pacing: 8-14 segments total, flowing through the structure above.
@@ -1372,6 +1450,10 @@ Output ONLY a JSON object, e.g.:
 - Each item is one spoken line by one host.
 - "text": ONLY speakable dialogue (+ optional bracket emotion tags like [curious]). NEVER put scene descriptions, host role notes, or stage directions in "text".
 - "scene": REQUIRED when illustrate is true. ONE vivid sentence describing the IMAGE to render (subjects, setting, action) — NOT the dialogue, NOT prompt instructions, and NOT quoted speech. Each illustrated frame gets its OWN distinct scene.
+- "musicMood": pick the best underscore mood from: ${MUSIC_MOODS_INLINE} (optional on dialogue frames).
+- "segmentKind": "dialogue" (default) or "music" for music-only transition stings with empty text.
+- "musicCue": optional named sting (e.g. "chapter-sting") when segmentKind is "music".
+- "musicDurationSeconds": target length in seconds for music-only frames (default 3).
 - "illustrate": optional boolean; false for purely conversational/transitional lines (host frame), true (default) when a custom scene adds value.
 - VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread. No disconnected stock shots.
 - Pacing: 12-18 alternating turns total, flowing through the structure above.
@@ -1509,6 +1591,32 @@ function extractJsonArrayLoose(raw: string): unknown[] | null {
 }
 
 /**
+ * Parse optional structured turn metadata shared across script profiles.
+ */
+function parseStructuredTurnFields(obj: Record<string, unknown>): Partial<PodcastTurn> {
+  const segmentKind =
+    obj.segmentKind === 'music' ? ('music' as const) : obj.segmentKind === 'dialogue' ? ('dialogue' as const) : undefined
+  return {
+    ...(segmentKind ? { segmentKind } : {}),
+    musicMood: normalizeMusicMood(obj.musicMood),
+    ...(typeof obj.musicCue === 'string' && obj.musicCue.trim()
+      ? { musicCue: obj.musicCue.trim() }
+      : {}),
+    ...(typeof obj.musicDurationSeconds === 'number' && Number.isFinite(obj.musicDurationSeconds)
+      ? { musicDurationSeconds: Math.max(1, Math.round(obj.musicDurationSeconds)) }
+      : {}),
+    ...(typeof obj.sceneId === 'string' && obj.sceneId.trim() ? { sceneId: obj.sceneId.trim() } : {}),
+    ...(Array.isArray(obj.characterIds)
+      ? {
+          characterIds: obj.characterIds.filter(
+            (id): id is string => typeof id === 'string' && id.trim().length > 0
+          ),
+        }
+      : {}),
+  }
+}
+
+/**
  * Parse the structured News script (a JSON object with frames and claims) into turns
  * carrying per-frame illustration prompts, music moods, and visual beats. Falls
  * back to the plain-text parser when the model didn't return usable JSON, so a
@@ -1550,17 +1658,24 @@ function parseStructuredScript(raw: string, show: Show): PodcastScript | null {
   const turns: PodcastTurn[] = []
   for (const item of arr) {
     if (!item || typeof item !== 'object') continue
-    const obj = item as {
-      speaker?: unknown
-      text?: unknown
-      musicMood?: unknown
-      illustrate?: unknown
-      scene?: unknown
-      visualBeat?: unknown
+    const obj = item as Record<string, unknown>
+    const meta = parseStructuredTurnFields(obj)
+    const segmentKind = meta.segmentKind ?? (obj.segmentKind === 'music' ? 'music' : 'dialogue')
+    const host = matchHost(typeof obj.speaker === 'string' ? obj.speaker : '')
+
+    if (segmentKind === 'music') {
+      turns.push({
+        speaker: host.name,
+        text: '',
+        segmentKind: 'music',
+        role: 'music',
+        ...meta,
+      })
+      continue
     }
+
     const text = typeof obj.text === 'string' ? obj.text.trim() : ''
     if (!text) continue
-    const host = matchHost(typeof obj.speaker === 'string' ? obj.speaker : '')
     const illustrate = obj.illustrate === false ? false : true
     const scene = typeof obj.scene === 'string' ? obj.scene.trim() : ''
     const visualBeat =
@@ -1570,10 +1685,11 @@ function parseStructuredScript(raw: string, show: Show): PodcastScript | null {
     turns.push({
       speaker: host.name,
       text,
-      musicMood: normalizeMusicMood(obj.musicMood),
+      segmentKind: 'dialogue',
       illustrate,
       visualMedium: 'image',
       visualBeat,
+      ...meta,
       ...(scene ? { scene } : {}),
     })
   }
@@ -1731,10 +1847,16 @@ Rules:
   const turns: PodcastTurn[] = parsed.turns.map((turn) => ({
     speaker: turn.speaker,
     text: turn.text,
-    role: 'body',
+    role: turn.role ?? 'body',
+    segmentKind: turn.segmentKind ?? 'dialogue',
     musicMood: turn.musicMood,
-    illustrate: true,
-    scene: buildPatternMatrixIllustrationScene(turn.text),
+    musicCue: turn.musicCue,
+    musicDurationSeconds: turn.musicDurationSeconds,
+    sceneId: turn.sceneId,
+    illustrate: turn.illustrate,
+    scene: turn.scene?.trim()
+      ? turn.scene
+      : buildPatternMatrixIllustrationScene(turn.text),
     visualBeat: turn.visualBeat,
     animaticMovement: turn.animaticMovement,
     sfxCue: turn.sfxCue,
@@ -1818,6 +1940,7 @@ FRAME MODEL (critical):
 - "visualBeat": integer 1, 2, 3… marking this frame's place in the episode's continuous visual storyboard.
 - VISUAL STORYBOARD: open with an establishing visual motif; each subsequent "scene" must visibly advance the same story thread (recurring subject, location, or metaphor evolving beat-by-beat) and depict what is being discussed in that frame's "text". No disconnected stock shots.
 - "musicMood": pick the best underscore mood from: ${moods}.
+- Optional music-only transition frames: set "segmentKind":"music", empty "text", and "musicCue":"chapter-sting" with "musicDurationSeconds":3.
 - Pacing: one clear idea per frame with natural broadcast rhythm. Use em-dashes, ellipses, and short question fragments for energy — but finish complete thoughts; do not cut mid-sentence.
 
 CLAIMS MODEL (Accountability Ledger):
@@ -2013,6 +2136,9 @@ function assembleEpisode(
     turns.push(
       ...expandSpokenTurns(hookSpeaker, 'hook', hook, 'serious', isNews ? { musicMood: 'tension' } : {})
     )
+    if (isNews || isSceneFlowLite) {
+      turns.push(buildMusicStingTurn(isNews ? 'tension' : 'reflective'))
+    }
   }
 
   if (!skipWelcomeBookends && intro) {
@@ -2022,6 +2148,9 @@ function assembleEpisode(
         ...(isNews ? { musicMood: 'uplifting' as MusicMood } : {}),
       })
     )
+    if (isNews || isSceneFlowLite) {
+      turns.push(buildMusicStingTurn('uplifting'))
+    }
   }
 
   // Insert the analytical core, marking ~3 even chapter resets across the body.
@@ -2337,6 +2466,9 @@ export async function uploadEpisodeAudioSegment(
     | 'scene'
     | 'frameKind'
     | 'musicMood'
+    | 'musicBedUrl'
+    | 'musicDurationSeconds'
+    | 'sceneId'
     | 'illustrationGroupId'
     | 'titleSlide'
     | 'visualMedium'
@@ -2367,6 +2499,9 @@ export async function uploadEpisodeAudioSegment(
     ...(meta.scene?.trim() ? { scene: meta.scene.trim() } : {}),
     ...(meta.frameKind ? { frameKind: meta.frameKind } : {}),
     ...(meta.musicMood ? { musicMood: meta.musicMood } : {}),
+    ...(meta.musicBedUrl ? { musicBedUrl: meta.musicBedUrl } : {}),
+    ...(meta.musicDurationSeconds ? { musicDurationSeconds: meta.musicDurationSeconds } : {}),
+    ...(meta.sceneId ? { sceneId: meta.sceneId } : {}),
     ...(meta.illustrationGroupId ? { illustrationGroupId: meta.illustrationGroupId } : {}),
     ...(meta.titleSlide ? { titleSlide: true } : {}),
     ...(meta.visualMedium ? { visualMedium: meta.visualMedium } : {}),
@@ -2412,7 +2547,7 @@ async function synthesizePodcastAudio(
   const lineBuffers = await synthesizeLineBuffers(
     token,
     script.directorNotes,
-    lines,
+    lines.filter((line) => line.role !== 'music'),
     locale,
     show
   )
@@ -2423,22 +2558,26 @@ async function synthesizePodcastAudio(
     Math.round(estimateDurationSeconds(script.wordCount) / Math.max(1, lines.length))
   )
 
-  if (lineBuffers.some((buffer) => buffer !== null)) {
-    const uploads = await Promise.all(
-      lineBuffers.map(async (buffer, index) => {
-        if (!buffer) {
-          console.error('[tts] missing audio for line after retry', {
-            index,
-            speaker: lines[index]?.speaker,
-            role: lines[index]?.role,
-            excerpt: lines[index]?.text.slice(0, 100),
-          })
-          return null
-        }
-        return uploadEpisodeAudioSegment(buffer, title, index, fallbackPerLine, lines[index]!)
+  let ttsIndex = 0
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!
+    if (line.role === 'music') {
+      segments.push(buildMusicSegmentFromPreparedLine(line, show))
+      continue
+    }
+
+    const buffer = lineBuffers[ttsIndex]
+    ttsIndex += 1
+    if (!buffer) {
+      console.error('[tts] missing audio for line after retry', {
+        index,
+        speaker: line.speaker,
+        role: line.role,
+        excerpt: line.text.slice(0, 100),
       })
-    )
-    segments = uploads.filter((segment): segment is AudioSegment => segment !== null)
+      continue
+    }
+    segments.push(await uploadEpisodeAudioSegment(buffer, title, index, fallbackPerLine, line))
   }
 
   if (segments.length === 0) {
@@ -2623,6 +2762,7 @@ export interface BriefFinalizeContext {
   seedQuestions: string[]
   episodeQuiz?: EpisodeQuiz | null
   visualSubjectBible?: VisualSubjectBible | null
+  visualSceneBible?: VisualSceneBible | null
 }
 
 export interface CompiledBrief {
@@ -2718,6 +2858,7 @@ async function tryResumeCompiledBrief(input: GenerateStoryInput): Promise<Compil
         ? (meta.seedQuestions as unknown[]).filter((q): q is string => typeof q === 'string')
         : [],
       visualSubjectBible: parseVisualSubjectBible(meta.visualSubjectBible),
+      visualSceneBible: parseVisualSceneBible(meta.visualSceneBible),
     },
   }
 }
@@ -2973,8 +3114,9 @@ export async function compileBriefAndScript(
     : null
 
   let mergedVisualSubjectBible = visualSubjectBible
+  let mergedVisualSceneBible: VisualSceneBible | null = null
   if (episodeScript && draftStoryId) {
-    mergedVisualSubjectBible = await buildEpisodeVisualSubjectBible({
+    const visualBible = await buildEpisodeVisualBible({
       storyId: draftStoryId,
       title: resolvedInput.title,
       turns: episodeScript.turns,
@@ -2982,6 +3124,8 @@ export async function compileBriefAndScript(
       briefingBible: visualSubjectBible,
       mathFoundationNode: podcastScript?.mathFoundationNode,
     })
+    mergedVisualSubjectBible = visualBible.visualSubjectBible
+    mergedVisualSceneBible = visualBible.visualSceneBible
   }
 
   let episodeQuiz: EpisodeQuiz | null = null
@@ -3033,6 +3177,11 @@ export async function compileBriefAndScript(
                 ) as object,
               }
             : {}),
+          ...(mergedVisualSceneBible
+            ? {
+                visualSceneBible: JSON.parse(JSON.stringify(mergedVisualSceneBible)) as object,
+              }
+            : {}),
           ...sceneFlowExtras,
         },
       },
@@ -3062,6 +3211,7 @@ export async function compileBriefAndScript(
       seedQuestions,
       episodeQuiz,
       visualSubjectBible: mergedVisualSubjectBible,
+      visualSceneBible: mergedVisualSceneBible,
     },
   }
 }
@@ -3101,6 +3251,7 @@ export async function synthesizeAndFinalize(
     resolvedInput,
     seedQuestions,
     visualSubjectBible,
+    visualSceneBible,
   } = context
 
   const subjectBible = visualSubjectBible?.subjects ?? []
@@ -3176,6 +3327,9 @@ export async function synthesizeAndFinalize(
           : {}),
         ...(visualSubjectBible
           ? { visualSubjectBible: JSON.parse(JSON.stringify(visualSubjectBible)) as object }
+          : {}),
+        ...(visualSceneBible
+          ? { visualSceneBible: JSON.parse(JSON.stringify(visualSceneBible)) as object }
           : {}),
         audioStatus: audio?.url ? 'ready' : 'failed',
         generating: false,

@@ -143,6 +143,7 @@ const TYPE_FRAMEWORKS: Record<ContentType, AnalysisFramework> = {
   News: DEFAULT_FRAMEWORK,
   Education: EDUCATION_FRAMEWORK,
   Entertainment: ENTERTAINMENT_FRAMEWORK,
+  Books: ENTERTAINMENT_FRAMEWORK,
   Lifestyle: LIFESTYLE_FRAMEWORK,
   Music: MUSIC_FRAMEWORK,
 }

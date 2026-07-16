@@ -69,7 +69,7 @@ export type MusicVoiceTone = (typeof MUSIC_VOICE_TONES)[number]
 // (like Spotify is music), with Education and Entertainment as sibling modes.
 // The Type drives discovery filtering AND the generation pipeline (script
 // framework + illustration style + default conversational format).
-export const CONTENT_TYPES = ['News', 'Education', 'Entertainment', 'Lifestyle', 'Music'] as const
+export const CONTENT_TYPES = ['News', 'Education', 'Entertainment', 'Books', 'Lifestyle', 'Music'] as const
 export type ContentType = (typeof CONTENT_TYPES)[number]
 export const DEFAULT_CONTENT_TYPE: ContentType = 'News'
 
@@ -128,6 +128,18 @@ export const ENTERTAINMENT_CATEGORIES = [
   'Gaming',
 ] as const
 
+// Book clubs and literary discussion lanes — fiction, nonfiction, and genre deep dives.
+export const BOOKS_CATEGORIES = [
+  'Fiction & Literature',
+  'Mystery & Thriller',
+  'Sci-Fi & Fantasy',
+  'Nonfiction',
+  'Biography & Memoir',
+  'History & Society',
+  'Self-Help & Growth',
+  'Business & Leadership',
+] as const
+
 // Music genres — each maps to a dedicated Lyria-powered genre channel.
 export const MUSIC_CATEGORIES = [
   'Hip-Hop',
@@ -158,6 +170,7 @@ export const CONTENT_CATEGORIES = [
   ...NEWS_CATEGORIES,
   ...EDUCATION_CATEGORIES,
   ...ENTERTAINMENT_CATEGORIES,
+  ...BOOKS_CATEGORIES,
   ...LIFESTYLE_CATEGORIES,
   ...MUSIC_CATEGORIES,
 ] as const
@@ -173,6 +186,7 @@ const CATEGORIES_BY_TYPE: Record<ContentType, readonly string[]> = {
   News: NEWS_CATEGORIES,
   Education: EDUCATION_CATEGORIES,
   Entertainment: ENTERTAINMENT_CATEGORIES,
+  Books: BOOKS_CATEGORIES,
   Lifestyle: LIFESTYLE_CATEGORIES,
   Music: MUSIC_CATEGORIES,
 }
@@ -192,6 +206,7 @@ export function typeForCategory(category: string): ContentType {
   const canonical = canonicalizeCategory(category)
   if ((EDUCATION_CATEGORIES as readonly string[]).includes(canonical)) return 'Education'
   if ((ENTERTAINMENT_CATEGORIES as readonly string[]).includes(canonical)) return 'Entertainment'
+  if ((BOOKS_CATEGORIES as readonly string[]).includes(canonical)) return 'Books'
   if ((LIFESTYLE_CATEGORIES as readonly string[]).includes(canonical)) return 'Lifestyle'
   if ((MUSIC_CATEGORIES as readonly string[]).includes(canonical)) return 'Music'
   return 'News'
@@ -232,6 +247,15 @@ export const CATEGORY_SUBTOPICS: Record<string, string[]> = {
   'Film & TV': ['New Releases', 'Classics', 'Streaming', 'Directors', 'Genre Deep Dives'],
   Music: ['New Albums', 'Artist Profiles', 'Genres', 'Production', 'Music History'],
   Gaming: ['New Releases', 'Indie Games', 'Esports', 'Game Design', 'Retro'],
+  // Books
+  'Fiction & Literature': ['Literary Fiction', 'Contemporary', 'Classics', 'Book Club Picks', 'Debut Novels'],
+  'Mystery & Thriller': ['Detective', 'Suspense', 'Cozy Mystery', 'Psychological Thriller', 'True-Crime Adjacent'],
+  'Sci-Fi & Fantasy': ['Space Opera', 'Hard Sci-Fi', 'Epic Fantasy', 'Urban Fantasy', 'Worldbuilding'],
+  Nonfiction: ['Essays', 'Investigative', 'Science Writing', 'Current Affairs', 'Memoir-Adjacent'],
+  'Biography & Memoir': ['Political Figures', 'Artists', 'Athletes', 'Founders', 'Ordinary Lives'],
+  'History & Society': ['Ancient World', 'Wars & Revolutions', 'Social Movements', 'Biographies of Eras', 'Political History'],
+  'Self-Help & Growth': ['Habits', 'Mindset', 'Productivity', 'Relationships', 'Spirituality'],
+  'Business & Leadership': ['Startups', 'Management', 'Investing', 'Strategy', 'Work Culture'],
   // Home & Lifestyle
   'Food & Cooking': ['Recipes', 'Baking', 'Meal Prep', 'World Cuisine', 'Kitchen Tips'],
   Travel: ['Destinations', 'Budget Travel', 'Road Trips', 'Travel Tips', 'Adventure'],

@@ -107,6 +107,16 @@ export interface AudioSegment {
   musicVolumeRatio?: number | null
   /** Silent opening-hosts video bookend (full-volume underscore). */
   hostsVideoBookend?: HostsVideoBookend
+  /** Dialogue vs music-only timeline entry. */
+  segmentKind?: 'dialogue' | 'music'
+  /** Named sting/transition cue (SceneFlow lyria_theme_cue maps here). */
+  musicCue?: string | null
+  /** Target length for explicit music-only segments (seconds). */
+  musicDurationSeconds?: number | null
+  /** Link to visual scene bible entry for location consistency. */
+  sceneId?: string | null
+  /** Optional explicit cast for this frame. */
+  characterIds?: string[] | null
 }
 
 export interface MathFoundationVariable {
@@ -123,6 +133,7 @@ export interface MathFoundationNode {
 }
 
 export type { VisualSubject, VisualSubjectBible, SubjectAppearance } from '@/lib/visual-subjects'
+export type { VisualScene, VisualSceneBible } from '@/lib/visual-scenes'
 
 export interface StoryCard {
   id: string

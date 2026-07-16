@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { cookies } from 'next/headers'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { AudioPlayer } from '@/components/audio/AudioPlayer'
+import { AdConsentBanner } from '@/components/ads/AdConsentBanner'
 import { AppShell } from '@/components/layout/AppShell'
 import { AffiliateTrackerProvider } from '@/components/providers/AffiliateTrackerProvider'
 import { PushRegistrar } from '@/components/push/PushRegistrar'
@@ -73,6 +74,7 @@ export default async function RootLayout({
               <div className="flex-1">{children}</div>
             </AppShell>
             <AudioPlayer />
+            <AdConsentBanner />
           </UserProvider>
         </I18nProvider>
       </body>

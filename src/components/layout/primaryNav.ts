@@ -1,11 +1,11 @@
-import { Home, Search, ScanEye, Sparkles, Mic } from 'lucide-react'
+import { Compass, Newspaper, ScanEye, Sparkles, Mic } from 'lucide-react'
 import type { MessageKey } from '@/i18n/messages/en'
 import { canGenerateOnDemand, type Plan } from '@/lib/plans'
 
 export interface PrimaryNavItem {
   href: string
   key: MessageKey
-  icon: typeof Home
+  icon: typeof Compass
 }
 
 /**
@@ -13,8 +13,8 @@ export interface PrimaryNavItem {
  */
 export function buildPrimaryNav(plan: Plan): PrimaryNavItem[] {
   const items: PrimaryNavItem[] = [
-    { href: '/home', key: 'navHome', icon: Home },
-    { href: '/discover', key: 'navSearch', icon: Search },
+    { href: '/discover', key: 'navDiscover', icon: Compass },
+    { href: '/news', key: 'navNews', icon: Newspaper },
     { href: '/library', key: 'navLibrary', icon: ScanEye },
   ]
 

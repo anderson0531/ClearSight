@@ -10,7 +10,6 @@ import { LibraryContinueSection } from '@/components/library/LibraryContinueSect
 import { LibraryJumpNav, type LibraryJumpSection } from '@/components/library/LibraryJumpNav'
 import { LibraryQueueSection } from '@/components/library/LibraryQueueSection'
 import { LibraryWelcomeEmpty } from '@/components/library/LibraryWelcomeEmpty'
-import { LibrarySection } from '@/components/library/LibrarySection'
 import { useUser } from '@/components/providers/UserProvider'
 import { useI18n } from '@/i18n/I18nProvider'
 import { DEFAULT_TAXONOMY, type ContentType, type TaxonomyFilter } from '@/lib/taxonomy'
@@ -137,20 +136,22 @@ export default function LibraryPage() {
     savedSearches.length > 0 ||
     following.length > 0
 
+  const hasInterests = typeProfiles.some((profile) => profile.signalCount > 0)
+
   const jumpSections = useMemo(() => {
     const sections: LibraryJumpSection[] = []
     if (recentEpisodes.length > 0) sections.push('continue')
     if (upNext.length > 0) sections.push('queue')
-    sections.push('preferences')
+    if (hasInterests) sections.push('preferences')
     if (hasCollections) sections.push('collections')
     return sections
-  }, [recentEpisodes.length, upNext.length, hasCollections])
+  }, [recentEpisodes.length, upNext.length, hasInterests, hasCollections])
 
   const lensIsEmpty =
     recentEpisodes.length === 0 &&
     upNext.length === 0 &&
     !hasCollections &&
-    typeProfiles.every((profile) => profile.signalCount === 0)
+    !hasInterests
 
   const openSavedSearch = (search: SavedSearch) => {
     const restored: TaxonomyFilter = {
@@ -158,7 +159,15 @@ export default function LibraryPage() {
       languages: [language as TaxonomyFilter['languages'][number]],
     }
     persistTaxonomyFilter(restored)
-    router.push('/discover')
+    if (restored.contentType === 'News') {
+      router.push('/news')
+      return
+    }
+    const params = new URLSearchParams()
+    params.set('contentType', restored.contentType)
+    const category = restored.categories[0]
+    if (category && category !== 'Top') params.set('category', category)
+    router.push(`/channels?${params.toString()}`)
   }
 
   const handlePlayQueue = () => {
@@ -187,43 +196,59 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      <LibraryJumpNav sections={jumpSections} />
+      {!lensIsEmpty ? <LibraryJumpNav sections={jumpSections} /> : null}
 
       {lensIsEmpty ? (
         <LibraryWelcomeEmpty canCreateOnDemand={canCreateOnDemand} />
       ) : (
-        <>
-          <LibraryContinueSection
-            recentTracks={recentTracks}
-            showAll={showAllRecent}
-            onToggleShowAll={() => setShowAllRecent((on) => !on)}
-            onPlay={playTrack}
-          />
+        <div className="space-y-10">
+          {(recentEpisodes.length > 0 || upNext.length > 0) ? (
+            <section id="lens-listening" className="space-y-6">
+              <h2 className="text-lg font-bold text-[var(--foreground)]">{t('lensZoneListening')}</h2>
+              <LibraryContinueSection
+                recentTracks={recentTracks}
+                showAll={showAllRecent}
+                onToggleShowAll={() => setShowAllRecent((on) => !on)}
+                onPlay={playTrack}
+              />
+              <LibraryQueueSection
+                upNext={upNext}
+                queue={queue}
+                onPlay={playTrack}
+                onRemove={removeFromQueue}
+              />
+            </section>
+          ) : null}
 
-          <LibraryQueueSection
-            upNext={upNext}
-            queue={queue}
-            onPlay={playTrack}
-            onRemove={removeFromQueue}
-          />
+          {hasInterests ? (
+            <section id="lens-interests">
+              <h2 className="mb-4 text-lg font-bold text-[var(--foreground)]">{t('lensZoneInterests')}</h2>
+              <LensTypePreferencesSection profiles={typeProfiles} language={language} />
+            </section>
+          ) : null}
 
-          <LensTypePreferencesSection profiles={typeProfiles} language={language} />
-
-          <LensCollectionsHub
-            liked={liked}
-            playlists={playlists}
-            savedSearches={savedSearches}
-            following={following}
-            onPlay={playTrack}
-            onUnlike={toggleLikeEpisode}
-            onOpenSavedSearch={openSavedSearch}
-            onRemoveSavedSearch={(id) => setSavedSearches(removeSavedSearch(id))}
-            onDeletePlaylist={deletePlaylist}
-            onRemoveFromPlaylist={removeFromPlaylist}
-            onUnfollow={toggleFollowChannel}
-          />
-        </>
+          {hasCollections ? (
+            <section id="lens-collections">
+              <h2 className="mb-4 text-lg font-bold text-[var(--foreground)]">{t('lensZoneCollections')}</h2>
+              <LensCollectionsHub
+                liked={liked}
+                playlists={playlists}
+                savedSearches={savedSearches}
+                following={following}
+                onPlay={playTrack}
+                onUnlike={toggleLikeEpisode}
+                onOpenSavedSearch={openSavedSearch}
+                onRemoveSavedSearch={(id) => setSavedSearches(removeSavedSearch(id))}
+                onDeletePlaylist={deletePlaylist}
+                onRemoveFromPlaylist={removeFromPlaylist}
+                onUnfollow={toggleFollowChannel}
+              />
+            </section>
+          ) : null}
+        </div>
       )}
+
+      {/* Server-sync for lens data (favorites, playlists, saved searches) is a tracked follow-up. */}
     </main>
   )
 }

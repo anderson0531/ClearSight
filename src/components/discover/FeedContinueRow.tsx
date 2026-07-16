@@ -1,13 +1,12 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
-import Link from 'next/link'
-import { ArrowRight } from 'lucide-react'
-import { LibraryEpisodeCard } from '@/components/library/LibraryEpisodeCard'
 import { useI18n } from '@/i18n/I18nProvider'
-import { HOME_CONTINUE_LIMIT } from '@/lib/home-personalization'
+import { DISCOVER_CONTINUE_PREVIEW_LIMIT } from '@/lib/discover-feed'
 import { filterEpisodeRecentTracks } from '@/lib/audio-tracks'
 import { useAudioQueue } from '@/store/useAudioQueue'
+import { SectionShell } from '@/components/ui/SectionShell'
+import { MediaCard } from '@/components/ui/MediaCard'
 
 function useIsClient() {
   return useSyncExternalStore(
@@ -17,7 +16,8 @@ function useIsClient() {
   )
 }
 
-export function HomeContinueListeningRow() {
+/** Compact continue preview — full library lives on Your Lens. */
+export function FeedContinueRow() {
   const { t } = useI18n()
   const isClient = useIsClient()
   const recentTracks = useAudioQueue((s) => s.recentTracks)
@@ -25,29 +25,27 @@ export function HomeContinueListeningRow() {
 
   if (!isClient) return null
 
-  const playable = filterEpisodeRecentTracks(recentTracks, HOME_CONTINUE_LIMIT)
+  const playable = filterEpisodeRecentTracks(recentTracks, DISCOVER_CONTINUE_PREVIEW_LIMIT)
   if (playable.length === 0) return null
 
   return (
-    <section className="home-content-section home-continue-section">
-      <div className="home-section-header">
-        <h2 className="home-section-title mb-0">{t('homeContinueListening')}</h2>
-        <Link href="/library" className="see-all-link">
-          {t('homeSeeAllEpisodes')}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-
+    <SectionShell
+      id="discover-continue"
+      title={t('homeContinueListening')}
+      seeAllHref="/library"
+      seeAllLabel={t('homeSeeAllEpisodes')}
+    >
       <div className="home-episode-grid home-episode-grid-2">
         {playable.map((track) => (
-          <LibraryEpisodeCard
+          <MediaCard
             key={track.id}
+            kind="track"
             track={track}
             titleClassName="home-continue-title"
             onPlay={() => playTrack(track, playable)}
           />
         ))}
       </div>
-    </section>
+    </SectionShell>
   )
 }

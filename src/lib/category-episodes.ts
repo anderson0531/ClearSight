@@ -1,5 +1,5 @@
 import { buildStoryParams } from '@/lib/discovery-utils'
-import { fetchPlayableStories } from '@/lib/home-personalization'
+import { fetchPlayableStories } from '@/lib/discover-feed'
 import type { TaxonomyFilter } from '@/lib/taxonomy'
 import type { StoryCard } from '@/types/story'
 

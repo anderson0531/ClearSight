@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import { useTranslations } from '@/i18n/I18nProvider'
 import { useUser } from '@/components/providers/UserProvider'
+import { AdPrerollOverlay } from '@/components/audio/AdPrerollOverlay'
+import { usePrerollAdGate } from '@/hooks/usePrerollAdGate'
 import { useScreenOffAudioGate } from '@/hooks/useScreenOffAudioGate'
 import { BACKGROUND_MUSIC_VOLUME_RATIO, musicBedForRole } from '@/lib/music-assets'
 import { useAudioQueue } from '@/store/useAudioQueue'
@@ -66,6 +68,9 @@ export function AudioPlayer() {
   const [collapsed, setCollapsed] = useState(false)
 
   const currentTrack = useAudioQueue((s) => s.currentTrack)
+  const pendingPlay = useAudioQueue((s) => s.pendingPlay)
+  const confirmPlay = useAudioQueue((s) => s.confirmPlay)
+  const setAdPhase = useAudioQueue((s) => s.setAdPhase)
   const isPlaying = useAudioQueue((s) => s.isPlaying)
   const shuffle = useAudioQueue((s) => s.shuffle)
   const loop = useAudioQueue((s) => s.loop)
@@ -85,10 +90,21 @@ export function AudioPlayer() {
   const resume = useAudioQueue((s) => s.resume)
   const setCurrentSegmentIndex = useAudioQueue((s) => s.setCurrentSegmentIndex)
 
+  const preroll = usePrerollAdGate({
+    plan,
+    trackId: pendingPlay?.track.id ?? null,
+    storyId: pendingPlay?.track.storyId,
+    surface: 'global-player',
+    armed: Boolean(pendingPlay),
+    onFinished: confirmPlay,
+    setAdPhase,
+  })
+
   const { showUpgradeHint, dismissUpgradeHint } = useScreenOffAudioGate({
     plan,
     isPlaying,
     pause,
+    enabled: !preroll.showOverlay,
   })
 
   useEffect(() => {
@@ -334,7 +350,8 @@ export function AudioPlayer() {
     }
   }
 
-  if (!currentTrack) return null
+  const displayTrack = currentTrack ?? pendingPlay?.track ?? null
+  if (!displayTrack) return null
 
   const progress = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0
   const globalBuffered = (offsets[segmentIndex] ?? 0) + bufferedEnd
@@ -342,6 +359,19 @@ export function AudioPlayer() {
 
   return (
     <footer className="audio-player-bar glass-header fixed bottom-0 start-0 end-0 z-50 safe-area-bottom">
+      <AdPrerollOverlay
+        visible={preroll.showOverlay}
+        loading={preroll.phase === 'loading'}
+        payload={preroll.payload}
+        remainingSeconds={preroll.remainingSeconds}
+        canSkip={preroll.canSkip}
+        needsTap={preroll.needsTap}
+        onStartAd={() => void preroll.startAd()}
+        onSkip={preroll.skipAd}
+        adAudioRef={preroll.adAudioRef}
+        onTimeUpdate={preroll.handleTimeUpdate}
+        onEnded={preroll.handleEnded}
+      />
       {showUpgradeHint ? (
         <div className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 sm:px-4">
           <div className="mx-auto flex max-w-7xl items-start gap-2">
@@ -398,15 +428,15 @@ export function AudioPlayer() {
       <div className="mx-auto max-w-7xl px-3 py-2 sm:px-4">
         {collapsed ? (
           <div className="flex items-center gap-2">
-            {currentTrack.thumbnailUrl ? (
+            {displayTrack.thumbnailUrl ? (
               <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded">
-                <Image src={currentTrack.thumbnailUrl} alt="" fill sizes="32px" className="object-cover" />
+                <Image src={displayTrack.thumbnailUrl} alt="" fill sizes="32px" className="object-cover" />
               </div>
             ) : (
               <div className="h-8 w-8 shrink-0 rounded bg-white/8" />
             )}
             <p className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]">
-              {currentTrack.title}
+              {displayTrack.title}
             </p>
             <button
               type="button"
@@ -456,10 +486,10 @@ export function AudioPlayer() {
 
         <div className="flex items-center gap-2 pb-1 sm:gap-4">
           <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-            {currentTrack.thumbnailUrl ? (
+            {displayTrack.thumbnailUrl ? (
               <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded sm:h-12 sm:w-12">
                 <Image
-                  src={currentTrack.thumbnailUrl}
+                  src={displayTrack.thumbnailUrl}
                   alt=""
                   fill
                   sizes="48px"
@@ -471,7 +501,7 @@ export function AudioPlayer() {
             )}
             <div className="min-w-0">
               <p className="truncate text-xs font-medium text-[var(--foreground)] sm:text-sm">
-                {currentTrack.title}
+                {displayTrack.title}
               </p>
               <p className="truncate text-[10px] text-[var(--muted-strong)] sm:text-xs">
                 {t('playerSubtitle')}
@@ -531,7 +561,7 @@ export function AudioPlayer() {
               </button>
             </div>
             <span className="text-[10px] tabular-nums text-[var(--muted-strong)]">
-              {formatTime(currentTime)} / {formatTime(totalDuration || currentTrack.durationSeconds || 0)}
+              {formatTime(currentTime)} / {formatTime(totalDuration || displayTrack.durationSeconds || 0)}
             </span>
           </div>
 

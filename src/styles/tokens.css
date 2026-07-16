@@ -1,0 +1,58 @@
+/* Design tokens — ClearSight design system */
+
+:root {
+  /* Semantic colors */
+  --background: #0c0e14;
+  --foreground: #e8e6e3;
+  --surface: #141820;
+  --surface-elevated: #1a2030;
+  --accent: #5b6abf;
+  --accent-hover: #6d7ad4;
+  --accent-foreground: #c7cff0;
+  --accent-muted: rgba(91, 106, 191, 0.14);
+  --accent-credit: #c4a35a;
+  --accent-credit-muted: rgba(196, 163, 90, 0.12);
+  --border: rgba(148, 163, 184, 0.1);
+  --muted: #94a3b8;
+  --muted-strong: #64748b;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-pill: 9999px;
+
+  /* Typography */
+  --text-display: clamp(1.75rem, 4vw, 2.5rem);
+  --text-title: 1.25rem;
+  --text-section: 1rem;
+  --text-body: 0.875rem;
+  --text-caption: 0.75rem;
+  --text-micro: 0.6875rem;
+
+  /* Motion */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Elevation */
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.35);
+}

@@ -601,6 +601,31 @@ Requirements:
     }
   }
 
+  if (contentType === 'Books') {
+    const scope = isTop
+      ? `Cover a diverse mix across these shelves: ${cats.join(', ')}.
+${topFormat}`
+      : `Every topic must clearly fit the shelf: ${category}.
+${specificFormat}`
+    return {
+      defaultCategory,
+      prompt: `You are programming a books and reading podcast network (think literary discussion, book-club deep dives, and genre reads). List exactly ${count} compelling episode topics in ${language} about REAL published books, authors, or reading themes.
+
+Audience geography: ${geoFocus}
+${focusLine}
+
+${scope}
+
+Requirements:
+- Each topic must center on a REAL published book, author, or well-known literary theme — no invented titles or fake authors
+- Frame topics as discussion angles (themes, craft, comparisons, why it matters now), not breaking-news headlines
+- Favor books and authors listeners can actually find; spoiler-aware wording when discussing plot
+- Write every topic in ${language}; thoughtful, inviting, non-sensational wording
+- One topic per line; no numbering, bullets, URLs, source names, or preamble
+- Do NOT include intro lines like "Here are the topics" — titles only`,
+    }
+  }
+
   if (contentType === 'Music') {
     const scope = isTop
       ? `Cover a diverse mix across these genres: ${cats.join(', ')}.

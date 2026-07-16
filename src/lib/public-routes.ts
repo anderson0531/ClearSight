@@ -16,7 +16,7 @@ export function isPublicPage(pathname: string): boolean {
 }
 
 /** API routes that must work before login (session bootstrap). */
-export const PUBLIC_API_PREFIXES = ['/api/auth', '/api/me'] as const
+export const PUBLIC_API_PREFIXES = ['/api/auth', '/api/me', '/api/ads'] as const
 
 /** Read-only channel intro fetch for the public marketing page. */
 export function isPublicChannelIntroApi(pathname: string, method: string): boolean {

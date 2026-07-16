@@ -76,6 +76,30 @@ export const PATTERN_MATRIX_INTRO_ROCK_BED = "https://xxavfkdhdebrqida.public.bl
 /** Rock-themed underscore for The ClearSight Brief channel intro trailer. */
 export const CLEARSIGHT_BRIEF_INTRO_ROCK_BED = "https://xxavfkdhdebrqida.public.blob.vercel-storage.com/clearsight/music/bed-clearsight-brief-intro-rock.wav"
 
+/** Resolve a named music cue to a bed URL (stings, theme intros). */
+export function musicBedForCue(
+  cue?: string | null
+): { url: string; loop: boolean; durationSeconds?: number } | null {
+  const lower = (cue ?? '').trim().toLowerCase()
+  if (!lower) return null
+  if (lower.includes('sting') || lower.includes('transition') || lower.includes('chapter')) {
+    return MUSIC_ASSETS.sting
+      ? { url: MUSIC_ASSETS.sting.url, loop: false, durationSeconds: MUSIC_ASSETS.sting.durationSeconds }
+      : null
+  }
+  if (lower.includes('intro') || lower.includes('theme')) {
+    return MUSIC_ASSETS.intro
+      ? { url: MUSIC_ASSETS.intro.url, loop: true, durationSeconds: MUSIC_ASSETS.intro.durationSeconds }
+      : null
+  }
+  if (lower.includes('outro')) {
+    return MUSIC_ASSETS.outro
+      ? { url: MUSIC_ASSETS.outro.url, loop: true, durationSeconds: MUSIC_ASSETS.outro.durationSeconds }
+      : null
+  }
+  return null
+}
+
 /** Coerce arbitrary model output into a valid {@link MusicMood} (default neutral). */
 export function normalizeMusicMood(value: unknown): MusicMood {
   const lower = typeof value === 'string' ? value.trim().toLowerCase() : ''

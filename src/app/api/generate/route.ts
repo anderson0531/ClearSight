@@ -18,7 +18,7 @@ const generateSchema = z.object({
   title: z.string().min(3).max(200),
   language: z.string().min(1),
   category: z.string().min(1),
-  contentType: z.enum(['News', 'Education', 'Entertainment', 'Lifestyle']).optional(),
+  contentType: z.enum(['News', 'Education', 'Entertainment', 'Books', 'Lifestyle']).optional(),
   geoScope: z.string().min(1),
   geoRegion: z.string().optional(),
   geoCountry: z.string().optional(),

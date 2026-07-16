@@ -22,6 +22,7 @@ const TYPE_ICONS: Record<ContentType, typeof Newspaper> = {
   News: Newspaper,
   Education: GraduationCap,
   Entertainment: Clapperboard,
+  Books: BookOpen,
   Lifestyle: Home,
   Music: Music2,
 }
@@ -103,7 +104,11 @@ export function LensTypePreferencesSection({ profiles, language }: LensTypePrefe
               </ul>
 
               <Link
-                href="/discover"
+                href={
+                  profile.contentType === 'News'
+                    ? '/news'
+                    : `/channels?contentType=${encodeURIComponent(profile.contentType)}`
+                }
                 onClick={() => openType(profile.contentType)}
                 className="lens-type-link"
               >

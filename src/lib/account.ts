@@ -1,7 +1,7 @@
 import { isPaymentBypassEnabled } from '@/lib/payments'
 import { DEMO_USER_ID } from '@/lib/session'
 import { fromUnits } from '@/lib/credit-units'
-import type { Plan } from '@/lib/plans'
+import { normalizePlan, type Plan } from '@/lib/plans'
 
 export interface SerializableUser {
   id: string
@@ -29,7 +29,7 @@ export function serializeUser(user: SerializableUser, authenticated: boolean): P
     id: user.id,
     email: user.email ?? null,
     name: user.name ?? null,
-    plan: user.plan,
+    plan: normalizePlan(user.plan),
     coreTokens: fromUnits(user.coreTokens),
     subscriptionActive: user.subscriptionActive,
     authenticated,

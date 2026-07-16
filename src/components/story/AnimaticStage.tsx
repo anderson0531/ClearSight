@@ -1,6 +1,7 @@
 'use client'
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { useFullscreen } from '@/hooks/useFullscreen'
 import Image from 'next/image'
 import Link from 'next/link'
 import {
@@ -22,6 +23,8 @@ import {
 } from 'lucide-react'
 import { useUser } from '@/components/providers/UserProvider'
 import { useTranslations } from '@/i18n/I18nProvider'
+import { AdPrerollOverlay } from '@/components/audio/AdPrerollOverlay'
+import { usePrerollAdGate, prerollEligible } from '@/hooks/usePrerollAdGate'
 import { useScreenOffAudioGate } from '@/hooks/useScreenOffAudioGate'
 import { canGenerateOnDemand, hasAccountabilityLedgerUnlimited } from '@/lib/plans'
 import { HOST_ANDERSON, HOST_SARAH, HOSTS_IMAGE, type HostProfile } from '@/lib/hosts'
@@ -130,9 +133,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const videoRef = useRef<HTMLVideoElement>(null)
   const outroTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingSegmentStartRef = useRef(false)
-  const stageRef = useRef<HTMLDivElement>(null)
-
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const { ref: stageRef, isFullscreen, toggleFullscreen } = useFullscreen<HTMLDivElement>({
+    lockLandscape: true,
+  })
 
   const [segments, setSegments] = useState<AudioSegment[] | null>(audioSegments ?? null)
   const [generating, setGenerating] = useState(false)
@@ -340,13 +343,6 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     setIsPlaying(false)
   }, [stopOutroMusic])
 
-  useScreenOffAudioGate({
-    plan,
-    isPlaying: started && (isPlaying || outroPlaying),
-    pause: pauseAnimatic,
-    enabled: started,
-  })
-
   const musicVolumeRatio = useMemo(
     () =>
       resolveEpisodeMusicVolumeRatio(
@@ -408,7 +404,9 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     [outroPlaying, showId, volume, muted]
   )
 
-  const startAnimatic = useCallback(() => {
+  const [prerollArmed, setPrerollArmed] = useState(false)
+
+  const startAnimaticInner = useCallback(() => {
     pauseGlobalAudio()
     setSegmentIndex(0)
     setCurrentTime(0)
@@ -416,6 +414,33 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     setStarted(true)
     setIsPlaying(true)
   }, [pauseGlobalAudio])
+
+  const preroll = usePrerollAdGate({
+    plan,
+    trackId: storyId,
+    storyId,
+    surface: 'animatic',
+    armed: prerollArmed,
+    onFinished: () => {
+      setPrerollArmed(false)
+      startAnimaticInner()
+    },
+  })
+
+  const startAnimatic = useCallback(() => {
+    if (prerollEligible(plan, storyId)) {
+      setPrerollArmed(true)
+    } else {
+      startAnimaticInner()
+    }
+  }, [plan, storyId, startAnimaticInner])
+
+  useScreenOffAudioGate({
+    plan,
+    isPlaying: started && (isPlaying || outroPlaying),
+    pause: pauseAnimatic,
+    enabled: started && !preroll.showOverlay,
+  })
 
   const stopAnimatic = useCallback(() => {
     const audio = audioRef.current
@@ -457,22 +482,6 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
   const goToNextFrame = useCallback(() => {
     goToSegment(segmentIndex + 1)
   }, [goToSegment, segmentIndex])
-
-  const toggleFullscreen = useCallback(() => {
-    const el = stageRef.current
-    if (!el) return
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => {})
-    } else {
-      void el.requestFullscreen?.().catch(() => {})
-    }
-  }, [])
-
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
-    document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
 
   const handleGenerate = useCallback(async () => {
     setError(null)
@@ -674,7 +683,7 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
     <div className="fade-in mt-6 overflow-hidden rounded-xl border border-[var(--border)] bg-black/20">
       <div
         ref={stageRef}
-        className={`relative w-full overflow-hidden bg-black ${
+        className={`animatic-stage relative w-full overflow-hidden bg-black ${
           isFullscreen ? 'flex h-full items-center justify-center' : 'aspect-video'
         }`}
       >
@@ -710,6 +719,21 @@ export const AnimaticStage = forwardRef<AnimaticStageHandle, AnimaticStageProps>
         )}
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-black/30" />
+
+        <AdPrerollOverlay
+          visible={preroll.showOverlay}
+          loading={preroll.phase === 'loading'}
+          payload={preroll.payload}
+          remainingSeconds={preroll.remainingSeconds}
+          canSkip={preroll.canSkip}
+          needsTap={preroll.needsTap}
+          onStartAd={() => void preroll.startAd()}
+          onSkip={preroll.skipAd}
+          adAudioRef={preroll.adAudioRef}
+          onTimeUpdate={preroll.handleTimeUpdate}
+          onEnded={preroll.handleEnded}
+          variant="animatic"
+        />
 
         {/* News title slide: episode title centered on the editorial backdrop,
             designed for engagement with a channel eyebrow and a legibility scrim. */}

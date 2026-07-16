@@ -11,6 +11,7 @@ describe('public-routes', () => {
     assert.equal(isPublicPage('/forgot-password'), true)
     assert.equal(isPublicPage('/home'), false)
     assert.equal(isPublicPage('/discover'), false)
+    assert.equal(isPublicPage('/news'), false)
     assert.equal(isPublicPage('/embed/abc'), false)
   })
 

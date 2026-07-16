@@ -1,25 +1,18 @@
 @import "tailwindcss";
-
-:root {
-  --background: #0c0e14;
-  --foreground: #e8e6e3;
-  --surface: #141820;
-  --surface-elevated: #1a2030;
-  --accent: #5b6abf;
-  --accent-hover: #6d7ad4;
-  --accent-muted: rgba(91, 106, 191, 0.14);
-  --accent-credit: #c4a35a;
-  --accent-credit-muted: rgba(196, 163, 90, 0.12);
-  --border: rgba(148, 163, 184, 0.1);
-  --muted: #94a3b8;
-  --muted-strong: #64748b;
-}
+@import "../styles/tokens.css";
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -363,9 +356,74 @@ input[type='search']::-webkit-search-cancel-button {
   padding: 0.5rem 1rem;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #c7cff0;
+  color: var(--accent-foreground);
   transition: background 0.2s ease, border-color 0.2s ease;
   min-height: 2.5rem;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--foreground);
+  transition: background 0.2s ease, border-color 0.2s ease;
+  min-height: 2.5rem;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 0.125rem 0.5rem;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.status-badge-neutral {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+}
+
+.status-badge-active {
+  background: var(--accent-muted);
+  color: var(--accent-foreground);
+}
+
+.status-badge-success {
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--success);
+}
+
+.status-badge-warning {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warning);
+}
+
+.status-badge-danger {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+}
+
+.feed-section {
+  margin-bottom: var(--space-6);
 }
 
 .btn-accent:hover:not(:disabled) {
@@ -1005,6 +1063,83 @@ input[type='search']::-webkit-search-cancel-button {
   white-space: nowrap;
 }
 
+.home-episode-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+.home-episode-card--list {
+  flex: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  min-height: 4.25rem;
+  border: none;
+  border-radius: 0.65rem;
+  padding: 0.5rem 0.625rem;
+  color: #fff;
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.home-episode-card--list:hover {
+  transform: scale(1.02);
+  filter: brightness(1.08);
+}
+
+.home-episode-card--list .story-row-media,
+.home-episode-list-thumb {
+  flex: 0 0 20%;
+  width: 20%;
+  max-width: 3.25rem;
+  min-width: 2.5rem;
+  aspect-ratio: 1;
+  border-radius: 0.375rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.home-episode-card--list .story-row-play {
+  height: 1.5rem;
+  width: 1.5rem;
+  bottom: 0.2rem;
+  right: 0.2rem;
+}
+
+.home-episode-card--list .story-row-play svg {
+  height: 0.75rem;
+  width: 0.75rem;
+}
+
+.home-episode-card--list .home-episode-duration {
+  display: none;
+}
+
+.home-episode-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.home-episode-card--list .home-episode-body {
+  display: flex;
+  align-items: center;
+}
+
+.home-episode-card--list .story-row-title {
+  margin-top: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #fff;
+  -webkit-line-clamp: 3;
+}
+
+.home-episode-card--list .story-row-title:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
 .home-episode-grid {
   display: grid;
   gap: 1rem;
@@ -1448,6 +1583,23 @@ input[type='search']::-webkit-search-cancel-button {
 .channel-hero:fullscreen .channel-hero-overlay,
 .channel-hero:-webkit-full-screen .channel-hero-overlay {
   background: linear-gradient(to top, rgba(8, 10, 16, 0.92) 8%, rgba(8, 10, 16, 0.35) 40%, rgba(8, 10, 16, 0.08) 100%);
+}
+
+.animatic-stage:fullscreen,
+.animatic-stage:-webkit-full-screen {
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  max-height: 100dvh;
+  border: none;
+  background: #000;
+}
+
+.animatic-stage:fullscreen video,
+.animatic-stage:-webkit-full-screen video,
+.animatic-stage:fullscreen img,
+.animatic-stage:-webkit-full-screen img {
+  object-fit: contain;
 }
 
 .channel-hero-compact {

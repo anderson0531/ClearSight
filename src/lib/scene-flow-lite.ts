@@ -44,10 +44,14 @@ export interface SceneFlowLiteScriptPayload {
 
 /** Turn fields carried through episode script drafts and audio segments. */
 export interface SceneFlowTurnExtras {
+  segmentKind?: 'dialogue' | 'music'
   visualBeat?: number
   animaticMovement?: string
   sfxCue?: string
   musicMood?: MusicMood
+  musicCue?: string
+  musicDurationSeconds?: number
+  sceneId?: string
   scene?: string
   illustrate?: boolean
 }
@@ -55,8 +59,12 @@ export interface SceneFlowTurnExtras {
 export interface SceneFlowParsedTurn {
   speaker: string
   text: string
-  role: 'body'
+  role: 'body' | 'music'
+  segmentKind?: 'dialogue' | 'music'
   musicMood?: MusicMood
+  musicCue?: string
+  musicDurationSeconds?: number
+  sceneId?: string
   illustrate: boolean
   scene: string
   visualBeat: number
@@ -264,20 +272,53 @@ export function parseSceneFlowLitePayload(raw: string, show: Show): SceneFlowPar
   for (const item of framesRaw) {
     if (!item || typeof item !== 'object') continue
     const frame = item as Record<string, unknown>
+    const segmentKind = frame.segmentKind === 'music' ? 'music' : 'dialogue'
     const dialogue = typeof frame.dialogue === 'string' ? frame.dialogue.trim() : ''
+    const audio = frame.audio_mixing as SceneFlowAudioMixing | undefined
+    const musicMood = mapLyriaThemeToMood(
+      audio && typeof audio === 'object' ? audio.lyria_theme_cue : undefined
+    )
+    const musicCue =
+      audio && typeof audio === 'object' && typeof audio.lyria_theme_cue === 'string'
+        ? audio.lyria_theme_cue.trim()
+        : undefined
+    const sfxCue =
+      audio && typeof audio === 'object' && typeof audio.veo_lite_sfx === 'string'
+        ? audio.veo_lite_sfx.trim()
+        : undefined
+
+    if (segmentKind === 'music') {
+      turns.push({
+        speaker: matchHost(show, typeof frame.speaker === 'string' ? frame.speaker : ''),
+        text: '',
+        role: 'music',
+        segmentKind: 'music',
+        musicMood,
+        musicCue,
+        musicDurationSeconds:
+          typeof frame.musicDurationSeconds === 'number' && Number.isFinite(frame.musicDurationSeconds)
+            ? Math.max(1, Math.round(frame.musicDurationSeconds))
+            : 3,
+        illustrate: false,
+        scene: '',
+        visualBeat: turns.length + 1,
+        ...(sfxCue ? { sfxCue } : {}),
+      })
+      continue
+    }
+
     if (!dialogue) continue
 
     let visual: string
+    const modelVisual =
+      typeof frame.visual_prompt === 'string'
+        ? frame.visual_prompt.trim()
+        : typeof frame.scene === 'string'
+          ? frame.scene.trim()
+          : ''
     if (isPatternMatrix) {
-      // Illustration scenes are derived server-side from dialogue in generate-story.
-      visual = ''
+      visual = modelVisual
     } else {
-      const modelVisual =
-        typeof frame.visual_prompt === 'string'
-          ? frame.visual_prompt.trim()
-          : typeof frame.scene === 'string'
-            ? frame.scene.trim()
-            : ''
       if (!modelVisual) continue
       if (isWeakSceneFlowVisualPrompt(modelVisual)) {
         console.warn('[scene-flow-lite] dropping weak visual_prompt', {
@@ -296,24 +337,20 @@ export function parseSceneFlowLitePayload(raw: string, show: Show): SceneFlowPar
         ? mapMovementVectorToAnimaticId(camera.movement_vector)
         : 'kenburns-default'
 
-    const audio = frame.audio_mixing as SceneFlowAudioMixing | undefined
-    const musicMood = mapLyriaThemeToMood(
-      audio && typeof audio === 'object' ? audio.lyria_theme_cue : undefined
-    )
-    const sfxCue =
-      audio && typeof audio === 'object' && typeof audio.veo_lite_sfx === 'string'
-        ? audio.veo_lite_sfx.trim()
-        : undefined
-
     turns.push({
       speaker,
       text: dialogue,
       role: 'body',
+      segmentKind: 'dialogue',
       musicMood,
+      musicCue,
       illustrate: true,
       scene: visual,
       visualBeat: turns.length + 1,
       animaticMovement: movement,
+      ...(typeof frame.sceneId === 'string' && frame.sceneId.trim()
+        ? { sceneId: frame.sceneId.trim() }
+        : {}),
       ...(sfxCue ? { sfxCue } : {}),
     })
   }

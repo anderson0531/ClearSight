@@ -2,6 +2,7 @@ import { HOST_ART, HOST_CHARACTER_REF } from '@/lib/host-art'
 import type { Show } from '@/lib/shows'
 import type { HostProfile } from '@/lib/hosts'
 import { fetchReferenceImageBytes, type ResolvedSubjectReference } from '@/lib/visual-subjects'
+import { sceneById, type VisualSceneBible } from '@/lib/visual-scenes'
 
 const GENERIC_HOST_STUDIO =
   /\b(podcast\s+(hosts?|studio)|co-hosts?|presenters?|talking[- ]head|studio\s+desk)\b/i
@@ -86,6 +87,37 @@ export async function resolveHostCharacterReferences(
   return resolved
 }
 
+/** Download scene establishing ref for Imagen environment consistency. */
+export async function resolveSceneReference(
+  sceneBible: VisualSceneBible | null | undefined,
+  sceneId: string | null | undefined,
+  idOffset: number
+): Promise<ResolvedSubjectReference | null> {
+  if (process.env.VERTEX_IMAGEN_SUBJECT_CUSTOMIZATION !== '1') return null
+  const scene = sceneById(sceneBible, sceneId)
+  const url = scene?.referenceImageUrl?.trim()
+  if (!scene || !url) return null
+
+  const bytes = await fetchReferenceImageBytes(url)
+  if (!bytes) return null
+
+  const referenceId = idOffset + 1
+  return {
+    subjectId: `scene:${scene.id}`,
+    name: scene.label,
+    referenceId,
+    imagenRef: {
+      referenceId,
+      bytesBase64Encoded: bytes.toString('base64'),
+      subjectType: 'SUBJECT_TYPE_PERSON',
+      subjectDescription: `Establishing environment reference for ${scene.label}. ${scene.descriptors.join(', ')}`.slice(
+        0,
+        280
+      ),
+    },
+  }
+}
+
 export function mergeSubjectReferences(
   bibleRefs: ResolvedSubjectReference[],
   hostRefs: ResolvedSubjectReference[]
@@ -121,6 +153,8 @@ export async function resolveFrameReferenceBundle(input: {
   prompt: string
   speaker?: string | null
   bibleRefs: ResolvedSubjectReference[]
+  sceneBible?: VisualSceneBible | null
+  sceneId?: string | null
   skipSubjectRefs?: boolean
 }): Promise<{
   refs: ResolvedSubjectReference[]
@@ -141,11 +175,22 @@ export async function resolveFrameReferenceBundle(input: {
         new RegExp(`\\b${escapeRegExp(ref.name)}\\b`, 'i').test(input.prompt)
       )
 
-  const refs = mergeSubjectReferences(bibleMatches, hostRefs)
+  let merged = mergeSubjectReferences(bibleMatches, hostRefs)
+
+  if (!input.skipSubjectRefs && input.sceneId) {
+    const sceneRef = await resolveSceneReference(
+      input.sceneBible,
+      input.sceneId,
+      merged.length
+    )
+    if (sceneRef && merged.length < 4) {
+      merged = mergeSubjectReferences(merged, [sceneRef])
+    }
+  }
 
   return {
-    refs,
+    refs: merged,
     includeHosts,
-    forceSubjectCustomization: hostRefs.length > 0,
+    forceSubjectCustomization: hostRefs.length > 0 || merged.some((ref) => ref.subjectId.startsWith('scene:')),
   }
 }
